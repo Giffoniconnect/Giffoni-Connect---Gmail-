@@ -140,9 +140,9 @@ app.post("/api/gmail-sync", async (req, res) => {
   }
 
   try {
-    // 1. Fetch recent messages with legal keywords
+        // 1. Fetch recent messages with legal keywords
     const query = encodeURIComponent('subject:(intimação OR "diário de justiça" OR "pje" OR processo OR prazo OR tribunal) OR "intimação jurídica"');
-    const listUrl = `https://gmail.googleapis.com/v1/users/me/messages?q=${query}&maxResults=10`;
+    const listUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${query}&maxResults=10`;
     
     const listResponse = await fetch(listUrl, {
       headers: {
@@ -168,7 +168,7 @@ app.post("/api/gmail-sync", async (req, res) => {
     const messagesToFetch = listData.messages.slice(0, 5);
 
     for (const msg of messagesToFetch) {
-      const detailUrl = `https://gmail.googleapis.com/v1/users/me/messages/${msg.id}?format=full`;
+      const detailUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=full`;
       const detailRes = await fetch(detailUrl, {
         headers: { Authorization: `Bearer ${accessToken}` }
       });
@@ -276,14 +276,15 @@ async function fetchGmailPushStats(accessToken: string, sender: string) {
     const baseQuery = `in:inbox from:(${sender})`;
     
     do {
-      const url: string = `https://gmail.googleapis.com/v1/users/me/messages?q=${encodeURIComponent(baseQuery)}&maxResults=500${nextPageToken ? `&pageToken=${nextPageToken}` : ''}`;
+      const url: string = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(baseQuery)}&maxResults=500${nextPageToken ? `&pageToken=${nextPageToken}` : ''}`;
       const res = await fetch(url, {
         headers: { Authorization: `Bearer ${accessToken}` }
       });
       
       if (!res.ok) {
         const errText = await res.text();
-        throw new Error(`Erro na listagem da API do Gmail: ${errText}`);
+        console.error(`[Gmail Technical Log] URL chamada: ${url} | Status HTTP: ${res.status} | Mensagem do erro: ${errText} | Remetente consultado: ${sender}`);
+        throw new Error("Não foi possível consultar o Gmail. Verifique se a sessão Google está ativa e tente atualizar novamente.");
       }
       
       const data = await res.json() as { messages?: Array<{ id: string, threadId: string }>, nextPageToken?: string };
@@ -302,14 +303,15 @@ async function fetchGmailPushStats(accessToken: string, sender: string) {
     const unreadQuery = `in:inbox is:unread from:(${sender})`;
 
     do {
-      const url: string = `https://gmail.googleapis.com/v1/users/me/messages?q=${encodeURIComponent(unreadQuery)}&maxResults=500${nextUnreadPageToken ? `&pageToken=${nextUnreadPageToken}` : ''}`;
+      const url: string = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(unreadQuery)}&maxResults=500${nextUnreadPageToken ? `&pageToken=${nextUnreadPageToken}` : ''}`;
       const res = await fetch(url, {
         headers: { Authorization: `Bearer ${accessToken}` }
       });
       
       if (!res.ok) {
         const errText = await res.text();
-        throw new Error(`Erro na listagem de mensagens não lidas no Gmail: ${errText}`);
+        console.error(`[Gmail Technical Log] URL chamada: ${url} | Status HTTP: ${res.status} | Mensagem do erro: ${errText} | Remetente consultado: ${sender}`);
+        throw new Error("Não foi possível consultar o Gmail. Verifique se a sessão Google está ativa e tente atualizar novamente.");
       }
       
       const data = await res.json() as { messages?: Array<{ id: string, threadId: string }>, nextPageToken?: string };
@@ -324,7 +326,7 @@ async function fetchGmailPushStats(accessToken: string, sender: string) {
     let newestDate: string | null = null;
 
     if (newestMessageId) {
-      const detailUrl = `https://gmail.googleapis.com/v1/users/me/messages/${newestMessageId}?format=metadata&metadataHeaders=subject&metadataHeaders=date`;
+      const detailUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${newestMessageId}?format=metadata&metadataHeaders=subject&metadataHeaders=date`;
       const detailRes = await fetch(detailUrl, {
         headers: { Authorization: `Bearer ${accessToken}` }
       });
@@ -353,10 +355,10 @@ async function fetchGmailPushStats(accessToken: string, sender: string) {
       sender,
       totalCount: 0,
       unreadCount: 0,
-      newestSubject: "Erro de conexão ou token inválido",
+      newestSubject: "Erro de consulta",
       newestDate: null,
       success: false,
-      error: error.message
+      error: error.message || "Não foi possível consultar o Gmail. Verifique se a sessão Google está ativa e tente atualizar novamente."
     };
   }
 }
@@ -495,14 +497,15 @@ async function fetchGmailStatsForQuery(accessToken: string, queryStr: string) {
     let newestMessageId: string | null = null;
 
     do {
-      const url: string = `https://gmail.googleapis.com/v1/users/me/messages?q=${encodeURIComponent(queryStr)}&maxResults=500${nextPageToken ? `&pageToken=${nextPageToken}` : ''}`;
+      const url: string = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(queryStr)}&maxResults=500${nextPageToken ? `&pageToken=${nextPageToken}` : ''}`;
       const res = await fetch(url, {
         headers: { Authorization: `Bearer ${accessToken}` }
       });
       
       if (!res.ok) {
         const errText = await res.text();
-        throw new Error(`Erro na listagem da API do Gmail: ${errText}`);
+        console.error(`[Gmail Technical Log] URL chamada: ${url} | Status HTTP: ${res.status} | Mensagem do erro: ${errText} | Consulta realizada: ${queryStr}`);
+        throw new Error("Não foi possível consultar o Gmail. Verifique se a sessão Google está ativa e tente atualizar novamente.");
       }
       
       const data = await res.json() as { messages?: Array<{ id: string, threadId: string }>, nextPageToken?: string };
@@ -524,14 +527,15 @@ async function fetchGmailStatsForQuery(accessToken: string, queryStr: string) {
     let nextUnreadPageToken: string | undefined = undefined;
 
     do {
-      const url: string = `https://gmail.googleapis.com/v1/users/me/messages?q=${encodeURIComponent(unreadQuery)}&maxResults=500${nextUnreadPageToken ? `&pageToken=${nextUnreadPageToken}` : ''}`;
+      const url: string = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(unreadQuery)}&maxResults=500${nextUnreadPageToken ? `&pageToken=${nextUnreadPageToken}` : ''}`;
       const res = await fetch(url, {
         headers: { Authorization: `Bearer ${accessToken}` }
       });
       
       if (!res.ok) {
         const errText = await res.text();
-        throw new Error(`Erro na listagem de mensagens não lidas no Gmail: ${errText}`);
+        console.error(`[Gmail Technical Log] URL chamada: ${url} | Status HTTP: ${res.status} | Mensagem do erro: ${errText} | Consulta realizada: ${unreadQuery}`);
+        throw new Error("Não foi possível consultar o Gmail. Verifique se a sessão Google está ativa e tente atualizar novamente.");
       }
       
       const data = await res.json() as { messages?: Array<{ id: string, threadId: string }>, nextPageToken?: string };
@@ -545,7 +549,7 @@ async function fetchGmailStatsForQuery(accessToken: string, queryStr: string) {
     let newestDate: string | null = null;
 
     if (newestMessageId) {
-      const detailUrl = `https://gmail.googleapis.com/v1/users/me/messages/${newestMessageId}?format=metadata&metadataHeaders=subject&metadataHeaders=date`;
+      const detailUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${newestMessageId}?format=metadata&metadataHeaders=subject&metadataHeaders=date`;
       const detailRes = await fetch(detailUrl, {
         headers: { Authorization: `Bearer ${accessToken}` }
       });
@@ -573,10 +577,10 @@ async function fetchGmailStatsForQuery(accessToken: string, queryStr: string) {
       query: queryStr,
       totalCount: 0,
       unreadCount: 0,
-      newestSubject: "Erro de conexão",
+      newestSubject: "Erro de consulta",
       newestDate: null,
       success: false,
-      error: error.message
+      error: error.message || "Não foi possível consultar o Gmail. Verifique se a sessão Google está ativa e tente atualizar novamente."
     };
   }
 }
@@ -837,7 +841,7 @@ app.post("/api/gmail-messages-list", async (req, res) => {
     let nextPageToken: string | undefined = undefined;
 
     do {
-      const url: string = `https://gmail.googleapis.com/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=500${nextPageToken ? `&pageToken=${nextPageToken}` : ''}`;
+      const url: string = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=500${nextPageToken ? `&pageToken=${nextPageToken}` : ''}`;
       const response = await fetch(url, {
         headers: { Authorization: `Bearer ${accessToken}` }
       });
@@ -880,7 +884,7 @@ app.post("/api/gmail-messages-details", async (req, res) => {
   try {
     const detailsPromises = messageIds.map(async (id) => {
       try {
-        const detailUrl = `https://gmail.googleapis.com/v1/users/me/messages/${id}?format=full`;
+        const detailUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`;
         const detailRes = await fetch(detailUrl, {
           headers: { Authorization: `Bearer ${accessToken}` }
         });

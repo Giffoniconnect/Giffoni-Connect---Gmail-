@@ -4,7 +4,7 @@ import {
   PlusCircle, FileText, CheckCircle, AlertTriangle, RefreshCw, 
   LogOut, ExternalLink, Code, Copy, Check, Printer, Download, 
   Trash2, AlertCircle, Info, ChevronRight, Send, UserCheck, Play, HelpCircle, Inbox,
-  Settings, Compass, Layers
+  Settings, Compass, Layers, ArrowLeft, ArrowRight
 } from 'lucide-react';
 import { onAuthStateChanged, signInWithPopup, signOut, GoogleAuthProvider, User } from 'firebase/auth';
 import { collection, query, where, getDocs, addDoc, updateDoc, doc, deleteDoc, writeBatch } from 'firebase/firestore';
@@ -699,8 +699,9 @@ export default function App() {
   };
 
   const addSystemLog = (status: 'success' | 'warning' | 'error' | 'info', message: string, type: 'gmail_sync' | 'api_received' | 'manual_add' | 'status_change' = 'manual_add') => {
+    const randomSuffix = Math.random().toString(36).substring(2, 9);
     const newLog: SystemLog = {
-      id: `log-${Date.now()}`,
+      id: `log-${Date.now()}-${randomSuffix}`,
       timestamp: new Date().toISOString(),
       type,
       message,
@@ -822,10 +823,13 @@ export default function App() {
       handleGoogleLogin();
       return;
     }
-    setRecorteStates(prev => ({
-      ...prev,
-      [serviceId]: { ...(prev[serviceId] || {}), isLoading: true, error: null }
-    }));
+    setRecorteStates(prev => {
+      const current = prev[serviceId] || { status: 'desconectado', lastUpdated: null, error: null, isLoading: false };
+      return {
+        ...prev,
+        [serviceId]: { ...current, isLoading: true, error: null }
+      };
+    });
     addSystemLog('info', `Sincronizando ${serviceName} via Gmail...`, 'gmail_sync');
     try {
       const res = await fetch("/api/recorte-digital/sync", {
@@ -1432,7 +1436,7 @@ export default function App() {
         </button>
         <button 
           onClick={() => handleTabChange('pushes')} 
-          className={`flex flex-col items-center p-2 rounded-lg text-[10px] transition-colors ${activeTab === 'pushes' ? 'text-blue-600 font-bold' : 'text-slate-500 hover:text-slate-800'}`}
+          className={`flex flex-col items-center p-2 rounded-lg text-[10px] transition-colors ${activeTab.startsWith('pushes') ? 'text-blue-600 font-bold' : 'text-slate-500 hover:text-slate-800'}`}
         >
           <Inbox className="h-4 w-4 mb-0.5" />
           Pushes
@@ -1502,12 +1506,12 @@ export default function App() {
                 id="btn-nav-sidebar-pushes"
                 onClick={() => handleTabChange('pushes')}
                 className={`w-full flex items-center gap-3 px-3 py-2 text-xs font-semibold rounded-md transition ${
-                  activeTab === 'pushes' 
+                  activeTab.startsWith('pushes') 
                     ? 'bg-blue-50 text-blue-700 font-bold' 
                     : 'text-slate-600 hover:bg-slate-50'
                 }`}
               >
-                <span className={`w-1.5 h-1.5 rounded-full transition-all ${activeTab === 'pushes' ? 'bg-blue-600 scale-100' : 'bg-transparent scale-0'}`}></span>
+                <span className={`w-1.5 h-1.5 rounded-full transition-all ${activeTab.startsWith('pushes') ? 'bg-blue-600 scale-100' : 'bg-transparent scale-0'}`}></span>
                 Pushes (Tribunais)
               </button>
 
@@ -2586,265 +2590,324 @@ export default function App() {
         )}
 
         {/* 7. TAB: CENTRAL DE PUSHES (GMAIL INTEGRATION) */}
-        {activeTab === 'pushes' && (
+        {activeTab.startsWith('pushes') && (
           <div className="space-y-6 animate-fade-in text-slate-800">
-            {/* Page Header */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 pb-5">
-              <div>
-                <h1 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
-                  <Inbox className="h-6 w-6 text-purple-600" />
-                  Painel de Conferência de Pushes (Gmail)
-                </h1>
-                <p className="text-slate-500 text-xs mt-1">
-                  Verificação rápida em tempo real dos e-mails de movimentação processual diretamente na sua Caixa de Entrada.
-                </p>
-              </div>
-              <div className="flex items-center gap-3">
-                {user && (
-                  <button
-                    onClick={fetchAllPushes}
-                    disabled={globalPushesLoading}
-                    className="bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white font-bold text-xs py-2.5 px-4 rounded-xl flex items-center gap-2 transition shadow-md shadow-purple-600/15"
-                  >
-                    <RefreshCw className={`h-3.5 w-3.5 ${globalPushesLoading ? 'animate-spin' : ''}`} />
-                    {globalPushesLoading ? 'Atualizando tudo...' : 'Atualizar Todos os Pushes'}
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Authentication Guard */}
-            {!user ? (
-              <div className="bg-gradient-to-br from-purple-50 to-white border border-purple-200 rounded-2xl p-8 text-center space-y-4 max-w-lg mx-auto">
-                <Mail className="h-12 w-12 text-purple-400 mx-auto" />
-                <h3 className="text-lg font-bold text-slate-800">Conexão do Gmail Necessária</h3>
-                <p className="text-slate-600 text-xs leading-relaxed">
-                  Para realizar a consulta real em tempo real dos PUSHes processuais na sua caixa de entrada, você precisa conectar sua conta Google. Isto permite que o Portal BOSS liste de forma segura apenas os remetentes dos tribunais.
-                </p>
-                <button
-                  onClick={handleGoogleLogin}
-                  className="bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs py-3 px-6 rounded-xl transition shadow-lg shadow-purple-600/15"
-                >
-                  Conectar Conta Google via Firebase
-                </button>
-              </div>
-            ) : (
+            {activeTab === 'pushes' ? (
               <>
-                {/* Summary Panel */}
-                <div className="bg-slate-900 text-white rounded-2xl p-6 shadow-xl border border-slate-800">
-                  <h3 className="text-xs font-bold text-purple-400 uppercase tracking-widest mb-4">Consolidado das Fontes (Clique nos indicadores para navegar)</h3>
-                  
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-                    <div 
-                      onClick={() => openGmailExplorer({ name: "Todos os Remetentes", sender: "all_senders" }, 'all')}
-                      className="space-y-1 cursor-pointer hover:bg-slate-800/80 p-2.5 rounded-xl transition border border-transparent hover:border-slate-700"
-                    >
-                      <p className="text-[10px] text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                        Total de Pushes (Inbox) <ExternalLink className="h-2.5 w-2.5 opacity-60" />
-                      </p>
-                      <h4 className="text-2xl font-bold text-white border-b border-dashed border-slate-600 inline-block">
-                        {Object.values(pushesData).reduce((sum, p) => sum + (p.totalCount || 0), 0)}
-                      </h4>
-                    </div>
-                    
-                    <div 
-                      onClick={() => openGmailExplorer({ name: "Todos os Remetentes", sender: "all_senders" }, 'unread')}
-                      className="space-y-1 border-t sm:border-t-0 sm:border-l border-slate-800 pt-4 sm:pt-0 sm:pl-6 cursor-pointer hover:bg-slate-800/80 p-2.5 rounded-xl transition border border-transparent hover:border-slate-700"
-                    >
-                      <p className="text-[10px] text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                        Total Não Lido <ExternalLink className="h-2.5 w-2.5 opacity-60 text-purple-400" />
-                      </p>
-                      <h4 className="text-2xl font-bold text-purple-400 border-b border-dashed border-purple-900 inline-block">
-                        {Object.values(pushesData).reduce((sum, p) => sum + (p.unreadCount || 0), 0)}
-                      </h4>
-                    </div>
-
-                    <div className="space-y-1 border-t lg:border-t-0 lg:border-l border-slate-800 pt-4 lg:pt-0 lg:pl-6">
-                      <p className="text-[10px] text-slate-400 uppercase tracking-wider">Fontes com Pendências</p>
-                      <h4 className="text-2xl font-bold text-amber-400">
-                        {Object.values(pushesData).filter(p => (p.unreadCount || 0) > 0).length} / {PUSH_SOURCES.length}
-                      </h4>
-                    </div>
-
-                    <div className="space-y-1 border-t lg:border-t-0 lg:border-l border-slate-800 pt-4 lg:pt-0 lg:pl-6">
-                      <p className="text-[10px] text-slate-400 uppercase tracking-wider">Última Sincronização</p>
-                      <p className="text-sm font-semibold text-slate-200 mt-1">{pushesLastUpdated || 'Nunca atualizado'}</p>
-                    </div>
+                {/* Page Header */}
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 pb-5">
+                  <div>
+                    <h1 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
+                      <Inbox className="h-6 w-6 text-purple-600" />
+                      Painel de Conferência de Pushes (Gmail)
+                    </h1>
+                    <p className="text-slate-500 text-xs mt-1">
+                      Página índice de acesso aos dashboards específicos de conferência em tempo real dos pushes processuais.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {user && (
+                      <button
+                        onClick={fetchAllPushes}
+                        disabled={globalPushesLoading}
+                        className="bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white font-bold text-xs py-2.5 px-4 rounded-xl flex items-center gap-2 transition shadow-md shadow-purple-600/15"
+                      >
+                        <RefreshCw className={`h-3.5 w-3.5 ${globalPushesLoading ? 'animate-spin' : ''}`} />
+                        {globalPushesLoading ? 'Atualizando tudo...' : 'Atualizar Todos os Pushes'}
+                      </button>
+                    )}
                   </div>
                 </div>
 
-                {pushesError && (
-                  <div className="bg-red-50 border border-red-200 text-red-800 p-4 rounded-xl text-xs flex items-center gap-2">
-                    <AlertCircle className="h-4 w-4 shrink-0 text-red-600" />
-                    <span>{pushesError}</span>
+                {/* Authentication Guard */}
+                {!user ? (
+                  <div className="bg-gradient-to-br from-purple-50 to-white border border-purple-200 rounded-2xl p-8 text-center space-y-4 max-w-lg mx-auto">
+                    <Mail className="h-12 w-12 text-purple-400 mx-auto" />
+                    <h3 className="text-lg font-bold text-slate-800">Conexão do Gmail Necessária</h3>
+                    <p className="text-slate-600 text-xs leading-relaxed">
+                      Para realizar a consulta real em tempo real dos PUSHes processuais na sua caixa de entrada, você precisa conectar sua conta Google. Isto permite que o Portal BOSS liste de forma segura apenas os remetentes dos tribunais.
+                    </p>
+                    <button
+                      onClick={handleGoogleLogin}
+                      className="bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs py-3 px-6 rounded-xl transition shadow-lg shadow-purple-600/15"
+                    >
+                      Conectar Conta Google via Firebase
+                    </button>
                   </div>
-                )}
-
-                {/* Grid of Cards (Dynamic iteration for easy future additions) */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-                  {PUSH_SOURCES.map((source) => {
-                    const data = pushesData[source.sender] || {
-                      sender: source.sender,
-                      totalCount: 0,
-                      unreadCount: 0,
-                      newestSubject: "Sem consulta",
-                      newestDate: null,
-                      success: true
-                    };
-                    const isLoading = pushesLoading[source.sender] || false;
-                    const isError = data.success === false;
-                    const hasUnread = data.unreadCount > 0;
-                    
-                    // Determine visual priority rules based on count
-                    let urgencyLabel = "Em dia";
-                    let urgencyColor = "text-emerald-700 bg-emerald-50 border-emerald-100";
-                    let pulseIndicator = "bg-emerald-500";
-                    
-                    if (isError) {
-                      urgencyLabel = "Erro de conexão";
-                      urgencyColor = "text-red-700 bg-red-50 border-red-100";
-                      pulseIndicator = "bg-red-500";
-                    } else if (hasUnread) {
-                      if (data.unreadCount >= 5) {
-                        urgencyLabel = "Urgente (5+)";
-                        urgencyColor = "text-red-700 bg-red-50 border-red-100 animate-pulse";
-                        pulseIndicator = "bg-red-500 animate-ping";
-                      } else {
-                        urgencyLabel = `Pendente (${data.unreadCount})`;
-                        urgencyColor = "text-amber-700 bg-amber-50 border-amber-100";
-                        pulseIndicator = "bg-amber-500";
-                      }
-                    }
-
-                    // Calculate age of the newest email (warning if > 48h and unread)
-                    const newestDateObj = data.newestDate ? new Date(data.newestDate) : null;
-                    const diffTime = newestDateObj ? Date.now() - newestDateObj.getTime() : 0;
-                    const isOlderThan48h = !isError && hasUnread && diffTime > 48 * 60 * 60 * 1000;
-
-                    return (
-                      <div 
-                        key={source.id}
-                        className={`bg-white border rounded-2xl p-6 shadow-sm flex flex-col justify-between space-y-4 relative overflow-hidden transition-all hover:shadow-md ${
-                          isError
-                            ? 'border-red-200'
-                            : hasUnread 
-                              ? data.unreadCount >= 5 
-                                ? 'border-red-300 ring-1 ring-red-100' 
-                                : 'border-amber-300 ring-1 ring-amber-100'
-                              : 'border-slate-200'
-                        }`}
-                      >
-                        {/* Header Area */}
-                        <div>
-                          <div className="flex justify-between items-start">
-                            <div className="min-w-0 flex-1">
-                              <span className="text-[10px] uppercase font-bold text-slate-400 font-mono">Remetente</span>
-                              <h4 className="text-base font-bold text-slate-900 tracking-tight truncate">{source.name}</h4>
-                              <p className="text-slate-500 text-xs font-mono break-all truncate">{source.sender}</p>
-                            </div>
-                            
-                            {/* Visual Status Tag */}
-                            <span className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-full border ${urgencyColor} flex items-center gap-1 shrink-0 ml-2`}>
-                              <span className={`w-1.5 h-1.5 rounded-full ${pulseIndicator}`}></span>
-                              {urgencyLabel}
-                            </span>
-                          </div>
-
-                          {isError ? (
-                            <div className="mt-4 bg-red-50 border border-red-200 text-red-800 p-3 rounded-xl text-xs space-y-1">
-                              <div className="flex items-center gap-1.5 font-bold">
-                                <AlertTriangle className="h-4 w-4 text-red-600" />
-                                <span>Erro na consulta</span>
-                              </div>
-                              <p className="text-[11px] opacity-90 leading-normal">
-                                Não foi possível consultar este remetente neste momento.
-                              </p>
-                              {data.error && (
-                                <span className="text-[9px] font-mono opacity-75 block break-words mt-1 bg-red-100/50 p-1.5 rounded border border-red-200/30">
-                                  {data.error}
-                                </span>
-                              )}
-                            </div>
-                          ) : (
-                            /* Stats Row inside card */
-                            <div className="grid grid-cols-2 gap-4 mt-4 bg-slate-50 p-3 rounded-xl border border-slate-100">
-                              <div 
-                                onClick={() => openGmailExplorer(source, 'all')}
-                                className="cursor-pointer hover:bg-slate-100 p-2 rounded-lg transition"
-                                title="Visualizar todos os e-mails deste remetente no Build"
-                              >
-                                <span className="text-[9px] text-slate-400 uppercase font-bold block">Total na Inbox</span>
-                                <span className="text-lg font-bold text-slate-800 border-b border-dashed border-slate-300 hover:text-indigo-600 inline-block">{data.totalCount}</span>
-                              </div>
-                              <div 
-                                onClick={() => openGmailExplorer(source, 'unread')}
-                                className="border-l border-slate-200 pl-4 cursor-pointer hover:bg-slate-100 p-2 rounded-lg transition"
-                                title="Visualizar e-mails não lidos deste remetente no Build"
-                              >
-                                <span className="text-[9px] text-slate-400 uppercase font-bold block">Não Lidos</span>
-                                <span className={`text-lg font-bold border-b border-dashed ${hasUnread ? 'text-purple-600 border-purple-300 hover:text-purple-800' : 'text-slate-500 border-slate-300 hover:text-indigo-600'} inline-block`}>
-                                  {data.unreadCount}
-                                </span>
-                              </div>
-                            </div>
-                          )}
+                ) : (
+                  <>
+                    {/* Consolidado das Fontes */}
+                    <div className="bg-slate-900 text-white rounded-2xl p-6 shadow-xl border border-slate-800">
+                      <h3 className="text-xs font-bold text-purple-400 uppercase tracking-widest mb-4">Consolidado das Fontes (Clique nos indicadores para navegar)</h3>
+                      
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                        <div 
+                          onClick={() => openGmailExplorer({ name: "Todos os Remetentes", sender: "all_senders" }, 'all')}
+                          className="space-y-1 cursor-pointer hover:bg-slate-800/80 p-2.5 rounded-xl transition border border-transparent hover:border-slate-700"
+                        >
+                          <p className="text-[10px] text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                            Total de Pushes (Inbox) <ExternalLink className="h-2.5 w-2.5 opacity-60" />
+                          </p>
+                          <h4 className="text-2xl font-bold text-white border-b border-dashed border-slate-600 inline-block">
+                            {Object.values(pushesData).reduce((sum, p) => sum + (p.totalCount || 0), 0)}
+                          </h4>
+                        </div>
+                        
+                        <div 
+                          onClick={() => openGmailExplorer({ name: "Todos os Remetentes", sender: "all_senders" }, 'unread')}
+                          className="space-y-1 border-t sm:border-t-0 sm:border-l border-slate-800 pt-4 sm:pt-0 sm:pl-6 cursor-pointer hover:bg-slate-800/80 p-2.5 rounded-xl transition border border-transparent hover:border-slate-700"
+                        >
+                          <p className="text-[10px] text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                            Total Não Lido <ExternalLink className="h-2.5 w-2.5 opacity-60 text-purple-400" />
+                          </p>
+                          <h4 className="text-2xl font-bold text-purple-400 border-b border-dashed border-purple-900 inline-block">
+                            {Object.values(pushesData).reduce((sum, p) => sum + (p.unreadCount || 0), 0)}
+                          </h4>
                         </div>
 
-                        {/* Middle Area: Latest Email details (only if no error) */}
-                        {!isError && (
-                          <div className="space-y-2 border-t border-slate-100 pt-3 flex-1">
-                            <span className="text-[9px] text-slate-400 uppercase font-bold block">Assunto do Push Mais Recente</span>
-                            <p className="text-slate-700 text-xs font-medium leading-relaxed line-clamp-2 bg-slate-50/50 p-2 rounded border border-slate-100/50">
-                              {data.newestSubject}
-                            </p>
-                            {newestDateObj && (
-                              <div className="flex justify-between items-center text-[10px] text-slate-400">
-                                <span>Data do Push:</span>
-                                <span className="font-mono">
-                                  {newestDateObj.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
-                                </span>
-                              </div>
-                            )}
+                        <div className="space-y-1 border-t lg:border-t-0 lg:border-l border-slate-800 pt-4 lg:pt-0 lg:pl-6">
+                          <p className="text-[10px] text-slate-400 uppercase tracking-wider">Fontes com Pendências</p>
+                          <h4 className="text-2xl font-bold text-amber-400">
+                            {Object.values(pushesData).filter(p => (p.unreadCount || 0) > 0).length} / {PUSH_SOURCES.length}
+                          </h4>
+                        </div>
 
-                            {/* Age warning if unread and >48h */}
-                            {isOlderThan48h && (
-                              <div className="bg-amber-50 border border-amber-200 text-amber-800 text-[10px] p-2 rounded-lg flex items-start gap-1.5 mt-2 font-medium">
-                                <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0 mt-0.5" />
-                                <span>Atenção: Push pendente há mais de 48h!</span>
-                              </div>
-                            )}
-                          </div>
-                        )}
-
-                        {/* Actions Footer row */}
-                        <div className="pt-3 border-t border-slate-100 flex gap-2">
-                          {/* Open in Gmail Button */}
-                          <a 
-                            href={`https://mail.google.com/mail/u/0/#search/${encodeURIComponent(source.search)}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="flex-1 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs py-2.5 px-3 rounded-xl flex items-center justify-center gap-1.5 transition text-center"
-                          >
-                            <ExternalLink className="h-3.5 w-3.5" />
-                            Abrir no Gmail
-                          </a>
-                          
-                          {/* Refresh individual sender */}
-                          <button
-                            onClick={() => fetchSinglePush(source.sender)}
-                            disabled={isLoading}
-                            className="bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold p-2.5 rounded-xl transition border border-slate-200 flex items-center justify-center shrink-0 disabled:opacity-50"
-                            title="Atualizar esta fonte"
-                          >
-                            <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-                          </button>
+                        <div className="space-y-1 border-t lg:border-t-0 lg:border-l border-slate-800 pt-4 lg:pt-0 lg:pl-6">
+                          <p className="text-[10px] text-slate-400 uppercase tracking-wider">Última Sincronização</p>
+                          <p className="text-sm font-semibold text-slate-200 mt-1">{pushesLastUpdated || 'Nunca atualizado'}</p>
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
+                    </div>
+
+                    {pushesError && (
+                      <div className="bg-red-50 border border-red-200 text-red-800 p-4 rounded-xl text-xs flex items-center gap-2">
+                        <AlertCircle className="h-4 w-4 shrink-0 text-red-600" />
+                        <span>{pushesError}</span>
+                      </div>
+                    )}
+
+                    {/* Navigation Cards Grid */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                      {PUSH_SOURCES.map((source) => {
+                        const data = pushesData[source.sender] || {
+                          sender: source.sender,
+                          totalCount: 0,
+                          unreadCount: 0,
+                          newestSubject: "Sem consulta",
+                          newestDate: null,
+                          success: true
+                        };
+                        const hasUnread = data.unreadCount > 0;
+                        const isError = data.success === false;
+
+                        return (
+                          <div
+                            key={source.id}
+                            onClick={() => handleTabChange(`pushes/push-${source.id}`)}
+                            className="bg-white border border-slate-200 hover:border-purple-300 rounded-2xl p-5 shadow-sm hover:shadow-md transition-all cursor-pointer flex flex-col justify-between group relative overflow-hidden"
+                          >
+                            <div className="space-y-3">
+                              <div className="flex justify-between items-start">
+                                <div>
+                                  <span className="text-[9px] uppercase font-bold text-slate-400 font-mono">Remetente</span>
+                                  <h4 className="text-base font-bold text-slate-900 group-hover:text-purple-700 transition">
+                                    {source.name}
+                                  </h4>
+                                </div>
+                                <span className={`w-2.5 h-2.5 rounded-full ${isError ? 'bg-red-500' : hasUnread ? 'bg-amber-500 animate-pulse' : 'bg-emerald-500'}`} />
+                              </div>
+                              <p className="text-slate-500 text-xs font-mono truncate">{source.sender}</p>
+
+                              {/* Quick Stats badges */}
+                              <div className="flex gap-2 pt-2">
+                                <span className="bg-slate-50 text-slate-600 text-[10px] px-2 py-0.5 rounded-full border border-slate-100 font-medium">
+                                  {data.totalCount} e-mails
+                                </span>
+                                {hasUnread && (
+                                  <span className="bg-purple-50 text-purple-700 text-[10px] px-2 py-0.5 rounded-full border border-purple-100 font-bold">
+                                    {data.unreadCount} não lidos
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="border-t border-slate-100 mt-4 pt-3 flex items-center justify-between text-xs font-bold text-purple-600 group-hover:text-purple-800">
+                              <span>Acessar Dashboard</span>
+                              <ChevronRight className="h-4 w-4 transform group-hover:translate-x-1 transition-transform" />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
               </>
-            )}
+            ) : (() => {
+              const subRouteId = activeTab.replace('pushes/push-', '');
+              const source = PUSH_SOURCES.find(s => s.id === subRouteId);
+              if (!source) {
+                return (
+                  <div className="p-8 text-center bg-slate-50 border border-slate-200 rounded-2xl">
+                    <p className="text-sm font-semibold text-slate-500">Dashboard específico de push não encontrado.</p>
+                    <button 
+                      onClick={() => handleTabChange('pushes')} 
+                      className="mt-4 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs py-2 px-4 rounded-lg cursor-pointer transition"
+                    >
+                      Voltar para Pushes
+                    </button>
+                  </div>
+                );
+              }
+
+              const data = pushesData[source.sender] || {
+                sender: source.sender,
+                totalCount: 0,
+                unreadCount: 0,
+                newestSubject: "Sem consulta",
+                newestDate: null,
+                success: true
+              };
+              const isLoading = pushesLoading[source.sender] || false;
+              const isError = data.success === false;
+              const hasUnread = data.unreadCount > 0;
+              const newestDateObj = data.newestDate ? new Date(data.newestDate) : null;
+              const diffTime = newestDateObj ? Date.now() - newestDateObj.getTime() : 0;
+              const isOlderThan48h = !isError && hasUnread && diffTime > 48 * 60 * 60 * 1000;
+
+              return (
+                <div className="space-y-6">
+                  {/* Back button */}
+                  <button 
+                    onClick={() => handleTabChange('pushes')} 
+                    className="inline-flex items-center gap-1.5 text-xs text-indigo-600 hover:text-indigo-800 font-bold cursor-pointer transition"
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                    Voltar para Painel Geral de Pushes
+                  </button>
+
+                  {/* Dashboard Header */}
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 pb-5">
+                    <div>
+                      <h1 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
+                        <Inbox className="h-6 w-6 text-indigo-600" />
+                        Dashboard: {source.name}
+                      </h1>
+                      <p className="text-slate-500 text-xs mt-1">
+                        Consulta em tempo real na Inbox para {source.sender}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => fetchSinglePush(source.sender)}
+                        disabled={isLoading}
+                        className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-xs py-2.5 px-4 rounded-xl flex items-center gap-2 transition shadow-md shadow-indigo-600/15 cursor-pointer"
+                      >
+                        <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+                        {isLoading ? 'Atualizando...' : 'Atualizar'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Error display */}
+                  {isError && (
+                    <div className="bg-red-50 border border-red-200 text-red-800 p-5 rounded-2xl text-xs space-y-2">
+                      <div className="flex items-center gap-2 font-bold text-sm">
+                        <AlertCircle className="h-5 w-5 text-red-600 shrink-0" />
+                        <span>Não foi possível consultar o Gmail. Verifique se a sessão Google está ativa e tente atualizar novamente.</span>
+                      </div>
+                      {data.error && (
+                        <p className="font-mono text-[10px] bg-red-100/40 p-2.5 rounded border border-red-200/20 text-red-700 break-words">
+                          Detalhe Técnico: {data.error}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Stats counters row */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div 
+                      onClick={() => openGmailExplorer(source, 'all')}
+                      className="bg-white border border-slate-200 hover:border-indigo-300 rounded-2xl p-6 shadow-sm hover:shadow-md transition cursor-pointer space-y-2 relative group"
+                    >
+                      <p className="text-xs text-slate-400 uppercase tracking-wider font-bold">Total real na Inbox</p>
+                      <h3 className="text-4xl font-extrabold text-slate-800">{data.totalCount}</h3>
+                      <p className="text-xs text-indigo-600 font-semibold group-hover:underline flex items-center gap-1">
+                        Ver listagem completa <ChevronRight className="h-3 w-3" />
+                      </p>
+                    </div>
+
+                    <div 
+                      onClick={() => openGmailExplorer(source, 'unread')}
+                      className={`border rounded-2xl p-6 shadow-sm hover:shadow-md transition cursor-pointer space-y-2 relative group ${hasUnread ? 'bg-purple-50/50 border-purple-200 hover:border-purple-400' : 'bg-white border-slate-200 hover:border-indigo-300'}`}
+                    >
+                      <p className="text-xs text-slate-400 uppercase tracking-wider font-bold">Não Lidos</p>
+                      <h3 className={`text-4xl font-extrabold ${hasUnread ? 'text-purple-600' : 'text-slate-500'}`}>{data.unreadCount}</h3>
+                      <p className="text-xs text-indigo-600 font-semibold group-hover:underline flex items-center gap-1">
+                        Ver não lidos <ChevronRight className="h-3 w-3" />
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Latest email block */}
+                  <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4">
+                    <h3 className="text-sm font-bold text-slate-900 border-b border-slate-100 pb-3 uppercase tracking-wider">E-mail mais recente</h3>
+                    <div className="space-y-2">
+                      <span className="text-[10px] text-slate-400 uppercase font-bold block">Assunto</span>
+                      <p className="text-slate-800 text-sm font-medium bg-slate-50 p-3 rounded-xl border border-slate-100">
+                        {data.newestSubject}
+                      </p>
+                    </div>
+
+                    {newestDateObj && (
+                      <div className="flex justify-between items-center text-xs text-slate-500 pt-1">
+                        <span>Data de recebimento:</span>
+                        <span className="font-mono font-semibold">
+                          {newestDateObj.toLocaleString('pt-BR', { dateStyle: 'long', timeStyle: 'short' })}
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Age warning if unread and >48h */}
+                    {isOlderThan48h && (
+                      <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs p-3.5 rounded-xl flex items-start gap-2 font-medium">
+                        <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                        <span>Atenção: Há e-mails PUSH pendentes sem leitura há mais de 48 horas! Verifique imediatamente.</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Action buttons list */}
+                  <div className="flex flex-wrap gap-3 pt-2">
+                    <button
+                      onClick={() => openGmailExplorer(source, 'all')}
+                      className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs py-2.5 px-5 rounded-xl transition cursor-pointer"
+                    >
+                      Ver Total
+                    </button>
+                    <button
+                      onClick={() => openGmailExplorer(source, 'unread')}
+                      className="bg-purple-50 hover:bg-purple-100 text-purple-700 font-bold text-xs py-2.5 px-5 rounded-xl transition cursor-pointer"
+                    >
+                      Ver Não Lidos
+                    </button>
+                    <a 
+                      href={`https://mail.google.com/mail/u/0/#search/${encodeURIComponent(source.search)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs py-2.5 px-5 rounded-xl flex items-center gap-1.5 transition text-center cursor-pointer"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                      Abrir no Gmail
+                    </a>
+                  </div>
+
+                  {/* Sincronização info */}
+                  <p className="text-[10px] text-slate-400 font-mono text-right">
+                    Última consulta realizada: {pushesLastUpdated || 'Nunca atualizada'}
+                  </p>
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -3746,7 +3809,7 @@ export default function App() {
                           </div>
                           
                           <a
-                            href={`https://gmail.googleapis.com/v1/users/me/messages/${selectedEmailDetail.id}/attachments/${file.attachmentId}`}
+                            href={`https://gmail.googleapis.com/gmail/v1/users/me/messages/${selectedEmailDetail.id}/attachments/${file.attachmentId}`}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 p-2 rounded-lg transition"
