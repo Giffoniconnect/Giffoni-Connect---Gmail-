@@ -265,6 +265,133 @@ app.post("/api/gmail-sync", async (req, res) => {
   }
 });
 
+// Helper function to fetch Gmail PUSH stats with full pagination support
+async function fetchGmailPushStats(accessToken: string, sender: string) {
+  try {
+    // 1. Get total emails in inbox
+    let totalCount = 0;
+    let nextPageToken: string | undefined = undefined;
+    let newestMessageId: string | null = null;
+
+    const baseQuery = `in:inbox from:(${sender})`;
+    
+    do {
+      const url: string = `https://gmail.googleapis.com/v1/users/me/messages?q=${encodeURIComponent(baseQuery)}&maxResults=500${nextPageToken ? `&pageToken=${nextPageToken}` : ''}`;
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`Erro na listagem da API do Gmail: ${errText}`);
+      }
+      
+      const data = await res.json() as { messages?: Array<{ id: string, threadId: string }>, nextPageToken?: string };
+      if (data.messages && data.messages.length > 0) {
+        if (!newestMessageId) {
+          newestMessageId = data.messages[0].id;
+        }
+        totalCount += data.messages.length;
+      }
+      nextPageToken = data.nextPageToken;
+    } while (nextPageToken);
+
+    // 2. Get unread emails in inbox
+    let unreadCount = 0;
+    let nextUnreadPageToken: string | undefined = undefined;
+    const unreadQuery = `in:inbox is:unread from:(${sender})`;
+
+    do {
+      const url: string = `https://gmail.googleapis.com/v1/users/me/messages?q=${encodeURIComponent(unreadQuery)}&maxResults=500${nextUnreadPageToken ? `&pageToken=${nextUnreadPageToken}` : ''}`;
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`Erro na listagem de mensagens não lidas no Gmail: ${errText}`);
+      }
+      
+      const data = await res.json() as { messages?: Array<{ id: string, threadId: string }>, nextPageToken?: string };
+      if (data.messages) {
+        unreadCount += data.messages.length;
+      }
+      nextUnreadPageToken = data.nextPageToken;
+    } while (nextUnreadPageToken);
+
+    // 3. Get details of the newest message if exists
+    let newestSubject = "Nenhum e-mail recente";
+    let newestDate: string | null = null;
+
+    if (newestMessageId) {
+      const detailUrl = `https://gmail.googleapis.com/v1/users/me/messages/${newestMessageId}?format=metadata&metadataHeaders=subject&metadataHeaders=date`;
+      const detailRes = await fetch(detailUrl, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+
+      if (detailRes.ok) {
+        const detailData = await detailRes.json() as any;
+        const headers = detailData.payload?.headers || [];
+        newestSubject = headers.find((h: any) => h.name.toLowerCase() === "subject")?.value || "Sem Assunto";
+        const dateHeader = headers.find((h: any) => h.name.toLowerCase() === "date")?.value;
+        newestDate = dateHeader ? new Date(dateHeader).toISOString() : null;
+      }
+    }
+
+    return {
+      sender,
+      totalCount,
+      unreadCount,
+      newestSubject,
+      newestDate,
+      success: true
+    };
+
+  } catch (error: any) {
+    console.error(`Erro ao buscar estatísticas do PUSH para ${sender}:`, error);
+    return {
+      sender,
+      totalCount: 0,
+      unreadCount: 0,
+      newestSubject: "Erro de conexão ou token inválido",
+      newestDate: null,
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+// 2.5 API: Gmail Pushes statistics (queries counts and latest push info for courtroom systems)
+app.post("/api/gmail-pushes", async (req, res) => {
+  const { accessToken, sender } = req.body;
+
+  if (!accessToken) {
+    return res.status(400).json({ error: "Access token do Gmail não fornecido." });
+  }
+
+  const PUSH_SOURCES = [
+    { id: "trt-mg", name: "Push TRT-MG", sender: "nao-responda@trt3.jus.br" },
+    { id: "pje-mg", name: "Push – PJe MG", sender: "pje@tjmg.jus.br" },
+    { id: "tjmg", name: "Push TJMG", sender: "push@tjmg.jus.br" },
+    { id: "eproc-tjmg", name: "Push Eproc TJMG", sender: "noreply@tjmg.jus.br" },
+    { id: "trf6", name: "Eproc – Push TRF6", sender: "eproc@trf6.jus.br" }
+  ];
+
+  try {
+    if (sender) {
+      const stats = await fetchGmailPushStats(accessToken, sender);
+      return res.json({ stats: [stats] });
+    } else {
+      const promises = PUSH_SOURCES.map(source => fetchGmailPushStats(accessToken, source.sender));
+      const results = await Promise.all(promises);
+      return res.json({ stats: results });
+    }
+  } catch (error: any) {
+    console.error("Erro no endpoint /api/gmail-pushes:", error);
+    return res.status(500).json({ error: "Falha ao recuperar estatísticas dos PUSHes: " + error.message });
+  }
+});
+
 // 3. LEGACY INTEGRATION API Endpoints
 // Expose endpoint for legacy CRM/ERP to POST publications
 app.post("/api/legacy/publications", async (req, res) => {
