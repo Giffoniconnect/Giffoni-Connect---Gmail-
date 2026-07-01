@@ -1,0 +1,109 @@
+{
+  "entities": {
+    "Publication": {
+      "title": "Publication",
+      "description": "Judicial publication or subpoena collected from PJE, Gmail, or Legacy API",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier of the publication"
+        },
+        "processNumber": {
+          "type": "string",
+          "description": "Court case number"
+        },
+        "title": {
+          "type": "string",
+          "description": "Short title or summary of the notification"
+        },
+        "content": {
+          "type": "string",
+          "description": "Full text of the subpoena or publication"
+        },
+        "source": {
+          "type": "string",
+          "enum": ["gmail", "legacy_api", "manual", "pje"],
+          "description": "Source of the publication"
+        },
+        "category": {
+          "type": "string",
+          "enum": ["urgente", "prazo", "informativo", "audiencia"],
+          "description": "AI-categorized type of event"
+        },
+        "urgencyLevel": {
+          "type": "string",
+          "enum": ["alta", "media", "baixa"],
+          "description": "AI-determined level of urgency"
+        },
+        "subpoenaDate": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Date when the subpoena was issued or received"
+        },
+        "deadlineDays": {
+          "type": "integer",
+          "description": "Number of days in the deadline"
+        },
+        "dueDate": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Calculated final date of the deadline"
+        },
+        "actionRequired": {
+          "type": "string",
+          "description": "AI-recommended actions to be taken"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pendente", "concluido", "arquivado"],
+          "description": "Current resolution status of this publication"
+        },
+        "userId": {
+          "type": "string",
+          "description": "Owner identifier (Firebase user uid)"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp in the portal"
+        }
+      },
+      "required": ["processNumber", "content", "source", "userId", "createdAt"]
+    },
+    "ApiToken": {
+      "title": "ApiToken",
+      "description": "Access token for external systems to send publications via API",
+      "type": "object",
+      "properties": {
+        "token": {
+          "type": "string",
+          "description": "The API key token value"
+        },
+        "userId": {
+          "type": "string",
+          "description": "Owner of the token"
+        },
+        "name": {
+          "type": "string",
+          "description": "Friendly name of the external system"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["token", "userId", "name", "createdAt"]
+    }
+  },
+  "firestore": {
+    "publications/{publicationId}": {
+      "schema": "Publication",
+      "description": "Judicial publications and subpoena records"
+    },
+    "api_tokens/{tokenId}": {
+      "schema": "ApiToken",
+      "description": "Authorization tokens for legacy system API integration"
+    }
+  }
+}

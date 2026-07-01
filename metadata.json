@@ -1,0 +1,6 @@
+{
+  "name": "Portal BOSS - Administrador Jurídico",
+  "description": "Administração automatizada de publicações judiciais, pushes, PJE e centralização de prazos com inteligência artificial.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
