@@ -487,6 +487,452 @@ app.post("/api/legacy/tokens", (req, res) => {
   return res.json({ token: newToken, name: name, createdAt: new Date().toISOString() });
 });
 
+// Helper function to fetch Gmail stats for a custom search query with full pagination
+async function fetchGmailStatsForQuery(accessToken: string, queryStr: string) {
+  try {
+    let totalCount = 0;
+    let nextPageToken: string | undefined = undefined;
+    let newestMessageId: string | null = null;
+
+    do {
+      const url: string = `https://gmail.googleapis.com/v1/users/me/messages?q=${encodeURIComponent(queryStr)}&maxResults=500${nextPageToken ? `&pageToken=${nextPageToken}` : ''}`;
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`Erro na listagem da API do Gmail: ${errText}`);
+      }
+      
+      const data = await res.json() as { messages?: Array<{ id: string, threadId: string }>, nextPageToken?: string };
+      if (data.messages && data.messages.length > 0) {
+        if (!newestMessageId) {
+          newestMessageId = data.messages[0].id;
+        }
+        totalCount += data.messages.length;
+      }
+      nextPageToken = data.nextPageToken;
+    } while (nextPageToken);
+
+    let unreadQuery = queryStr;
+    if (!queryStr.includes("is:unread") && !queryStr.includes("is:read")) {
+      unreadQuery = `(${queryStr}) is:unread`;
+    }
+
+    let unreadCount = 0;
+    let nextUnreadPageToken: string | undefined = undefined;
+
+    do {
+      const url: string = `https://gmail.googleapis.com/v1/users/me/messages?q=${encodeURIComponent(unreadQuery)}&maxResults=500${nextUnreadPageToken ? `&pageToken=${nextUnreadPageToken}` : ''}`;
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`Erro na listagem de mensagens não lidas no Gmail: ${errText}`);
+      }
+      
+      const data = await res.json() as { messages?: Array<{ id: string, threadId: string }>, nextPageToken?: string };
+      if (data.messages) {
+        unreadCount += data.messages.length;
+      }
+      nextUnreadPageToken = data.nextPageToken;
+    } while (nextUnreadPageToken);
+
+    let newestSubject = "Nenhum e-mail recente";
+    let newestDate: string | null = null;
+
+    if (newestMessageId) {
+      const detailUrl = `https://gmail.googleapis.com/v1/users/me/messages/${newestMessageId}?format=metadata&metadataHeaders=subject&metadataHeaders=date`;
+      const detailRes = await fetch(detailUrl, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+
+      if (detailRes.ok) {
+        const detailData = await detailRes.json() as any;
+        const headers = detailData.payload?.headers || [];
+        newestSubject = headers.find((h: any) => h.name.toLowerCase() === "subject")?.value || "Sem Assunto";
+        const dateHeader = headers.find((h: any) => h.name.toLowerCase() === "date")?.value;
+        newestDate = dateHeader ? new Date(dateHeader).toISOString() : null;
+      }
+    }
+
+    return {
+      query: queryStr,
+      totalCount,
+      unreadCount,
+      newestSubject,
+      newestDate,
+      success: true
+    };
+  } catch (error: any) {
+    console.error(`Erro ao buscar estatísticas do Gmail para query (${queryStr}):`, error);
+    return {
+      query: queryStr,
+      totalCount: 0,
+      unreadCount: 0,
+      newestSubject: "Erro de conexão",
+      newestDate: null,
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+// Prius Integration Real-check Endpoint
+app.post("/api/prius/sync", async (req, res) => {
+  const { accessToken } = req.body;
+  if (!accessToken) {
+    return res.status(400).json({ error: "Access token do Google/Gmail não fornecido." });
+  }
+
+  try {
+    const queryStr = `in:inbox (from:(prius) OR subject:(prius) OR "PRIUS")`;
+    const stats = await fetchGmailStatsForQuery(accessToken, queryStr);
+    
+    return res.json({ 
+      success: stats.success, 
+      count: stats.totalCount, 
+      unreadCount: stats.unreadCount,
+      newestSubject: stats.newestSubject,
+      newestDate: stats.newestDate,
+      error: stats.error || null,
+      publications: [] 
+    });
+  } catch (error: any) {
+    console.error("Erro no sync Prius:", error);
+    return res.status(500).json({ error: "Falha na varredura do Prius via Gmail: " + error.message });
+  }
+});
+
+// Recorte Digital Integration Real-check Endpoint
+app.post("/api/recorte-digital/sync", async (req, res) => {
+  const { accessToken, serviceId } = req.body;
+  if (!accessToken) {
+    return res.status(400).json({ error: "Access token do Google/Gmail não fornecido." });
+  }
+
+  if (!serviceId) {
+    return res.status(400).json({ error: "Service ID não fornecido." });
+  }
+
+  try {
+    // Map serviceId to its respective Gmail query
+    let queryStr = "";
+    if (serviceId === 'oab-mg') {
+      queryStr = `in:inbox ("Recorte Digital" "OAB/MG")`;
+    } else if (serviceId === 'rj') {
+      queryStr = `in:inbox ("Recorte Digital" "RJ")`;
+    } else if (serviceId === 'ceara') {
+      queryStr = `in:inbox ("Recorte Digital" "Ceará")`;
+    } else if (serviceId === 'sao-paulo') {
+      queryStr = `in:inbox ("Recorte Digital" "São Paulo")`;
+    } else {
+      queryStr = `in:inbox ("Recorte Digital" "${serviceId}")`;
+    }
+
+    const stats = await fetchGmailStatsForQuery(accessToken, queryStr);
+    
+    return res.json({ 
+      success: stats.success, 
+      count: stats.totalCount, 
+      unreadCount: stats.unreadCount,
+      newestSubject: stats.newestSubject,
+      newestDate: stats.newestDate,
+      error: stats.error || null,
+      publications: [] 
+    });
+  } catch (error: any) {
+    console.error(`Erro no sync Recorte Digital (${serviceId}):`, error);
+    return res.status(500).json({ error: "Falha na varredura do Recorte Digital via Gmail: " + error.message });
+  }
+});
+
+// Helper to decode Gmail base64
+function decodeBase64(data: string): string {
+  const normalized = data.replace(/-/g, '+').replace(/_/g, '/');
+  return Buffer.from(normalized, 'base64').toString('utf-8');
+}
+
+// Helper to recursively parse message body parts
+function parseBodyAndAttachments(payload: any): { bodyText: string; hasAttachments: boolean; attachments: any[] } {
+  let bodyText = "";
+  let hasAttachments = false;
+  const attachments: any[] = [];
+
+  function traverseParts(parts: any[]) {
+    for (const part of parts) {
+      if (part.filename && part.filename.length > 0) {
+        hasAttachments = true;
+        attachments.push({
+          filename: part.filename,
+          mimeType: part.mimeType,
+          size: part.body?.size || 0,
+          attachmentId: part.body?.attachmentId
+        });
+      }
+      
+      if (part.mimeType === "text/plain" && part.body?.data) {
+        bodyText += decodeBase64(part.body.data);
+      } else if (part.mimeType === "text/html" && part.body?.data && !bodyText) {
+        const html = decodeBase64(part.body.data);
+        bodyText += html.replace(/<[^>]*>/g, " "); // simple HTML tag strip
+      }
+
+      if (part.parts) {
+        traverseParts(part.parts);
+      }
+    }
+  }
+
+  if (payload.parts) {
+    traverseParts(payload.parts);
+  } else if (payload.body?.data) {
+    if (payload.mimeType === "text/plain") {
+      bodyText = decodeBase64(payload.body.data);
+    } else if (payload.mimeType === "text/html") {
+      const html = decodeBase64(payload.body.data);
+      bodyText = html.replace(/<[^>]*>/g, " ");
+    }
+  }
+
+  return { bodyText: bodyText.trim(), hasAttachments, attachments };
+}
+
+// Extract judicial metadata using smart rules
+function extractJudicialInfo(subject: string, bodyText: string, snippet: string) {
+  const fullText = `${subject}\n${snippet}\n${bodyText}`;
+
+  // 1. CNJ standard format: 0000000-00.0000.0.00.0000
+  const cnjRegex = /(\d{7})[-.\s]?(\d{2})[-.\s]?(\d{4})[-.\s]?(\d)[-.\s]?(\d{2})[-.\s]?(\d{4})/g;
+  const cnjMatches = [...fullText.matchAll(cnjRegex)];
+  let processNumber = "";
+  if (cnjMatches.length > 0) {
+    const m = cnjMatches[0];
+    processNumber = `${m[1]}-${m[2]}.${m[3]}.${m[4]}.${m[5]}.${m[6]}`;
+  }
+
+  // 2. Identify Court / Tribunal
+  let tribunal = "";
+  if (processNumber) {
+    const parts = processNumber.split('.');
+    if (parts.length >= 5) {
+      const jCode = parts[3]; 
+      const trCode = parts[4]; 
+      if (jCode === '5' && trCode === '03') {
+        tribunal = "TRT-3 (MG)";
+      } else if (jCode === '8' && trCode === '13') {
+        tribunal = "TJMG";
+      } else if (jCode === '1' && trCode === '06') {
+        tribunal = "TRF-6";
+      } else {
+        tribunal = `Tribunal (Código ${jCode}.${trCode})`;
+      }
+    }
+  }
+
+  if (!tribunal) {
+    if (/trt\s?3|trt3|tribunal regional do trabalho da 3/i.test(fullText)) {
+      tribunal = "TRT-3 (MG)";
+    } else if (/tjmg|tribunal de justi\u00e7a de minas gerais/i.test(fullText)) {
+      tribunal = "TJMG";
+    } else if (/trf\s?6|trf6|tribunal regional federal da 6/i.test(fullText)) {
+      tribunal = "TRF-6";
+    } else if (/pje/i.test(fullText)) {
+      tribunal = "PJe";
+    } else if (/eproc/i.test(fullText)) {
+      tribunal = "Eproc";
+    } else {
+      tribunal = "Não identificado";
+    }
+  }
+
+  // 3. Vara
+  let vara = "";
+  const varaMatch = fullText.match(/(?:vara|juizado|c\u00e2mara|ju\u00edzo)\s+[^,\n.\r]{1,40}/i);
+  if (varaMatch) {
+    vara = varaMatch[0].trim();
+  } else {
+    vara = "Não identificada";
+  }
+
+  // 4. Classe processual
+  let classe = "";
+  const classMatch = fullText.match(/(?:classe|procedimento|tipo|a\u00e7\u00e3o):\s*([^,\n.\r]{2,40})/i);
+  if (classMatch) {
+    classe = classMatch[1].trim();
+  } else {
+    classe = "Não identificada";
+  }
+
+  // 5. Parts (Author/Defendant)
+  let autor = "";
+  let reu = "";
+  
+  const reqMatch = fullText.match(/(?:autor|reclamante|requerente|impetrante|polo ativo|recorrente):\s*([^,\n.\r]{2,50})/i);
+  if (reqMatch) {
+    autor = reqMatch[1].trim();
+  } else {
+    autor = "Não identificado";
+  }
+
+  const resMatch = fullText.match(/(?:r\u00e9u|reclamado|requerido|impetrado|polo passivo|recorrido):\s*([^,\n.\r]{2,50})/i);
+  if (resMatch) {
+    reu = resMatch[1].trim();
+  } else {
+    reu = "Não identificado";
+  }
+
+  // 6. Tipo de Movimentação
+  let movementType = "";
+  const movMatch = fullText.match(/(?:movimenta\u00e7\u00e3o|evento|tipo de ato|assunto):\s*([^,\n.\r]{2,60})/i);
+  if (movMatch) {
+    movementType = movMatch[1].trim();
+  } else if (/audi\u00eancia/i.test(fullText)) {
+    movementType = "Audiência Designada/Intimação";
+  } else if (/senten\u00e7a|decis\u00e3o/i.test(fullText)) {
+    movementType = "Sentença / Decisão Proferida";
+  } else if (/despacho/i.test(fullText)) {
+    movementType = "Despacho Publicado";
+  } else {
+    movementType = "Publicação Geral";
+  }
+
+  return {
+    processNumber: processNumber || "Não identificado",
+    tribunal,
+    vara,
+    classe,
+    autor,
+    reu,
+    movementType
+  };
+}
+
+// Endpoint to list all messages IDs from Gmail for a sender or a custom query
+app.post("/api/gmail-messages-list", async (req, res) => {
+  const { accessToken, sender, query: clientQuery, filter } = req.body;
+
+  if (!accessToken) {
+    return res.status(400).json({ error: "Access token do Gmail não fornecido." });
+  }
+
+  try {
+    let query = "";
+    if (clientQuery) {
+      query = clientQuery;
+    } else if (sender) {
+      query = `in:inbox from:(${sender})`;
+    } else {
+      return res.status(400).json({ error: "Sender ou Query do Gmail não fornecido." });
+    }
+
+    if (filter === 'unread' && !query.includes("is:unread") && !query.includes("is:read")) {
+      query = `(${query}) is:unread`;
+    }
+
+    const messageIds: string[] = [];
+    let nextPageToken: string | undefined = undefined;
+
+    do {
+      const url: string = `https://gmail.googleapis.com/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=500${nextPageToken ? `&pageToken=${nextPageToken}` : ''}`;
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`Erro na listagem da API do Gmail: ${errText}`);
+      }
+
+      const data = await response.json() as { messages?: Array<{ id: string, threadId: string }>, nextPageToken?: string };
+      if (data.messages && data.messages.length > 0) {
+        data.messages.forEach(m => {
+          if (m.id && !messageIds.includes(m.id)) {
+            messageIds.push(m.id);
+          }
+        });
+      }
+      nextPageToken = data.nextPageToken;
+    } while (nextPageToken);
+
+    return res.json({ success: true, messageIds, totalCount: messageIds.length });
+  } catch (error: any) {
+    console.error("Erro no endpoint /api/gmail-messages-list:", error);
+    return res.status(500).json({ error: "Falha ao recuperar a lista de mensagens do Gmail: " + error.message });
+  }
+});
+
+// Endpoint to get details for multiple message IDs in batch
+app.post("/api/gmail-messages-details", async (req, res) => {
+  const { accessToken, messageIds } = req.body;
+
+  if (!accessToken) {
+    return res.status(400).json({ error: "Access token do Gmail não fornecido." });
+  }
+
+  if (!messageIds || !Array.isArray(messageIds) || messageIds.length === 0) {
+    return res.status(400).json({ error: "Array messageIds inválido ou vazio." });
+  }
+
+  try {
+    const detailsPromises = messageIds.map(async (id) => {
+      try {
+        const detailUrl = `https://gmail.googleapis.com/v1/users/me/messages/${id}?format=full`;
+        const detailRes = await fetch(detailUrl, {
+          headers: { Authorization: `Bearer ${accessToken}` }
+        });
+
+        if (!detailRes.ok) {
+          return { id, success: false, error: `Erro HTTP ${detailRes.status}` };
+        }
+
+        const detailData = await detailRes.json() as any;
+        const headers = detailData.payload?.headers || [];
+        
+        const subject = headers.find((h: any) => h.name.toLowerCase() === "subject")?.value || "Sem Assunto";
+        const from = headers.find((h: any) => h.name.toLowerCase() === "from")?.value || "Desconhecido";
+        const to = headers.find((h: any) => h.name.toLowerCase() === "to")?.value || "Desconhecido";
+        const dateHeader = headers.find((h: any) => h.name.toLowerCase() === "date")?.value || "";
+        const emailDate = dateHeader ? new Date(dateHeader).toISOString() : new Date().toISOString();
+        const snippet = detailData.snippet || "";
+        
+        const labelIds = detailData.labelIds || [];
+        const isUnread = labelIds.includes("UNREAD");
+
+        const { bodyText, hasAttachments, attachments } = parseBodyAndAttachments(detailData.payload || {});
+        
+        const judicialInfo = extractJudicialInfo(subject, bodyText, snippet);
+
+        return {
+          id,
+          success: true,
+          subject,
+          from,
+          to,
+          date: emailDate,
+          snippet,
+          isUnread,
+          hasAttachments,
+          attachments,
+          bodyText,
+          ...judicialInfo
+        };
+      } catch (err: any) {
+        return { id, success: false, error: err.message };
+      }
+    });
+
+    const results = await Promise.all(detailsPromises);
+    return res.json({ success: true, messages: results });
+  } catch (error: any) {
+    console.error("Erro no endpoint /api/gmail-messages-details:", error);
+    return res.status(500).json({ error: "Falha ao obter os detalhes das mensagens do Gmail: " + error.message });
+  }
+});
+
 // Serve static build in production or mount Vite middleware in development
 async function startServer() {
   if (process.env.NODE_ENV === "production") {

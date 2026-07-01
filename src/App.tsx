@@ -49,12 +49,55 @@ export default function App() {
   ]);
 
   // App control states
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'publications' | 'deadlines' | 'gmail' | 'api' | 'new-pub' | 'pushes' | 'consulta.prius' | 'consulta.recorte-digital' | 'configuracoes.gmail'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'login' | 'dashboard' | 'publications' | 'deadlines' | 'gmail' | 'api' | 'new-pub' | 'pushes' | 'consulta.prius' | 'consulta.recorte-digital' | 'configuracoes.gmail'>('login');
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [copiedTokenId, setCopiedTokenId] = useState<string | null>(null);
   const [selectedPub, setSelectedPub] = useState<Publication | null>(null);
+
+  // Secure Auth & Auto-update states
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [hasAutoUpdated, setHasAutoUpdated] = useState<boolean>(false);
+  const [isGeneralUpdating, setIsGeneralUpdating] = useState<boolean>(false);
+
+  // Prius State
+  const [priusState, setPriusState] = useState<{
+    status: 'desconectado' | 'erro' | 'conectado';
+    lastUpdated: string | null;
+    totalImported: number;
+    unreadCount?: number;
+    newestSubject?: string;
+    newestDate?: string | null;
+    error: string | null;
+    isLoading: boolean;
+  }>({
+    status: 'desconectado',
+    lastUpdated: null,
+    totalImported: 0,
+    unreadCount: 0,
+    newestSubject: "Não consultado",
+    newestDate: null,
+    error: null,
+    isLoading: false
+  });
+
+  // Recorte Digital States
+  const [recorteStates, setRecorteStates] = useState<Record<string, {
+    status: 'desconectado' | 'erro' | 'conectado';
+    lastUpdated: string | null;
+    totalCount?: number;
+    unreadCount?: number;
+    newestSubject?: string;
+    newestDate?: string | null;
+    error: string | null;
+    isLoading: boolean;
+  }>>({
+    'oab-mg': { status: 'desconectado', lastUpdated: null, totalCount: 0, unreadCount: 0, newestSubject: "Não consultado", newestDate: null, error: null, isLoading: false },
+    'rj': { status: 'desconectado', lastUpdated: null, totalCount: 0, unreadCount: 0, newestSubject: "Não consultado", newestDate: null, error: null, isLoading: false },
+    'ceara': { status: 'desconectado', lastUpdated: null, totalCount: 0, unreadCount: 0, newestSubject: "Não consultado", newestDate: null, error: null, isLoading: false },
+    'sao-paulo': { status: 'desconectado', lastUpdated: null, totalCount: 0, unreadCount: 0, newestSubject: "Não consultado", newestDate: null, error: null, isLoading: false },
+  });
 
   // Helper to determine if a publication was recently checked (same day or yesterday)
   const checkRecentlyConferred = (pub: Publication, allPubs: Publication[]) => {
@@ -111,7 +154,28 @@ export default function App() {
   useEffect(() => {
     const handlePopState = () => {
       const path = window.location.pathname.replace(/^\//, '');
-      if (path === 'configuracoes.gmail') {
+      const isAuthenticated = user && user.email === 'direito.rgr@gmail.com';
+
+      if (!isAuthenticated) {
+        setActiveTab('login');
+        try {
+          if (window.location.pathname !== '/login') {
+            window.history.replaceState(null, '', '/login');
+          }
+        } catch (e) {
+          console.warn('History API block warning:', e);
+        }
+        return;
+      }
+
+      if (path === 'login' || path === '') {
+        setActiveTab('dashboard');
+        try {
+          window.history.replaceState(null, '', '/dashboard');
+        } catch (e) {
+          console.warn('History API block warning:', e);
+        }
+      } else if (path === 'configuracoes.gmail') {
         setActiveTab('configuracoes.gmail');
       } else if (path === 'consulta.prius') {
         setActiveTab('consulta.prius');
@@ -129,18 +193,35 @@ export default function App() {
         setActiveTab('api');
       } else if (path === 'new-pub') {
         setActiveTab('new-pub');
-      } else if (path === 'dashboard' || path === '') {
+      } else {
         setActiveTab('dashboard');
+        try {
+          window.history.replaceState(null, '', '/dashboard');
+        } catch (e) {
+          console.warn('History API block warning:', e);
+        }
       }
     };
 
     window.addEventListener('popstate', handlePopState);
-    handlePopState(); // run initial sync
+    if (!authLoading) {
+      handlePopState(); // run initial sync only after authLoading is complete
+    }
 
     return () => window.removeEventListener('popstate', handlePopState);
-  }, [user]); // re-run if user changes to bind user email
+  }, [user, authLoading]); // re-run if user or authLoading changes to bind user email
 
   const handleTabChange = (tab: string) => {
+    const isAuthenticated = user && user.email === 'direito.rgr@gmail.com';
+    if (!isAuthenticated && tab !== 'login') {
+      setActiveTab('login');
+      try {
+        window.history.pushState(null, '', '/login');
+      } catch (e) {
+        console.warn('History API block warning:', e);
+      }
+      return;
+    }
     setActiveTab(tab as any);
     try {
       window.history.pushState(null, '', '/' + tab);
@@ -180,6 +261,201 @@ export default function App() {
   const [globalPushesLoading, setGlobalPushesLoading] = useState(false);
   const [pushesLastUpdated, setPushesLastUpdated] = useState<string | null>(null);
   const [pushesError, setPushesError] = useState<string | null>(null);
+
+  // Gmail Explorer states
+  const [isGmailExplorerOpen, setIsGmailExplorerOpen] = useState(false);
+  const [explorerSource, setExplorerSource] = useState<{ name: string; sender: string } | null>(null);
+  const [explorerFilter, setExplorerFilter] = useState<'all' | 'unread'>('all');
+  const [explorerMessageIds, setExplorerMessageIds] = useState<string[]>([]);
+  const [explorerMessages, setExplorerMessages] = useState<any[]>([]);
+  const [explorerListLoading, setExplorerListLoading] = useState(false);
+  const [explorerDetailsLoading, setExplorerDetailsLoading] = useState(false);
+  const [explorerSearch, setExplorerSearch] = useState('');
+  const [explorerQuickFilter, setExplorerQuickFilter] = useState<'all' | 'unread' | 'read' | 'hasAttachments' | '24h' | '7d' | '30d'>('all');
+  const [explorerSortKey, setExplorerSortKey] = useState<'date' | 'sender' | 'process' | 'tribunal'>('date');
+  const [selectedEmailDetail, setSelectedEmailDetail] = useState<any | null>(null);
+  const [emailDetailsLoading, setEmailDetailsLoading] = useState(false);
+  const [copiedText, setCopiedText] = useState<string | null>(null);
+
+  const handleCopyText = (text: string, label: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedText(label);
+    addSystemLog('info', `${label} copiado para a área de transferência.`);
+    setTimeout(() => setCopiedText(null), 2000);
+  };
+
+  const openGmailExplorer = async (source: { name: string; sender?: string; query?: string }, filter: 'all' | 'unread') => {
+    setIsGmailExplorerOpen(true);
+    setExplorerSource({ name: source.name, sender: source.sender || source.query || '' });
+    setExplorerFilter(filter);
+    setExplorerQuickFilter(filter === 'unread' ? 'unread' : 'all');
+    setExplorerMessageIds([]);
+    setExplorerMessages([]);
+    setExplorerSearch('');
+    setSelectedEmailDetail(null);
+    setExplorerListLoading(true);
+    addSystemLog('info', `Abrindo central de e-mails para ${source.name} (${filter === 'unread' ? 'não lidos' : 'todos'})...`, 'gmail_sync');
+
+    try {
+      const bodyParams: any = {
+        accessToken: cachedToken,
+        filter: filter
+      };
+
+      if (source.query) {
+        bodyParams.query = source.query;
+      } else if (source.sender) {
+        bodyParams.sender = source.sender === 'all_senders' ? PUSH_SOURCES.map(s => s.sender).join(' OR ') : source.sender;
+      } else {
+        bodyParams.sender = 'all_senders';
+      }
+
+      const response = await fetch("/api/gmail-messages-list", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(bodyParams)
+      });
+
+      if (!response.ok) {
+        const errJson = await response.json();
+        throw new Error(errJson.error || "Erro ao obter lista de e-mails do Gmail.");
+      }
+
+      const data = await response.json();
+      setExplorerMessageIds(data.messageIds || []);
+      
+      if (data.messageIds && data.messageIds.length > 0) {
+        await loadBatchDetails(data.messageIds.slice(0, 15), []);
+      }
+    } catch (err: any) {
+      console.error(err);
+      addSystemLog('error', `Falha ao carregar listagem de e-mails: ${err.message}`, 'gmail_sync');
+    } finally {
+      setExplorerListLoading(false);
+    }
+  };
+
+  const loadBatchDetails = async (idsToFetch: string[], currentMessages: any[]) => {
+    if (idsToFetch.length === 0) return;
+    setExplorerDetailsLoading(true);
+    try {
+      const response = await fetch("/api/gmail-messages-details", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accessToken: cachedToken,
+          messageIds: idsToFetch
+        })
+      });
+
+      if (!response.ok) {
+        const errJson = await response.json();
+        throw new Error(errJson.error || "Erro ao carregar detalhes dos e-mails.");
+      }
+
+      const data = await response.json();
+      if (data.messages) {
+        setExplorerMessages(prev => {
+          const list = prev.length > 0 ? prev : currentMessages;
+          const existingIds = list.map(m => m.id);
+          const newMessages = data.messages.filter((m: any) => m.success && !existingIds.includes(m.id));
+          return [...list, ...newMessages];
+        });
+      }
+    } catch (err: any) {
+      console.error(err);
+      addSystemLog('error', `Falha ao carregar detalhes de mensagens do Gmail: ${err.message}`, 'gmail_sync');
+    } finally {
+      setExplorerDetailsLoading(false);
+    }
+  };
+
+  const handleLoadMore = async () => {
+    const loadedCount = explorerMessages.length;
+    const nextBatch = explorerMessageIds.slice(loadedCount, loadedCount + 15);
+    await loadBatchDetails(nextBatch, explorerMessages);
+  };
+
+  const handleMarkAsConferred = async (email: any) => {
+    try {
+      const isProcessValid = email.processNumber && email.processNumber !== 'Não identificado';
+      const processNum = isProcessValid ? email.processNumber : "Não identificado";
+
+      const newPub: Publication = {
+        id: `gmail-checked-${Date.now()}`,
+        processNumber: processNum,
+        title: email.subject || "E-mail de Push",
+        content: `Remetente: ${email.from}\nDestinatário: ${email.to}\nData do E-mail: ${new Date(email.date).toLocaleString('pt-BR')}\n\nSnippet: ${email.snippet}\n\nConteúdo Integral:\n${email.bodyText || ''}`,
+        source: "gmail",
+        category: "informativo",
+        urgencyLevel: "baixa",
+        subpoenaDate: email.date || new Date().toISOString(),
+        deadlineDays: 0,
+        dueDate: email.date || new Date().toISOString(),
+        actionRequired: "Conferido manualmente a partir da central de pushes.",
+        status: "concluido",
+        userId: user?.uid || "demo-user",
+        createdAt: new Date().toISOString()
+      };
+
+      if (user) {
+        const docRef = await addDoc(collection(db, "publications"), newPub);
+        newPub.id = docRef.id;
+      }
+
+      setPublications(prev => [newPub, ...prev]);
+      addSystemLog('success', `E-mail "${email.subject}" marcado como conferido com sucesso. Processo: ${processNum}`);
+      
+      setExplorerMessages(prev => prev.map(m => m.id === email.id ? { ...m, isConferred: true } : m));
+      if (selectedEmailDetail?.id === email.id) {
+        setSelectedEmailDetail((prev: any) => prev ? { ...prev, isConferred: true } : null);
+      }
+    } catch (err: any) {
+      console.error(err);
+      addSystemLog('error', `Falha ao marcar e-mail como conferido: ${err.message}`);
+    }
+  };
+
+  const handleRefreshSingleEmail = async (id: string) => {
+    setEmailDetailsLoading(true);
+    try {
+      const response = await fetch("/api/gmail-messages-details", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accessToken: cachedToken,
+          messageIds: [id]
+        })
+      });
+
+      if (!response.ok) {
+        const errJson = await response.json();
+        throw new Error(errJson.error || "Erro ao recarregar e-mail.");
+      }
+
+      const data = await response.json();
+      if (data.messages && data.messages.length > 0) {
+        const updatedMsg = data.messages[0];
+        if (updatedMsg.success) {
+          setExplorerMessages(prev => prev.map(m => m.id === id ? updatedMsg : m));
+          if (selectedEmailDetail?.id === id) {
+            setSelectedEmailDetail(updatedMsg);
+          }
+          addSystemLog('success', `E-mail "${updatedMsg.subject}" atualizado com sucesso.`, 'gmail_sync');
+        }
+      }
+    } catch (err: any) {
+      console.error(err);
+      addSystemLog('error', `Falha ao atualizar informações do e-mail: ${err.message}`, 'gmail_sync');
+    } finally {
+      setEmailDetailsLoading(false);
+    }
+  };
+
+  const getConferenciaHistory = (processNumber: string) => {
+    if (!processNumber || processNumber === 'Não identificado') return [];
+    return publications.filter(p => p.processNumber === processNumber);
+  };
 
   // Load initial pushes from localStorage if any
   useEffect(() => {
@@ -312,16 +588,54 @@ export default function App() {
   // Subscribe to auth state changes
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      setUser(currentUser);
-      setAuthLoading(false);
-      
       if (currentUser) {
+        if (currentUser.email !== 'direito.rgr@gmail.com') {
+          // Block immediately
+          await signOut(auth);
+          setUser(null);
+          setCachedToken(null);
+          setLoginError('Usuário não autorizado para acessar este sistema.');
+          setAuthLoading(false);
+          setActiveTab('login');
+          try {
+            window.history.replaceState(null, '', '/login');
+          } catch (e) {
+            console.warn('History API block warning:', e);
+          }
+          return;
+        }
+
+        setUser(currentUser);
+        setAuthLoading(false);
+        setLoginError(null);
         // Load data from firestore
         await loadUserPublications(currentUser.uid);
         addSystemLog('info', `Usuário ${currentUser.email} autenticado com sucesso.`);
+
+        // Redirect to dashboard if currently on /login or default path
+        const path = window.location.pathname.replace(/^\//, '');
+        if (path === 'login' || path === '') {
+          setActiveTab('dashboard');
+          try {
+            window.history.replaceState(null, '', '/dashboard');
+          } catch (e) {
+            console.warn('History API block warning:', e);
+          }
+        }
       } else {
-        // Fallback to local storage or initial mockup data
+        setUser(null);
         setCachedToken(null);
+        setAuthLoading(false);
+        setActiveTab('login');
+        try {
+          if (window.location.pathname !== '/login') {
+            window.history.replaceState(null, '', '/login');
+          }
+        } catch (e) {
+          console.warn('History API block warning:', e);
+        }
+
+        // Fallback to local storage or initial mockup data
         const stored = localStorage.getItem('boss_publications');
         if (stored) {
           try {
@@ -343,6 +657,13 @@ export default function App() {
       localStorage.setItem('boss_publications', JSON.stringify(publications));
     }
   }, [publications, user]);
+
+  // Auto-fetch pushes when user enters pushes tab
+  useEffect(() => {
+    if (activeTab === 'pushes' && cachedToken) {
+      fetchAllPushes();
+    }
+  }, [activeTab, cachedToken]);
 
   // Load from firestore
   const loadUserPublications = async (uid: string) => {
@@ -391,16 +712,46 @@ export default function App() {
 
   // Google Sign In & Get Gmail Token
   const handleGoogleLogin = async () => {
+    setLoginError(null);
     try {
       const result = await signInWithPopup(auth, googleProvider);
       const credential = GoogleAuthProvider.credentialFromResult(result);
       const token = credential?.accessToken;
+
+      const loggedEmail = result.user?.email;
+      if (loggedEmail !== 'direito.rgr@gmail.com') {
+        // Sign out immediately and block
+        await signOut(auth);
+        setCachedToken(null);
+        setLoginError('Usuário não autorizado para acessar este sistema.');
+        addSystemLog('error', `Acesso negado para o e-mail não autorizado: ${loggedEmail}`);
+        setActiveTab('login');
+        try {
+          window.history.replaceState(null, '', '/login');
+        } catch (e) {
+          console.warn('History API block warning:', e);
+        }
+        return;
+      }
+
       if (token) {
         setCachedToken(token);
         addSystemLog('success', 'Autorização do Gmail obtida com sucesso.', 'gmail_sync');
       }
+
+      // Clear any errors
+      setLoginError(null);
+
+      // Redirect to dashboard
+      setActiveTab('dashboard');
+      try {
+        window.history.replaceState(null, '', '/dashboard');
+      } catch (e) {
+        console.warn('History API block warning:', e);
+      }
     } catch (error: any) {
       console.error("Erro de autenticação Google:", error);
+      setLoginError(`Falha de autenticação com o Google: ${error.message}`);
       addSystemLog('error', `Falha de autenticação com o Google: ${error.message}`);
     }
   };
@@ -410,11 +761,149 @@ export default function App() {
       await signOut(auth);
       setCachedToken(null);
       setPublications(initialPublications);
+      setHasAutoUpdated(false);
+      setLoginError(null);
       addSystemLog('info', 'Sessão encerrada com sucesso.');
+      setActiveTab('login');
+      try {
+        window.history.replaceState(null, '', '/login');
+      } catch (e) {
+        console.warn('History API block warning:', e);
+      }
     } catch (err: any) {
       console.error(err);
     }
   };
+
+  // Dedicated sync for Prius via Gmail API
+  const syncPrius = async () => {
+    if (!cachedToken) {
+      handleGoogleLogin();
+      return;
+    }
+    setPriusState(prev => ({ ...prev, isLoading: true, error: null }));
+    addSystemLog('info', 'Sincronizando dados do Prius via Gmail...', 'gmail_sync');
+    try {
+      const res = await fetch("/api/prius/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accessToken: cachedToken })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Erro de conexão com o servidor Prius.");
+      }
+      setPriusState({
+        status: 'conectado',
+        lastUpdated: new Date().toLocaleString('pt-BR'),
+        totalImported: data.count || 0,
+        unreadCount: data.unreadCount || 0,
+        newestSubject: data.newestSubject || "Nenhum e-mail recente",
+        newestDate: data.newestDate || null,
+        error: null,
+        isLoading: false
+      });
+      addSystemLog('success', 'Sincronização com Prius via Gmail concluída com sucesso.', 'gmail_sync');
+    } catch (err: any) {
+      setPriusState(prev => ({
+        ...prev,
+        status: 'erro',
+        lastUpdated: new Date().toLocaleString('pt-BR'),
+        error: err.message,
+        isLoading: false
+      }));
+      addSystemLog('error', `Falha de integração Prius: ${err.message}`, 'gmail_sync');
+    }
+  };
+
+  // Dedicated sync for a specific Recorte Digital service via Gmail API
+  const syncRecorteService = async (serviceId: string, serviceName: string) => {
+    if (!cachedToken) {
+      handleGoogleLogin();
+      return;
+    }
+    setRecorteStates(prev => ({
+      ...prev,
+      [serviceId]: { ...(prev[serviceId] || {}), isLoading: true, error: null }
+    }));
+    addSystemLog('info', `Sincronizando ${serviceName} via Gmail...`, 'gmail_sync');
+    try {
+      const res = await fetch("/api/recorte-digital/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accessToken: cachedToken, serviceId })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Erro de conexão.");
+      }
+      setRecorteStates(prev => ({
+        ...prev,
+        [serviceId]: {
+          status: 'conectado',
+          lastUpdated: new Date().toLocaleString('pt-BR'),
+          totalCount: data.count || 0,
+          unreadCount: data.unreadCount || 0,
+          newestSubject: data.newestSubject || "Nenhum e-mail recente",
+          newestDate: data.newestDate || null,
+          error: null,
+          isLoading: false
+        }
+      }));
+      addSystemLog('success', `Integração com ${serviceName} atualizada com sucesso.`, 'gmail_sync');
+    } catch (err: any) {
+      setRecorteStates(prev => ({
+        ...prev,
+        [serviceId]: {
+          status: 'erro',
+          lastUpdated: new Date().toLocaleString('pt-BR'),
+          error: err.message,
+          isLoading: false
+        }
+      }));
+      addSystemLog('error', `Falha de integração ${serviceName}: ${err.message}`, 'gmail_sync');
+    }
+  };
+
+  // General Sincronização Automática
+  const triggerGeneralUpdate = async () => {
+    if (!cachedToken) {
+      addSystemLog('warning', 'Não foi possível iniciar a atualização geral automática: Necessário conectar ao Google.');
+      return;
+    }
+
+    setIsGeneralUpdating(true);
+    addSystemLog('info', 'Iniciando varredura e sincronização automática de todas as fontes jurídicas...', 'gmail_sync');
+
+    // 1. Update pushes
+    fetchAllPushes(); // runs asynchronously, updates pushesData and pushesLoading
+
+    // 2. Update Prius
+    await syncPrius();
+
+    // 3. Update Recorte Digital services
+    const services = [
+      { id: 'oab-mg', name: 'Recorte Digital OAB/MG' },
+      { id: 'rj', name: 'Recorte Digital RJ' },
+      { id: 'ceara', name: 'Recorte Digital Ceará' },
+      { id: 'sao-paulo', name: 'Recorte Digital São Paulo' }
+    ];
+
+    for (const service of services) {
+      await syncRecorteService(service.id, service.name);
+    }
+
+    setIsGeneralUpdating(false);
+    addSystemLog('success', 'Varredura de atualização geral automática concluída.', 'gmail_sync');
+  };
+
+  // Trigger general update on first successful authorization
+  useEffect(() => {
+    if (user && user.email === 'direito.rgr@gmail.com' && cachedToken && !hasAutoUpdated) {
+      setHasAutoUpdated(true);
+      triggerGeneralUpdate();
+    }
+  }, [user, cachedToken, hasAutoUpdated]);
 
   // Sync Gmail (scans Gmail inbox via server proxy)
   const syncGmailInbox = async () => {
@@ -733,6 +1222,128 @@ export default function App() {
     gmailSynced: publications.filter(p => p.source === 'gmail').length,
   };
 
+  // Calculations for Gmail Explorer
+  const filteredMessages = explorerMessages.filter(m => {
+    // 1. Search filter
+    if (explorerSearch.trim()) {
+      const q = explorerSearch.toLowerCase();
+      const matchSearch = 
+        m.subject?.toLowerCase().includes(q) ||
+        m.snippet?.toLowerCase().includes(q) ||
+        m.bodyText?.toLowerCase().includes(q) ||
+        m.from?.toLowerCase().includes(q) ||
+        m.processNumber?.toLowerCase().includes(q) ||
+        m.autor?.toLowerCase().includes(q) ||
+        m.reu?.toLowerCase().includes(q) ||
+        m.tribunal?.toLowerCase().includes(q);
+      
+      if (!matchSearch) return false;
+    }
+
+    // 2. Quick filter
+    if (explorerQuickFilter === 'unread') return m.isUnread;
+    if (explorerQuickFilter === 'read') return !m.isUnread;
+    if (explorerQuickFilter === 'hasAttachments') return m.hasAttachments;
+    
+    if (explorerQuickFilter === '24h') {
+      return Date.now() - new Date(m.date).getTime() < 24 * 60 * 60 * 1000;
+    }
+    if (explorerQuickFilter === '7d') {
+      return Date.now() - new Date(m.date).getTime() < 7 * 24 * 60 * 60 * 1000;
+    }
+    if (explorerQuickFilter === '30d') {
+      return Date.now() - new Date(m.date).getTime() < 30 * 24 * 60 * 60 * 1000;
+    }
+
+    return true;
+  });
+
+  const sortedMessages = [...filteredMessages].sort((a, b) => {
+    if (explorerSortKey === 'date') {
+      return new Date(b.date).getTime() - new Date(a.date).getTime();
+    }
+    if (explorerSortKey === 'sender') {
+      return (a.from || '').localeCompare(b.from || '');
+    }
+    if (explorerSortKey === 'process') {
+      return (a.processNumber || '').localeCompare(b.processNumber || '');
+    }
+    if (explorerSortKey === 'tribunal') {
+      return (a.tribunal || '').localeCompare(b.tribunal || '');
+    }
+    return 0;
+  });
+
+  if (activeTab === 'login') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-950 to-slate-900 text-white flex flex-col font-sans selection:bg-blue-500 selection:text-white">
+        <div className="flex-1 flex flex-col justify-center items-center p-6 sm:p-12 relative overflow-hidden">
+          {/* Decorative gradients */}
+          <div className="absolute -top-40 -left-40 w-96 h-96 rounded-full bg-blue-500/10 blur-[120px] pointer-events-none" />
+          <div className="absolute -bottom-40 -right-40 w-96 h-96 rounded-full bg-purple-500/10 blur-[120px] pointer-events-none" />
+
+          <div className="w-full max-w-md space-y-8 relative z-10 animate-fade-in">
+            {/* Logo */}
+            <div className="flex flex-col items-center gap-3">
+              <div className="w-14 h-14 bg-blue-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-500/25">
+                <div className="w-7 h-7 border-4 border-white rotate-45"></div>
+              </div>
+              <div className="flex flex-col items-center">
+                <span className="text-3xl font-extrabold tracking-tight text-white leading-none">
+                  PORTAL<span className="text-blue-500">BOSS</span>
+                </span>
+                <span className="text-[10px] text-blue-400 font-bold uppercase tracking-widest mt-2 font-mono">
+                  Administrador Jurídico Inteligente
+                </span>
+              </div>
+            </div>
+
+            {/* Login Card */}
+            <div className="bg-slate-900/60 border border-slate-800 backdrop-blur-md rounded-3xl p-8 shadow-2xl space-y-6">
+              <div className="space-y-2 text-center">
+                <h2 className="text-xl font-bold tracking-tight text-slate-100">Controle de Ingressos</h2>
+                <p className="text-xs text-slate-400 max-w-xs mx-auto leading-relaxed">
+                  Sistema integrado de varredura automatizada, conferência inteligente e classificação com Inteligência Artificial em tempo real.
+                </p>
+              </div>
+
+              {loginError && (
+                <div className="bg-red-950/50 border border-red-500/30 text-red-400 p-4 rounded-xl text-xs flex items-start gap-2.5 animate-pulse">
+                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                  <span className="font-semibold leading-relaxed">{loginError}</span>
+                </div>
+              )}
+
+              <button
+                id="btn-login-google"
+                onClick={handleGoogleLogin}
+                className="w-full bg-white hover:bg-slate-100 text-slate-900 font-extrabold text-xs py-4 px-6 rounded-2xl flex items-center justify-center gap-3 transition shadow-lg hover:shadow-white/10 active:scale-[0.98]"
+              >
+                <svg className="h-4 w-4" viewBox="0 0 24 24">
+                  <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                  <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                  <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22-.19-.63z" />
+                  <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+                </svg>
+                Entrar com Conta do Google
+              </button>
+
+              <div className="bg-slate-950/40 border border-slate-800/60 rounded-2xl p-4 text-[10px] text-slate-500 text-center leading-normal">
+                <span className="font-bold text-slate-400 block mb-1 uppercase tracking-wider">Aviso de Segurança</span>
+                O Portal BOSS utiliza o fluxo oficial de login do Google. Nós **não** solicitamos, armazenamos ou visualizamos a sua senha do Gmail.
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="text-center text-[10px] text-slate-600">
+              Desenvolvido exclusivamente para direito.rgr@gmail.com.
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans selection:bg-blue-500 selection:text-white text-slate-800">
       {/* Top Header Navigation */}
@@ -941,12 +1552,26 @@ export default function App() {
             </div>
           </div>
 
-          <div className="p-4 bg-slate-900 rounded-lg text-white">
-            <p className="text-[10px] opacity-70 uppercase tracking-wider">API Status</p>
-            <div className="flex items-center gap-2 mt-1.5">
-              <div className="w-2 h-2 rounded-full bg-emerald-400"></div>
-              <p className="text-xs font-medium">Sistemas Conectados</p>
+          <div className="space-y-3">
+            <div className="p-4 bg-slate-900 rounded-xl text-white">
+              <p className="text-[10px] opacity-70 uppercase tracking-wider">API Status</p>
+              <div className="flex items-center gap-2 mt-1.5">
+                <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
+                <p className="text-xs font-medium">Sistemas Conectados</p>
+              </div>
             </div>
+
+            <button
+              id="btn-sidebar-logout"
+              onClick={handleSignOut}
+              className="w-full flex items-center justify-between px-4 py-3 text-xs font-bold text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100/80 rounded-xl border border-red-100 transition active:scale-[0.98]"
+            >
+              <span className="flex items-center gap-2">
+                <LogOut className="h-4 w-4" />
+                Sair do Sistema
+              </span>
+              <ChevronRight className="h-3.5 w-3.5" />
+            </button>
           </div>
         </nav>
 
@@ -977,6 +1602,19 @@ export default function App() {
         {/* 1. TAB: DASHBOARD */}
         {activeTab === 'dashboard' && (
           <div className="space-y-8 animate-fade-in">
+            {isGeneralUpdating && (
+              <div className="bg-blue-50/70 border border-blue-200 rounded-2xl p-5 flex items-center justify-between gap-4 text-blue-900 animate-pulse">
+                <div className="flex items-center gap-3">
+                  <RefreshCw className="h-5 w-5 text-blue-600 animate-spin" />
+                  <div>
+                    <h4 className="font-bold text-sm">Atualização Geral em Progresso...</h4>
+                    <p className="text-[11px] text-blue-700 mt-0.5 font-medium">Sincronizando Pushes, Prius, Recorte Digital e indicadores em tempo real diretamente das APIs.</p>
+                  </div>
+                </div>
+                <span className="text-[10px] font-mono font-bold uppercase tracking-wider bg-blue-100 text-blue-800 px-2.5 py-1 rounded border border-blue-200">Sincronia Global</span>
+              </div>
+            )}
+
             {/* Page header */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div>
@@ -1232,70 +1870,136 @@ export default function App() {
                     <p className="text-slate-500 text-xs">Ajuste os filtros de busca ou sincronize novos dados para carregar novas intimações.</p>
                   </div>
                 ) : (
-                  activePublications.map((pub) => (
-                    <div 
-                      key={pub.id}
-                      onClick={() => setSelectedPub(pub)}
-                      className={`bg-white border rounded-2xl p-5 shadow-sm hover:shadow-md cursor-pointer transition-all border-l-4 ${
-                        selectedPub?.id === pub.id ? 'ring-2 ring-indigo-500 border-l-indigo-600' : 
-                        pub.urgencyLevel === 'alta' ? 'border-l-red-500' : 
-                        pub.urgencyLevel === 'media' ? 'border-l-amber-500' : 'border-l-slate-300'
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-3 flex-wrap">
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-mono text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
-                              {pub.processNumber}
-                            </span>
-                            <span className={`text-[9px] uppercase font-bold tracking-wider px-2 py-0.5 rounded ${
-                              pub.source === 'gmail' ? 'bg-red-50 text-red-700 border border-red-100' :
-                              pub.source === 'legacy_api' ? 'bg-indigo-50 text-indigo-700 border border-indigo-100' :
-                              pub.source === 'pje' ? 'bg-blue-50 text-blue-700 border border-blue-100' :
-                              'bg-slate-100 text-slate-700'
-                            }`}>
-                              {pub.source === 'gmail' ? 'Gmail Integration' : pub.source === 'legacy_api' ? 'Legacy API' : pub.source}
-                            </span>
-                            {pub.urgencyLevel === 'alta' && (
-                              <span className="bg-red-100 text-red-800 text-[9px] font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5">
-                                <AlertTriangle className="h-2.5 w-2.5" /> urgente
+                  [...activePublications]
+                    .sort((a, b) => {
+                      const checkA = checkRecentlyConferred(a, publications);
+                      const checkB = checkRecentlyConferred(b, publications);
+                      if (checkA.isAlreadyChecked && !checkB.isAlreadyChecked) return 1;
+                      if (!checkA.isAlreadyChecked && checkB.isAlreadyChecked) return -1;
+                      return 0;
+                    })
+                    .map((pub) => {
+                      const check = checkRecentlyConferred(pub, publications);
+                      return (
+                        <div 
+                          key={pub.id}
+                          onClick={() => setSelectedPub(pub)}
+                          className={`bg-white border rounded-2xl p-5 shadow-sm hover:shadow-md cursor-pointer transition-all border-l-4 ${
+                            selectedPub?.id === pub.id ? 'ring-2 ring-indigo-500 border-l-indigo-600' : 
+                            pub.urgencyLevel === 'alta' ? 'border-l-red-500' : 
+                            pub.urgencyLevel === 'media' ? 'border-l-amber-500' : 'border-l-slate-300'
+                          } ${check.isAlreadyChecked ? 'opacity-65 bg-slate-50/70 border-l-slate-400' : ''}`}
+                        >
+                          <div className="flex items-start justify-between gap-3 flex-wrap">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-mono text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
+                                  {pub.processNumber}
+                                </span>
+                                <span className={`text-[9px] uppercase font-bold tracking-wider px-2 py-0.5 rounded ${
+                                  pub.source === 'gmail' ? 'bg-red-50 text-red-700 border border-red-100' :
+                                  pub.source === 'legacy_api' ? 'bg-indigo-50 text-indigo-700 border border-indigo-100' :
+                                  pub.source === 'pje' ? 'bg-blue-50 text-blue-700 border border-blue-100' :
+                                  'bg-slate-100 text-slate-700'
+                                }`}>
+                                  {pub.source === 'gmail' ? 'Gmail Integration' : pub.source === 'legacy_api' ? 'Legacy API' : pub.source}
+                                </span>
+                                {pub.urgencyLevel === 'alta' && !check.isAlreadyChecked && (
+                                  <span className="bg-red-100 text-red-800 text-[9px] font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5">
+                                    <AlertTriangle className="h-2.5 w-2.5" /> urgente
+                                  </span>
+                                )}
+                              </div>
+                              <h3 className="font-bold text-slate-800 text-sm hover:text-indigo-600 transition">{pub.title}</h3>
+                            </div>
+                            
+                            {/* Status badges */}
+                            <div className="flex items-center gap-1.5 self-start">
+                              <span className={`text-[10px] font-semibold px-2.5 py-1 rounded-full ${
+                                pub.status === 'pendente' ? 'bg-amber-100 text-amber-800' : 
+                                pub.status === 'concluido' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'
+                              }`}>
+                                {pub.status === 'pendente' ? 'Pendente' : pub.status === 'concluido' ? 'Concluído' : 'Arquivado'}
                               </span>
+                            </div>
+                          </div>
+
+                          {/* Check automatic badges */}
+                          {check.isAlreadyChecked && (
+                            <div className="mt-3 bg-slate-100 border border-slate-200 rounded-xl p-3 text-xs text-slate-700 space-y-2">
+                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                <div className="flex items-center gap-1.5 font-bold text-slate-700">
+                                  <CheckCircle className="h-4 w-4 text-slate-500" />
+                                  <span>Já conferida recentemente</span>
+                                </div>
+                                {check.matchingPub && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setSelectedPub(check.matchingPub);
+                                    }}
+                                    className="text-[10px] bg-white border border-slate-200 hover:bg-slate-50 px-2 py-1 rounded-md font-bold text-slate-600 transition flex items-center gap-0.5"
+                                  >
+                                    Ver conferência
+                                  </button>
+                                )}
+                              </div>
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[10px] text-slate-500 border-t border-slate-200/60 pt-2">
+                                <div><strong>Conferência:</strong> {check.conferredAt}</div>
+                                <div><strong>Usuário:</strong> {check.conferredBy}</div>
+                                <div><strong>Origem:</strong> {check.source}</div>
+                              </div>
+                            </div>
+                          )}
+
+                          {check.hasNewMovement && (
+                            <div className="mt-3 bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900 space-y-2">
+                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                <div className="flex items-center gap-1.5 font-bold text-amber-800">
+                                  <AlertTriangle className="h-4 w-4 text-amber-600 animate-pulse" />
+                                  <span>Nova movimentação em processo já conferido recentemente</span>
+                                </div>
+                                {check.matchingPub && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setSelectedPub(check.matchingPub);
+                                    }}
+                                    className="text-[10px] bg-white border border-amber-200 hover:bg-amber-100/50 px-2 py-1 rounded-md font-bold text-amber-800 transition flex items-center gap-0.5"
+                                  >
+                                    Ver movimentação anterior
+                                  </button>
+                                )}
+                              </div>
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[10px] text-amber-700 border-t border-amber-200/50 pt-2">
+                                <div><strong>Anterior em:</strong> {check.conferredAt}</div>
+                                <div><strong>Por:</strong> {check.conferredBy}</div>
+                                <div><strong>Origem:</strong> {check.source}</div>
+                              </div>
+                            </div>
+                          )}
+
+                          <p className="text-slate-600 text-xs mt-3 line-clamp-2 leading-relaxed">
+                            {pub.content}
+                          </p>
+
+                          <div className="flex items-center justify-between border-t border-slate-100 mt-4 pt-3 text-[10px] text-slate-400">
+                            <div className="flex items-center gap-1">
+                              <Calendar className="h-3 w-3 text-slate-400" />
+                              <span>Intimação: {new Date(pub.subpoenaDate).toLocaleDateString('pt-BR')}</span>
+                            </div>
+                            {pub.deadlineDays > 0 ? (
+                              <div className="flex items-center gap-1 text-amber-600 font-semibold">
+                                <Clock className="h-3 w-3" />
+                                <span>Prazo: {pub.deadlineDays} d.ú. (Até {new Date(pub.dueDate).toLocaleDateString('pt-BR')})</span>
+                              </div>
+                            ) : (
+                              <span className="text-slate-400">Sem prazo legal aplicável</span>
                             )}
                           </div>
-                          <h3 className="font-bold text-slate-800 text-sm hover:text-indigo-600 transition">{pub.title}</h3>
                         </div>
-                        
-                        {/* Status badges */}
-                        <div className="flex items-center gap-1.5 self-start">
-                          <span className={`text-[10px] font-semibold px-2.5 py-1 rounded-full ${
-                            pub.status === 'pendente' ? 'bg-amber-100 text-amber-800' : 
-                            pub.status === 'concluido' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'
-                          }`}>
-                            {pub.status === 'pendente' ? 'Pendente' : pub.status === 'concluido' ? 'Concluído' : 'Arquivado'}
-                          </span>
-                        </div>
-                      </div>
-
-                      <p className="text-slate-600 text-xs mt-3 line-clamp-2 leading-relaxed">
-                        {pub.content}
-                      </p>
-
-                      <div className="flex items-center justify-between border-t border-slate-100 mt-4 pt-3 text-[10px] text-slate-400">
-                        <div className="flex items-center gap-1">
-                          <Calendar className="h-3 w-3 text-slate-400" />
-                          <span>Intimação: {new Date(pub.subpoenaDate).toLocaleDateString('pt-BR')}</span>
-                        </div>
-                        {pub.deadlineDays > 0 ? (
-                          <div className="flex items-center gap-1 text-amber-600 font-semibold">
-                            <Clock className="h-3 w-3" />
-                            <span>Prazo: {pub.deadlineDays} d.ú. (Até {new Date(pub.dueDate).toLocaleDateString('pt-BR')})</span>
-                          </div>
-                        ) : (
-                          <span className="text-slate-400">Sem prazo legal aplicável</span>
-                        )}
-                      </div>
-                    </div>
-                  ))
+                      );
+                    })
                 )}
               </div>
 
@@ -1928,19 +2632,29 @@ export default function App() {
               <>
                 {/* Summary Panel */}
                 <div className="bg-slate-900 text-white rounded-2xl p-6 shadow-xl border border-slate-800">
-                  <h3 className="text-xs font-bold text-purple-400 uppercase tracking-widest mb-4">Consolidado das Fontes</h3>
+                  <h3 className="text-xs font-bold text-purple-400 uppercase tracking-widest mb-4">Consolidado das Fontes (Clique nos indicadores para navegar)</h3>
                   
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-                    <div className="space-y-1">
-                      <p className="text-[10px] text-slate-400 uppercase tracking-wider">Total de Pushes (Inbox)</p>
-                      <h4 className="text-2xl font-bold text-white">
+                    <div 
+                      onClick={() => openGmailExplorer({ name: "Todos os Remetentes", sender: "all_senders" }, 'all')}
+                      className="space-y-1 cursor-pointer hover:bg-slate-800/80 p-2.5 rounded-xl transition border border-transparent hover:border-slate-700"
+                    >
+                      <p className="text-[10px] text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                        Total de Pushes (Inbox) <ExternalLink className="h-2.5 w-2.5 opacity-60" />
+                      </p>
+                      <h4 className="text-2xl font-bold text-white border-b border-dashed border-slate-600 inline-block">
                         {Object.values(pushesData).reduce((sum, p) => sum + (p.totalCount || 0), 0)}
                       </h4>
                     </div>
                     
-                    <div className="space-y-1 border-t sm:border-t-0 sm:border-l border-slate-800 pt-4 sm:pt-0 sm:pl-6">
-                      <p className="text-[10px] text-slate-400 uppercase tracking-wider">Total Não Lido</p>
-                      <h4 className="text-2xl font-bold text-purple-400">
+                    <div 
+                      onClick={() => openGmailExplorer({ name: "Todos os Remetentes", sender: "all_senders" }, 'unread')}
+                      className="space-y-1 border-t sm:border-t-0 sm:border-l border-slate-800 pt-4 sm:pt-0 sm:pl-6 cursor-pointer hover:bg-slate-800/80 p-2.5 rounded-xl transition border border-transparent hover:border-slate-700"
+                    >
+                      <p className="text-[10px] text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                        Total Não Lido <ExternalLink className="h-2.5 w-2.5 opacity-60 text-purple-400" />
+                      </p>
+                      <h4 className="text-2xl font-bold text-purple-400 border-b border-dashed border-purple-900 inline-block">
                         {Object.values(pushesData).reduce((sum, p) => sum + (p.unreadCount || 0), 0)}
                       </h4>
                     </div>
@@ -1978,6 +2692,7 @@ export default function App() {
                       success: true
                     };
                     const isLoading = pushesLoading[source.sender] || false;
+                    const isError = data.success === false;
                     const hasUnread = data.unreadCount > 0;
                     
                     // Determine visual priority rules based on count
@@ -1985,7 +2700,11 @@ export default function App() {
                     let urgencyColor = "text-emerald-700 bg-emerald-50 border-emerald-100";
                     let pulseIndicator = "bg-emerald-500";
                     
-                    if (hasUnread) {
+                    if (isError) {
+                      urgencyLabel = "Erro de conexão";
+                      urgencyColor = "text-red-700 bg-red-50 border-red-100";
+                      pulseIndicator = "bg-red-500";
+                    } else if (hasUnread) {
                       if (data.unreadCount >= 5) {
                         urgencyLabel = "Urgente (5+)";
                         urgencyColor = "text-red-700 bg-red-50 border-red-100 animate-pulse";
@@ -2000,17 +2719,19 @@ export default function App() {
                     // Calculate age of the newest email (warning if > 48h and unread)
                     const newestDateObj = data.newestDate ? new Date(data.newestDate) : null;
                     const diffTime = newestDateObj ? Date.now() - newestDateObj.getTime() : 0;
-                    const isOlderThan48h = hasUnread && diffTime > 48 * 60 * 60 * 1000;
+                    const isOlderThan48h = !isError && hasUnread && diffTime > 48 * 60 * 60 * 1000;
 
                     return (
                       <div 
                         key={source.id}
                         className={`bg-white border rounded-2xl p-6 shadow-sm flex flex-col justify-between space-y-4 relative overflow-hidden transition-all hover:shadow-md ${
-                          hasUnread 
-                            ? data.unreadCount >= 5 
-                              ? 'border-red-300 ring-1 ring-red-100' 
-                              : 'border-amber-300 ring-1 ring-amber-100'
-                            : 'border-slate-200'
+                          isError
+                            ? 'border-red-200'
+                            : hasUnread 
+                              ? data.unreadCount >= 5 
+                                ? 'border-red-300 ring-1 ring-red-100' 
+                                : 'border-amber-300 ring-1 ring-amber-100'
+                              : 'border-slate-200'
                         }`}
                       >
                         {/* Header Area */}
@@ -2029,44 +2750,71 @@ export default function App() {
                             </span>
                           </div>
 
-                          {/* Stats Row inside card */}
-                          <div className="grid grid-cols-2 gap-4 mt-4 bg-slate-50 p-3 rounded-xl border border-slate-100">
-                            <div>
-                              <span className="text-[9px] text-slate-400 uppercase font-bold block">Total na Inbox</span>
-                              <span className="text-lg font-bold text-slate-800">{data.totalCount}</span>
+                          {isError ? (
+                            <div className="mt-4 bg-red-50 border border-red-200 text-red-800 p-3 rounded-xl text-xs space-y-1">
+                              <div className="flex items-center gap-1.5 font-bold">
+                                <AlertTriangle className="h-4 w-4 text-red-600" />
+                                <span>Erro na consulta</span>
+                              </div>
+                              <p className="text-[11px] opacity-90 leading-normal">
+                                Não foi possível consultar este remetente neste momento.
+                              </p>
+                              {data.error && (
+                                <span className="text-[9px] font-mono opacity-75 block break-words mt-1 bg-red-100/50 p-1.5 rounded border border-red-200/30">
+                                  {data.error}
+                                </span>
+                              )}
                             </div>
-                            <div className="border-l border-slate-200 pl-4">
-                              <span className="text-[9px] text-slate-400 uppercase font-bold block">Não Lidos</span>
-                              <span className={`text-lg font-bold ${hasUnread ? 'text-purple-600' : 'text-slate-500'}`}>
-                                {data.unreadCount}
-                              </span>
+                          ) : (
+                            /* Stats Row inside card */
+                            <div className="grid grid-cols-2 gap-4 mt-4 bg-slate-50 p-3 rounded-xl border border-slate-100">
+                              <div 
+                                onClick={() => openGmailExplorer(source, 'all')}
+                                className="cursor-pointer hover:bg-slate-100 p-2 rounded-lg transition"
+                                title="Visualizar todos os e-mails deste remetente no Build"
+                              >
+                                <span className="text-[9px] text-slate-400 uppercase font-bold block">Total na Inbox</span>
+                                <span className="text-lg font-bold text-slate-800 border-b border-dashed border-slate-300 hover:text-indigo-600 inline-block">{data.totalCount}</span>
+                              </div>
+                              <div 
+                                onClick={() => openGmailExplorer(source, 'unread')}
+                                className="border-l border-slate-200 pl-4 cursor-pointer hover:bg-slate-100 p-2 rounded-lg transition"
+                                title="Visualizar e-mails não lidos deste remetente no Build"
+                              >
+                                <span className="text-[9px] text-slate-400 uppercase font-bold block">Não Lidos</span>
+                                <span className={`text-lg font-bold border-b border-dashed ${hasUnread ? 'text-purple-600 border-purple-300 hover:text-purple-800' : 'text-slate-500 border-slate-300 hover:text-indigo-600'} inline-block`}>
+                                  {data.unreadCount}
+                                </span>
+                              </div>
                             </div>
+                          )}
+                        </div>
+
+                        {/* Middle Area: Latest Email details (only if no error) */}
+                        {!isError && (
+                          <div className="space-y-2 border-t border-slate-100 pt-3 flex-1">
+                            <span className="text-[9px] text-slate-400 uppercase font-bold block">Assunto do Push Mais Recente</span>
+                            <p className="text-slate-700 text-xs font-medium leading-relaxed line-clamp-2 bg-slate-50/50 p-2 rounded border border-slate-100/50">
+                              {data.newestSubject}
+                            </p>
+                            {newestDateObj && (
+                              <div className="flex justify-between items-center text-[10px] text-slate-400">
+                                <span>Data do Push:</span>
+                                <span className="font-mono">
+                                  {newestDateObj.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
+                                </span>
+                              </div>
+                            )}
+
+                            {/* Age warning if unread and >48h */}
+                            {isOlderThan48h && (
+                              <div className="bg-amber-50 border border-amber-200 text-amber-800 text-[10px] p-2 rounded-lg flex items-start gap-1.5 mt-2 font-medium">
+                                <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0 mt-0.5" />
+                                <span>Atenção: Push pendente há mais de 48h!</span>
+                              </div>
+                            )}
                           </div>
-                        </div>
-
-                        {/* Middle Area: Latest Email details */}
-                        <div className="space-y-2 border-t border-slate-100 pt-3 flex-1">
-                          <span className="text-[9px] text-slate-400 uppercase font-bold block">Assunto do Push Mais Recente</span>
-                          <p className="text-slate-700 text-xs font-medium leading-relaxed line-clamp-2 bg-slate-50/50 p-2 rounded border border-slate-100/50">
-                            {data.newestSubject}
-                          </p>
-                          {newestDateObj && (
-                            <div className="flex justify-between items-center text-[10px] text-slate-400">
-                              <span>Data do Push:</span>
-                              <span className="font-mono">
-                                {newestDateObj.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
-                              </span>
-                            </div>
-                          )}
-
-                          {/* Age warning if unread and >48h */}
-                          {isOlderThan48h && (
-                            <div className="bg-amber-50 border border-amber-200 text-amber-800 text-[10px] p-2 rounded-lg flex items-start gap-1.5 mt-2 font-medium">
-                              <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0 mt-0.5" />
-                              <span>Atenção: Push pendente há mais de 48h!</span>
-                            </div>
-                          )}
-                        </div>
+                        )}
 
                         {/* Actions Footer row */}
                         <div className="pt-3 border-t border-slate-100 flex gap-2">
@@ -2248,96 +2996,124 @@ export default function App() {
             <div className="border-b border-slate-200 pb-5">
               <h1 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
                 <Compass className="h-6 w-6 text-blue-600" />
-                Consulta Prius
+                Consulta Prius via Gmail
               </h1>
               <p className="text-slate-500 text-xs mt-1">
-                Área destinada à consulta, conferência e organização das publicações recebidas pelo sistema Prius.
+                Leitura e monitoramento de e-mails recebidos do sistema Prius diretamente do seu Gmail de forma segura.
               </p>
             </div>
 
-            {/* No real integration warning banner */}
-            <div className="bg-amber-50 border border-amber-200 text-amber-800 p-4 rounded-xl text-xs flex items-center gap-3">
-              <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600 animate-pulse" />
-              <div>
-                <p className="font-bold">Integração ainda não configurada.</p>
-                <p className="mt-0.5 opacity-90 font-medium">A conexão com os servidores do sistema Prius está pendente de autenticação e chaves de API do tribunal parceiro.</p>
-              </div>
-            </div>
-
-            {/* Prius Integration Details Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {/* Card 1: API de Consulta Prius */}
-              <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4 flex flex-col justify-between">
-                <div className="space-y-2">
-                  <div className="flex justify-between items-center">
-                    <h3 className="font-bold text-slate-800 text-sm">Serviço de Varredura Prius</h3>
-                    <span className="text-[10px] bg-slate-100 text-slate-500 font-bold px-2 py-0.5 rounded border border-slate-200">Inativo</span>
-                  </div>
-                  <p className="text-xs text-slate-500">Monitora e consolida as publicações enviadas pelo Prius via API REST.</p>
-                  
-                  <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 text-[11px] space-y-1 font-mono text-slate-500">
-                    <div><span className="font-bold">URL:</span> N/A</div>
-                    <div><span className="font-bold">Status:</span> Desconectado</div>
-                  </div>
-                </div>
-                
-                <div className="space-y-3 pt-2">
-                  <div className="text-xs text-amber-600 font-semibold bg-amber-50/50 p-2.5 rounded border border-amber-100/50 text-center">
-                    Integração ainda não configurada.
-                  </div>
-                  <button disabled className="w-full bg-slate-100 border border-slate-200 text-slate-400 font-bold text-xs py-2.5 px-4 rounded-xl cursor-not-allowed">
-                    Configurar Credenciais
-                  </button>
+            {/* Prius Integration Status Banner */}
+            {priusState.status === 'erro' ? (
+              <div className="bg-red-50 border border-red-200 text-red-800 p-4 rounded-xl text-xs flex items-center gap-3 animate-fade-in">
+                <AlertTriangle className="h-5 w-5 shrink-0 text-red-600" />
+                <div>
+                  <p className="font-bold">Erro de varredura no Gmail para o Prius.</p>
+                  <p className="mt-0.5 opacity-90 font-medium font-mono leading-relaxed">{priusState.error}</p>
                 </div>
               </div>
-
-              {/* Card 2: Webhook Prius */}
-              <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4 flex flex-col justify-between">
-                <div className="space-y-2">
-                  <div className="flex justify-between items-center">
-                    <h3 className="font-bold text-slate-800 text-sm">Webhook Receiver</h3>
-                    <span className="text-[10px] bg-slate-100 text-slate-500 font-bold px-2 py-0.5 rounded border border-slate-200">Inativo</span>
-                  </div>
-                  <p className="text-xs text-slate-500">Recebimento passivo de publicações e intimações processuais em tempo real.</p>
-                  
-                  <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 text-[11px] space-y-1 font-mono text-slate-500">
-                    <div><span className="font-bold">Endpoint:</span> /api/prius/webhook</div>
-                    <div><span className="font-bold">Última Atividade:</span> Sem conexões</div>
-                  </div>
-                </div>
-                
-                <div className="space-y-3 pt-2">
-                  <div className="text-xs text-amber-600 font-semibold bg-amber-50/50 p-2.5 rounded border border-amber-100/50 text-center">
-                    Integração ainda não configurada.
-                  </div>
-                  <button disabled className="w-full bg-slate-100 border border-slate-200 text-slate-400 font-bold text-xs py-2.5 px-4 rounded-xl cursor-not-allowed">
-                    Ativar Webhook
-                  </button>
+            ) : priusState.status === 'conectado' ? (
+              <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 p-4 rounded-xl text-xs flex items-center gap-3 animate-fade-in">
+                <CheckCircle className="h-5 w-5 shrink-0 text-emerald-600" />
+                <div>
+                  <p className="font-bold">Varredura do Prius via Gmail ativa e operacional.</p>
+                  <p className="mt-0.5 opacity-90 font-medium">Os dados de contagem e visualização de e-mails estão sincronizados com sua conta Google.</p>
                 </div>
               </div>
+            ) : (
+              <div className="bg-blue-50 border border-blue-200 text-blue-800 p-4 rounded-xl text-xs flex items-center gap-3">
+                <Inbox className="h-5 w-5 shrink-0 text-blue-600 animate-pulse" />
+                <div>
+                  <p className="font-bold">Aguardando primeira sincronização.</p>
+                  <p className="mt-0.5 opacity-90 font-medium">Clique em "Sincronizar com Gmail" abaixo para iniciar a varredura real das publicações do Prius.</p>
+                </div>
+              </div>
+            )}
 
-              {/* Card 3: Histórico de Sincronia */}
-              <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4 flex flex-col justify-between">
-                <div className="space-y-2">
-                  <div className="flex justify-between items-center">
-                    <h3 className="font-bold text-slate-800 text-sm">Histórico e Auditoria</h3>
-                    <span className="text-[10px] bg-slate-100 text-slate-500 font-bold px-2 py-0.5 rounded border border-slate-200">Vazio</span>
-                  </div>
-                  <p className="text-xs text-slate-500">Logs de importação de processos, erros de conexão e eventos de auditoria.</p>
-                  
-                  <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 text-[11px] space-y-1 font-mono text-slate-500">
-                    <div><span className="font-bold">Total Importado:</span> 0</div>
-                    <div><span className="font-bold">Sincronização:</span> Sem dados</div>
+            {/* Prius Card */}
+            <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden max-w-4xl">
+              <div className="p-6 border-b border-slate-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-slate-50/50">
+                <div className="space-y-1">
+                  <h2 className="font-bold text-slate-900 text-base">Painel de Monitoramento Prius</h2>
+                  <div className="text-xs text-slate-500 flex items-center gap-2 font-mono bg-white px-2 py-1 rounded border border-slate-100 w-fit">
+                    <span className="font-bold text-blue-600">Busca Gmail:</span>
+                    <span>in:inbox (from:(prius) OR subject:(prius) OR "PRIUS")</span>
                   </div>
                 </div>
-                
-                <div className="space-y-3 pt-2">
-                  <div className="text-xs text-amber-600 font-semibold bg-amber-50/50 p-2.5 rounded border border-amber-100/50 text-center">
-                    Integração ainda não configurada.
+                <button
+                  onClick={() => syncPrius()}
+                  disabled={priusState.isLoading}
+                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs py-2.5 px-5 rounded-xl transition flex items-center gap-2 disabled:opacity-50"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${priusState.isLoading ? 'animate-spin' : ''}`} />
+                  {priusState.isLoading ? 'Sincronizando...' : 'Sincronizar com Gmail'}
+                </button>
+              </div>
+
+              <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Stats */}
+                <div className="space-y-4">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">Dados do Inbox</h3>
+                  
+                  <div className="grid grid-cols-2 gap-4">
+                    {/* Total count card */}
+                    <button
+                      onClick={() => openGmailExplorer({ name: "Prius – Todos", query: `in:inbox (from:(prius) OR subject:(prius) OR "PRIUS")` }, 'all')}
+                      className="bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl p-4 text-left transition group active:scale-[0.98]"
+                    >
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Total de e-mails</span>
+                      <span className="text-3xl font-black text-slate-800 font-mono group-hover:text-blue-600 block mt-1">
+                        {priusState.totalImported}
+                      </span>
+                      <span className="text-[10px] text-blue-600 font-semibold flex items-center gap-1 mt-2">
+                        Ver todos <ExternalLink className="h-3 w-3" />
+                      </span>
+                    </button>
+
+                    {/* Unread count card */}
+                    <button
+                      onClick={() => openGmailExplorer({ name: "Prius – Não Lidos", query: `in:inbox (from:(prius) OR subject:(prius) OR "PRIUS")` }, 'unread')}
+                      className="bg-blue-50/50 hover:bg-blue-50 border border-blue-100 rounded-xl p-4 text-left transition group active:scale-[0.98]"
+                    >
+                      <span className="text-[10px] font-bold text-blue-500 uppercase tracking-wider block">E-mails não lidos</span>
+                      <span className="text-3xl font-black text-blue-700 font-mono block mt-1">
+                        {priusState.unreadCount || 0}
+                      </span>
+                      <span className="text-[10px] text-blue-600 font-semibold flex items-center gap-1 mt-2">
+                        Ver não lidos <ExternalLink className="h-3 w-3" />
+                      </span>
+                    </button>
                   </div>
-                  <button disabled className="w-full bg-slate-100 border border-slate-200 text-slate-400 font-bold text-xs py-2.5 px-4 rounded-xl cursor-not-allowed">
-                    Visualizar Logs
-                  </button>
+
+                  <div className="text-[11px] text-slate-500 font-medium">
+                    Última sincronização: <span className="font-mono font-bold text-slate-700">{priusState.lastUpdated || 'Nunca'}</span>
+                  </div>
+                </div>
+
+                {/* Newest Email */}
+                <div className="border border-slate-100 rounded-xl p-5 bg-slate-50/30 flex flex-col justify-between">
+                  <div>
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">Mais Recente</h3>
+                    <div className="space-y-2">
+                      <p className="font-bold text-slate-800 text-xs line-clamp-2 leading-relaxed">
+                        {priusState.newestSubject || "Nenhum e-mail recente encontrado"}
+                      </p>
+                      {priusState.newestDate && (
+                        <p className="text-[10px] text-slate-500 font-medium">
+                          Data: <span className="font-mono">{new Date(priusState.newestDate).toLocaleString('pt-BR')}</span>
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="pt-4 flex gap-2">
+                    <button
+                      onClick={() => openGmailExplorer({ name: "Prius – Todos", query: `in:inbox (from:(prius) OR subject:(prius) OR "PRIUS")` }, 'all')}
+                      className="flex-1 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs py-2 px-3 rounded-lg text-center transition active:scale-[0.98]"
+                    >
+                      Abrir Lista de Leituras
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -2351,87 +3127,678 @@ export default function App() {
             <div className="border-b border-slate-200 pb-5">
               <h1 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
                 <Layers className="h-6 w-6 text-indigo-600" />
-                Consulta Recorte Digital
+                Consulta Recorte Digital via Gmail
               </h1>
               <p className="text-slate-500 text-xs mt-1">
-                Área destinada à conferência das publicações recebidas pelos serviços de Recorte Digital.
+                Leitura e monitoramento das publicações dos recortes digitais recebidos no Gmail de forma centralizada e sem dependências de chaves externas.
               </p>
-            </div>
-
-            {/* Integration Warning Banner */}
-            <div className="bg-amber-50 border border-amber-200 text-amber-800 p-4 rounded-xl text-xs flex items-center gap-3">
-              <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600 animate-pulse" />
-              <div>
-                <p className="font-bold">Integração ainda não configurada.</p>
-                <p className="mt-0.5 opacity-90 font-medium">Os serviços de Recorte Digital dependem da configuração de credenciais, chaves de acesso da OAB e tokens do sistema.</p>
-              </div>
             </div>
 
             {/* Recorte Digital Services Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {[
-                { name: "Recorte Digital OAB/MG", url: "https://www.oabmg.org.br" },
-                { name: "Recorte Digital RJ", url: "https://www.tjrj.jus.br" },
-                { name: "Recorte Digital Ceará", url: "https://www.tjce.jus.br" },
-                { name: "Recorte Digital São Paulo", url: "https://www.tjsp.jus.br" }
-              ].map((service, index) => (
-                <div key={index} className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4 flex flex-col justify-between">
-                  <div className="space-y-3">
-                    <div className="flex justify-between items-start gap-2">
-                      <div>
-                        <h3 className="font-bold text-slate-900 text-sm tracking-tight">{service.name}</h3>
-                        <span className="text-[10px] text-slate-400 block font-mono">ID: recorte-{(service.name.split(' ').pop() || '').toLowerCase()}</span>
+                { id: "oab-mg", name: "Recorte Digital OAB/MG", query: `in:inbox ("Recorte Digital" "OAB/MG")`, url: "https://www.oabmg.org.br" },
+                { id: "rj", name: "Recorte Digital RJ", query: `in:inbox ("Recorte Digital" "RJ")`, url: "https://www.tjrj.jus.br" },
+                { id: "ceara", name: "Recorte Digital Ceará", query: `in:inbox ("Recorte Digital" "Ceará")`, url: "https://www.tjce.jus.br" },
+                { id: "sao-paulo", name: "Recorte Digital São Paulo", query: `in:inbox ("Recorte Digital" "São Paulo")`, url: "https://www.tjsp.jus.br" }
+              ].map((service, index) => {
+                const sState = recorteStates[service.id] || { status: 'desconectado', lastUpdated: null, totalCount: 0, unreadCount: 0, newestSubject: "Não consultado", newestDate: null, error: null, isLoading: false };
+                return (
+                  <div key={index} className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4 flex flex-col justify-between">
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-start gap-2">
+                        <div>
+                          <h3 className="font-bold text-slate-900 text-sm tracking-tight">{service.name}</h3>
+                          <span className="text-[9px] text-slate-400 block font-mono">Busca: {service.query}</span>
+                        </div>
+                        <span className={`text-[9px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full border shrink-0 ${
+                          sState.status === 'conectado' ? 'bg-emerald-50 text-emerald-600 border-emerald-200' :
+                          sState.status === 'erro' ? 'bg-red-50 text-red-600 border-red-200 animate-pulse' :
+                          'bg-slate-100 text-slate-500 border-slate-200'
+                        }`}>
+                          {sState.status === 'conectado' ? 'Sincronizado' : sState.status === 'erro' ? 'Falha' : 'Inativo'}
+                        </span>
                       </div>
-                      <span className="text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200 shrink-0">
-                        Não ativo
-                      </span>
+
+                      {/* Stats Table */}
+                      <div className="grid grid-cols-2 gap-4 bg-slate-50 p-3 rounded-xl border border-slate-100 text-xs">
+                        <button
+                          onClick={() => openGmailExplorer({ name: service.name, query: service.query }, 'all')}
+                          className="text-left hover:bg-slate-100/50 p-1.5 rounded transition group"
+                        >
+                          <span className="text-[9px] text-slate-400 uppercase font-bold block">Total de e-mails</span>
+                          <span className="font-mono font-bold text-lg text-slate-800 group-hover:text-blue-600 block">{sState.totalCount || 0}</span>
+                        </button>
+                        <button
+                          onClick={() => openGmailExplorer({ name: service.name, query: service.query }, 'unread')}
+                          className="text-left hover:bg-slate-100/50 p-1.5 rounded border-l border-slate-200 pl-4 transition group"
+                        >
+                          <span className="text-[9px] text-blue-500 uppercase font-bold block">E-mails não lidos</span>
+                          <span className="font-mono font-bold text-lg text-blue-700 block">{sState.unreadCount || 0}</span>
+                        </button>
+                        <div className="pt-2 border-t border-slate-100 col-span-2">
+                          <span className="text-[9px] text-slate-400 uppercase font-bold block">Mais Recente</span>
+                          <span className="font-medium text-[10px] text-slate-700 block truncate leading-relaxed" title={sState.newestSubject}>
+                            {sState.newestSubject || "Nenhum e-mail encontrado"}
+                          </span>
+                          {sState.newestDate && (
+                            <span className="text-[8px] text-slate-400 font-mono block">
+                              {new Date(sState.newestDate).toLocaleString('pt-BR')}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {sState.error ? (
+                        <div className="bg-red-50 border border-red-100 text-red-800 text-[10px] p-2.5 rounded-lg text-left font-mono leading-relaxed max-h-16 overflow-y-auto">
+                          <strong>Erro:</strong> {sState.error}
+                        </div>
+                      ) : (
+                        <div className="bg-slate-50 border border-slate-100 text-slate-500 text-[10px] p-2 rounded-lg text-center font-medium font-mono">
+                          Atualizado: {sState.lastUpdated || 'Nunca'}
+                        </div>
+                      )}
                     </div>
 
-                    {/* Stats Table */}
-                    <div className="grid grid-cols-2 gap-4 bg-slate-50 p-3 rounded-xl border border-slate-100 text-xs">
-                      <div>
-                        <span className="text-[9px] text-slate-400 uppercase font-bold block">Status</span>
-                        <span className="font-semibold text-slate-700">Não configurado</span>
-                      </div>
-                      <div className="border-l border-slate-200 pl-4">
-                        <span className="text-[9px] text-slate-400 uppercase font-bold block">Última Atualização</span>
-                        <span className="font-semibold text-slate-700">N/A</span>
-                      </div>
-                      <div className="pt-2 border-t border-slate-100">
-                        <span className="text-[9px] text-slate-400 uppercase font-bold block">Pubs. Encontradas</span>
-                        <span className="font-mono font-bold text-slate-500">N/A</span>
-                      </div>
-                      <div className="border-l border-slate-200 pl-4 pt-2 border-t border-slate-100">
-                        <span className="text-[9px] text-slate-400 uppercase font-bold block">Pubs. Pendentes</span>
-                        <span className="font-mono font-bold text-slate-500">N/A</span>
-                      </div>
-                    </div>
-
-                    <div className="bg-amber-50/50 border border-amber-100 text-amber-800 text-[10px] p-2.5 rounded-lg text-center font-medium">
-                      Integração ainda não configurada.
+                    {/* Actions */}
+                    <div className="pt-3 border-t border-slate-100 flex gap-2">
+                      <button 
+                        onClick={() => syncRecorteService(service.id, service.name)}
+                        disabled={sState.isLoading}
+                        className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs py-2.5 px-3 rounded-xl text-center transition active:scale-[0.98] disabled:opacity-50"
+                      >
+                        {sState.isLoading ? 'Consultando...' : 'Sincronizar'}
+                      </button>
+                      <button 
+                        onClick={() => openGmailExplorer({ name: service.name, query: service.query }, 'all')}
+                        className="bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 font-bold text-xs py-2.5 px-3 rounded-xl transition text-center flex items-center justify-center gap-1 shrink-0"
+                      >
+                        Visualizar
+                      </button>
                     </div>
                   </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
-                  {/* Actions */}
-                  <div className="pt-3 border-t border-slate-100 flex gap-2">
-                    <button 
-                      disabled
-                      className="flex-1 bg-slate-100 text-slate-400 font-bold text-xs py-2.5 px-3 rounded-xl cursor-not-allowed text-center transition"
-                    >
-                      Consultar
-                    </button>
-                    <a 
-                      href={service.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs py-2.5 px-4 rounded-xl transition text-center flex items-center justify-center gap-1 shrink-0"
-                    >
-                      <ExternalLink className="h-3.5 w-3.5" />
-                      Abrir origem
-                    </a>
+        {/* Gmail Explorer Modal */}
+        {isGmailExplorerOpen && explorerSource && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-hidden animate-fade-in">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl h-[85vh] flex flex-col overflow-hidden border border-slate-100 text-slate-800">
+              
+              {/* Modal Header */}
+              <div className="bg-slate-900 text-white p-5 flex justify-between items-center shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="bg-purple-500/20 p-2 rounded-xl border border-purple-500/30">
+                    <Inbox className="h-5 w-5 text-purple-400" />
+                  </div>
+                  <div>
+                    <h2 className="text-base font-bold tracking-tight">Central de Publicações – Gmail</h2>
+                    <p className="text-[11px] text-slate-400 font-medium">
+                      Origem: <span className="text-purple-300 font-mono">{explorerSource.name} ({explorerSource.sender})</span>
+                    </p>
                   </div>
                 </div>
-              ))}
+                
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => openGmailExplorer(explorerSource, explorerFilter)}
+                    disabled={explorerListLoading || explorerDetailsLoading}
+                    className="bg-slate-800 hover:bg-slate-750 text-slate-200 font-bold text-xs py-2 px-3.5 rounded-lg flex items-center gap-1.5 transition border border-slate-700 disabled:opacity-50"
+                  >
+                    <RefreshCw className={`h-3 w-3 ${explorerListLoading || explorerDetailsLoading ? 'animate-spin' : ''}`} />
+                    Sincronizar
+                  </button>
+                  <button
+                    onClick={() => setIsGmailExplorerOpen(false)}
+                    className="text-slate-400 hover:text-white p-2 rounded-lg transition hover:bg-slate-800"
+                  >
+                    <span className="text-xl font-bold font-mono">×</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Toolbar: Search, Filters & Sorting */}
+              <div className="bg-slate-50 border-b border-slate-200 p-4 shrink-0 flex flex-col md:flex-row gap-3 items-center justify-between">
+                
+                {/* Search Bar */}
+                <div className="relative w-full md:w-80">
+                  <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Pesquisar CNJ, parte, tribunal, assunto..."
+                    value={explorerSearch}
+                    onChange={(e) => setExplorerSearch(e.target.value)}
+                    className="w-full pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-xl text-xs focus:outline-indigo-500 text-slate-800 transition"
+                  />
+                  {explorerSearch && (
+                    <button 
+                      onClick={() => setExplorerSearch('')}
+                      className="absolute right-3 top-2 text-slate-400 hover:text-slate-600 font-bold"
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+
+                {/* Filters Row */}
+                <div className="flex flex-wrap items-center gap-2 w-full md:w-auto overflow-x-auto pb-1 md:pb-0 scrollbar-none">
+                  {[
+                    { id: 'all', label: 'Todos' },
+                    { id: 'unread', label: 'Não Lidos' },
+                    { id: 'read', label: 'Lidos' },
+                    { id: 'hasAttachments', label: 'Com Anexos' },
+                    { id: '24h', label: 'Últimas 24h' },
+                    { id: '7d', label: 'Últimos 7 dias' },
+                    { id: '30d', label: 'Últimos 30 dias' }
+                  ].map((filter) => (
+                    <button
+                      key={filter.id}
+                      onClick={() => setExplorerQuickFilter(filter.id as any)}
+                      className={`text-[11px] font-bold py-1.5 px-3 rounded-lg transition whitespace-nowrap border ${
+                        explorerQuickFilter === filter.id
+                          ? 'bg-purple-600 text-white border-purple-600'
+                          : 'bg-white text-slate-600 hover:bg-slate-100 border-slate-200'
+                      }`}
+                    >
+                      {filter.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Sorting */}
+                <div className="flex items-center gap-1.5 shrink-0 w-full md:w-auto justify-end">
+                  <span className="text-[10px] text-slate-400 uppercase font-bold font-mono">Ordenar por:</span>
+                  <select
+                    value={explorerSortKey}
+                    onChange={(e) => setExplorerSortKey(e.target.value as any)}
+                    className="bg-white border border-slate-200 rounded-lg text-xs py-1.5 px-2 focus:outline-indigo-500 font-medium text-slate-700 transition"
+                  >
+                    <option value="date">Mais recentes primeiro</option>
+                    <option value="sender">Remetente</option>
+                    <option value="process">Nº do Processo</option>
+                    <option value="tribunal">Tribunal</option>
+                  </select>
+                </div>
+
+              </div>
+
+              {/* Main List Area */}
+              <div className="flex-1 overflow-y-auto p-4 bg-slate-100/50 space-y-4">
+                {explorerListLoading ? (
+                  <div className="h-full flex flex-col items-center justify-center text-slate-500 space-y-3 py-12">
+                    <RefreshCw className="h-8 w-8 text-purple-600 animate-spin" />
+                    <p className="text-xs font-semibold animate-pulse">Obtendo listagem de e-mails diretamente da API do Gmail...</p>
+                    <span className="text-[10px] text-slate-400 max-w-sm text-center">Isso garante total tempo real, varrendo todas as páginas de resultados sem usar cache.</span>
+                  </div>
+                ) : explorerMessages.length === 0 && !explorerDetailsLoading ? (
+                  <div className="h-full flex flex-col items-center justify-center text-slate-500 space-y-2 py-12 text-center bg-white border border-slate-200 rounded-2xl p-6">
+                    <Inbox className="h-10 w-10 text-slate-300" />
+                    <p className="text-xs font-bold">Nenhuma mensagem encontrada</p>
+                    <span className="text-[11px] text-slate-400">Verifique se há e-mails que correspondem a essa busca ou tente limpar a pesquisa.</span>
+                  </div>
+                ) : (
+                  <>
+                    {/* Items Grid/List */}
+                    <div className="space-y-3">
+                      {sortedMessages.map((email) => {
+                        const isUnread = email.isUnread;
+                        const hasAttachments = email.hasAttachments;
+                        const dateObj = email.date ? new Date(email.date) : new Date();
+                        const historyList = getConferenciaHistory(email.processNumber);
+                        const isConferred = email.isConferred || historyList.length > 0;
+                        const latestHistory = historyList[0];
+
+                        return (
+                          <div
+                            key={email.id}
+                            className={`bg-white border rounded-xl p-4 shadow-sm relative overflow-hidden transition-all hover:shadow-md flex flex-col justify-between gap-3 ${
+                              isConferred
+                                ? 'border-emerald-200 bg-emerald-50/20 opacity-80'
+                                : isUnread
+                                  ? 'border-l-4 border-l-purple-600 border-purple-100 ring-1 ring-purple-100/30'
+                                  : 'border-slate-200'
+                            }`}
+                          >
+                            {/* Card Header Info */}
+                            <div className="flex flex-col md:flex-row md:items-start justify-between gap-2">
+                              
+                              <div className="space-y-1 min-w-0 flex-1">
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  {/* Read/Unread Badge */}
+                                  <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${
+                                    isUnread 
+                                      ? 'bg-purple-100 text-purple-700 border border-purple-200 font-mono' 
+                                      : 'bg-slate-100 text-slate-500 border border-slate-200 font-mono'
+                                  }`}>
+                                    {isUnread ? 'Não Lido' : 'Lido'}
+                                  </span>
+
+                                  {/* Conferred Badge */}
+                                  {isConferred && (
+                                    <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-200 flex items-center gap-1">
+                                      <CheckCircle className="h-3 w-3 text-emerald-600" />
+                                      Já Conferido
+                                    </span>
+                                  )}
+
+                                  {/* Court Badge */}
+                                  {email.tribunal && email.tribunal !== 'Não identificado' && (
+                                    <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-100">
+                                      {email.tribunal}
+                                    </span>
+                                  )}
+
+                                  {/* Attachments indicator */}
+                                  {hasAttachments && (
+                                    <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-100">
+                                      Anexos
+                                    </span>
+                                  )}
+                                </div>
+
+                                <h3 className="text-sm font-bold text-slate-900 leading-snug hover:text-indigo-600 cursor-pointer pt-1" onClick={() => setSelectedEmailDetail(email)}>
+                                  {email.subject}
+                                </h3>
+
+                                <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-500 pt-0.5">
+                                  <span>De: <strong className="text-slate-700">{email.from}</strong></span>
+                                  <span>Para: <strong className="text-slate-700">{email.to}</strong></span>
+                                </div>
+                              </div>
+
+                              {/* Date Time display */}
+                              <div className="text-right shrink-0">
+                                <span className="text-[10px] font-mono text-slate-400 block">
+                                  {dateObj.toLocaleDateString('pt-BR', { dateStyle: 'short' })}
+                                </span>
+                                <span className="text-[10px] font-mono text-slate-400 block font-medium">
+                                  {dateObj.toLocaleTimeString('pt-BR', { timeStyle: 'short' })}
+                                </span>
+                              </div>
+
+                            </div>
+
+                            {/* Extracted Fields Ribbon - Visual highlight */}
+                            <div className="bg-slate-50/80 border border-slate-100 rounded-xl p-3 grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-3 text-xs leading-normal">
+                              <div>
+                                <span className="text-[9px] text-slate-400 uppercase font-mono font-bold block">Nº do Processo (CNJ)</span>
+                                {email.processNumber && email.processNumber !== 'Não identificado' ? (
+                                  <div className="flex items-center gap-1.5 font-bold text-slate-800">
+                                    <span className="font-mono tracking-tight text-indigo-700">{email.processNumber}</span>
+                                    <button 
+                                      onClick={() => handleCopyText(email.processNumber, 'Número do processo')}
+                                      className="text-slate-400 hover:text-slate-600 font-bold p-0.5"
+                                      title="Copiar número do processo"
+                                    >
+                                      {copiedText === 'Número do processo' ? (
+                                        <Check className="h-3.5 w-3.5 text-emerald-600" />
+                                      ) : (
+                                        <Copy className="h-3.5 w-3.5" />
+                                      )}
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <span className="text-slate-400 font-medium italic">Não identificado</span>
+                                )}
+                              </div>
+
+                              <div>
+                                <span className="text-[9px] text-slate-400 uppercase font-mono font-bold block">Nome das Partes</span>
+                                <span className="font-medium text-slate-700 block truncate">
+                                  {email.autor && email.autor !== 'Não identificado' ? `${email.autor} v. ` : ''}
+                                  {email.reu && email.reu !== 'Não identificado' ? email.reu : 'Não identificado'}
+                                </span>
+                              </div>
+
+                              <div>
+                                <span className="text-[9px] text-slate-400 uppercase font-mono font-bold block">Vara / Comarca</span>
+                                <span className="font-medium text-slate-700 block truncate">{email.vara || 'Não identificada'}</span>
+                              </div>
+
+                              <div>
+                                <span className="text-[9px] text-slate-400 uppercase font-mono font-bold block">Classe Processual / Movimento</span>
+                                <span className="font-medium text-slate-700 block truncate">{email.classe !== 'Não identificada' ? email.classe : email.movementType || 'Não identificada'}</span>
+                              </div>
+                            </div>
+
+                            {/* Snippet preview */}
+                            <p className="text-xs text-slate-600 leading-relaxed bg-slate-50/30 border border-slate-100/50 p-2.5 rounded-lg line-clamp-2">
+                              {email.snippet}
+                            </p>
+
+                            {/* Conference info ribbon if conferred */}
+                            {isConferred && latestHistory && (
+                              <div className="bg-emerald-50/50 border border-emerald-100 rounded-lg p-2.5 text-[11px] text-emerald-800 flex items-center justify-between">
+                                <div className="flex items-center gap-1.5">
+                                  <UserCheck className="h-3.5 w-3.5 text-emerald-600" />
+                                  <span>
+                                    Conferido em <strong className="font-mono">{new Date(latestHistory.createdAt).toLocaleString('pt-BR')}</strong> por <strong>{latestHistory.userId === 'demo-user' ? 'direito.rgr@gmail.com' : (user?.email || 'Sistema BOSS')}</strong>.
+                                  </span>
+                                </div>
+                                <button
+                                  onClick={() => {
+                                    setSelectedPub(latestHistory);
+                                    setActiveTab('publications');
+                                    setIsGmailExplorerOpen(false);
+                                  }}
+                                  className="text-emerald-700 hover:text-emerald-900 font-bold hover:underline"
+                                >
+                                  Ver conferência antiga
+                                </button>
+                              </div>
+                            )}
+
+                            {/* Actions Ribbon */}
+                            <div className="pt-2 border-t border-slate-100 flex flex-wrap gap-2 items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => setSelectedEmailDetail(email)}
+                                  className="bg-slate-900 hover:bg-slate-800 text-white font-bold text-[11px] py-1.5 px-3 rounded-lg flex items-center gap-1 transition"
+                                >
+                                  <FileText className="h-3.5 w-3.5" />
+                                  Ver E-mail Completo
+                                </button>
+                                
+                                <button
+                                  onClick={() => handleMarkAsConferred(email)}
+                                  disabled={isConferred}
+                                  className={`font-bold text-[11px] py-1.5 px-3 rounded-lg flex items-center gap-1 transition border ${
+                                    isConferred
+                                      ? 'bg-emerald-50 text-emerald-500 border-emerald-100 cursor-not-allowed'
+                                      : 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600'
+                                  }`}
+                                >
+                                  <CheckCircle className="h-3.5 w-3.5" />
+                                  {isConferred ? 'Conferido' : 'Marcar como Conferido'}
+                                </button>
+                              </div>
+
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => handleCopyText(email.subject, 'Assunto')}
+                                  className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition"
+                                  title="Copiar Assunto do E-mail"
+                                >
+                                  {copiedText === 'Assunto' ? (
+                                    <Check className="h-4 w-4 text-emerald-600" />
+                                  ) : (
+                                    <Copy className="h-4 w-4" />
+                                  )}
+                                </button>
+
+                                <button
+                                  onClick={() => handleRefreshSingleEmail(email.id)}
+                                  disabled={emailDetailsLoading}
+                                  className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition"
+                                  title="Atualizar informações deste e-mail"
+                                >
+                                  <RefreshCw className={`h-4 w-4 ${emailDetailsLoading ? 'animate-spin' : ''}`} />
+                                </button>
+
+                                <a
+                                  href={`https://mail.google.com/mail/u/0/#inbox/${email.id}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="bg-slate-100 hover:bg-slate-200 text-slate-600 p-1.5 rounded-lg transition border border-slate-200 flex items-center justify-center"
+                                  title="Abrir no Gmail"
+                                >
+                                  <ExternalLink className="h-4 w-4" />
+                                </a>
+                              </div>
+                            </div>
+
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Infinite / Lazy Loading trigger */}
+                    {explorerMessageIds.length > explorerMessages.length && (
+                      <div className="pt-4 text-center">
+                        <button
+                          onClick={handleLoadMore}
+                          disabled={explorerDetailsLoading}
+                          className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-xs py-3 px-6 rounded-xl shadow-sm inline-flex items-center gap-2 transition disabled:opacity-50"
+                        >
+                          {explorerDetailsLoading ? (
+                            <>
+                              <RefreshCw className="h-4 w-4 animate-spin" />
+                              Carregando mais detalhes...
+                            </>
+                          ) : (
+                            <>
+                              <span>Carregar mais e-mails</span>
+                              <span className="font-mono text-[10px] bg-slate-100 text-slate-500 py-0.5 px-2 rounded-full border">
+                                {explorerMessages.length} de {explorerMessageIds.length}
+                              </span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {explorerDetailsLoading && explorerMessages.length > 0 && (
+                  <div className="text-center text-slate-500 text-xs py-2 font-medium flex items-center justify-center gap-2">
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                    <span>Buscando detalhes do próximo lote do Gmail em segundo plano...</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Bottom stats footer */}
+              <div className="bg-slate-900 border-t border-slate-800 text-slate-400 p-4 shrink-0 text-xs flex justify-between items-center font-mono">
+                <span>Total de mensagens indexadas nesta busca: <strong>{explorerMessageIds.length}</strong></span>
+                <span>Detalhes carregados: <strong>{explorerMessages.length}</strong></span>
+              </div>
+
+            </div>
+          </div>
+        )}
+
+        {/* Selected Email Detailed View Modal */}
+        {selectedEmailDetail && (
+          <div className="fixed inset-0 bg-slate-950/75 backdrop-blur-sm z-55 flex items-center justify-center p-4 overflow-hidden animate-fade-in">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl h-[80vh] flex flex-col overflow-hidden border border-slate-100 text-slate-800">
+              
+              {/* Header */}
+              <div className="bg-slate-900 text-white p-5 flex justify-between items-center shrink-0">
+                <div className="flex items-center gap-2">
+                  <Mail className="h-5 w-5 text-purple-400" />
+                  <span className="text-xs font-bold uppercase tracking-widest text-slate-400">Leitor de E-mail BOSS</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handleMarkAsConferred(selectedEmailDetail)}
+                    disabled={selectedEmailDetail.isConferred || getConferenciaHistory(selectedEmailDetail.processNumber).length > 0}
+                    className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs py-1.5 px-3 rounded-lg flex items-center gap-1.5 transition"
+                  >
+                    <CheckCircle className="h-3.5 w-3.5" />
+                    {selectedEmailDetail.isConferred || getConferenciaHistory(selectedEmailDetail.processNumber).length > 0 ? 'Conferido' : 'Marcar como Conferido'}
+                  </button>
+                  <button
+                    onClick={() => setSelectedEmailDetail(null)}
+                    className="text-slate-400 hover:text-white p-2 rounded-lg transition hover:bg-slate-800"
+                  >
+                    <span className="text-xl font-bold font-mono">×</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Body Area */}
+              <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                
+                {/* Email Metadata */}
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
+                  <h2 className="text-lg font-bold text-slate-900 leading-snug">{selectedEmailDetail.subject}</h2>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2 text-xs text-slate-600">
+                    <div>
+                      <span className="text-[10px] text-slate-400 uppercase font-bold block font-mono">Remetente (From)</span>
+                      <strong className="text-slate-800 text-xs">{selectedEmailDetail.from}</strong>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-400 uppercase font-bold block font-mono">Destinatário (To)</span>
+                      <strong className="text-slate-800 text-xs">{selectedEmailDetail.to}</strong>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-400 uppercase font-bold block font-mono">Sincronização / Recebimento</span>
+                      <strong className="text-slate-800 text-xs font-mono">
+                        {new Date(selectedEmailDetail.date).toLocaleString('pt-BR', { dateStyle: 'full', timeStyle: 'short' })}
+                      </strong>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-400 uppercase font-bold block font-mono">ID do Gmail</span>
+                      <code className="text-[10px] bg-slate-200/60 text-slate-600 px-1.5 py-0.5 rounded font-mono break-all">{selectedEmailDetail.id}</code>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Extracted Process Info Highlight Card */}
+                <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-5 space-y-4">
+                  <div className="flex items-center gap-2 border-b border-indigo-100 pb-2">
+                    <Scale className="h-4.5 w-4.5 text-indigo-600" />
+                    <h3 className="font-bold text-indigo-900 text-xs uppercase tracking-wide">Metadados Processuais Extraídos</h3>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-xs">
+                    <div>
+                      <span className="text-[9px] text-indigo-500 uppercase font-bold block">Tribunal de Origem</span>
+                      <span className="font-bold text-slate-800">{selectedEmailDetail.tribunal || 'Não identificado'}</span>
+                    </div>
+
+                    <div>
+                      <span className="text-[9px] text-indigo-500 uppercase font-bold block">Número Único CNJ</span>
+                      {selectedEmailDetail.processNumber && selectedEmailDetail.processNumber !== 'Não identificado' ? (
+                        <div className="flex items-center gap-1.5 font-bold">
+                          <span className="font-mono text-indigo-800 text-sm">{selectedEmailDetail.processNumber}</span>
+                          <button 
+                            onClick={() => handleCopyText(selectedEmailDetail.processNumber, 'Número CNJ')}
+                            className="text-slate-400 hover:text-slate-600 font-bold"
+                          >
+                            <Copy className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="text-slate-400 italic">Não identificado</span>
+                      )}
+                    </div>
+
+                    <div>
+                      <span className="text-[9px] text-indigo-500 uppercase font-bold block">Vara / Órgão Julgador</span>
+                      <span className="font-bold text-slate-800">{selectedEmailDetail.vara || 'Não identificado'}</span>
+                    </div>
+
+                    <div>
+                      <span className="text-[9px] text-indigo-500 uppercase font-bold block">Classe Processual</span>
+                      <span className="font-bold text-slate-800">{selectedEmailDetail.classe || 'Não identificada'}</span>
+                    </div>
+
+                    <div>
+                      <span className="text-[9px] text-indigo-500 uppercase font-bold block">Polo Ativo (Autor)</span>
+                      <span className="font-bold text-slate-800">{selectedEmailDetail.autor || 'Não identificado'}</span>
+                    </div>
+
+                    <div>
+                      <span className="text-[9px] text-indigo-500 uppercase font-bold block">Polo Passivo (Réu)</span>
+                      <span className="font-bold text-slate-800">{selectedEmailDetail.reu || 'Não identificado'}</span>
+                    </div>
+
+                    <div className="sm:col-span-2 lg:col-span-3">
+                      <span className="text-[9px] text-indigo-500 uppercase font-bold block">Tipo de Movimentação Estimada</span>
+                      <span className="font-bold text-slate-800">{selectedEmailDetail.movementType || 'Movimentação Geral'}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Email Full Text Content */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                    <span className="text-xs font-bold text-slate-700 uppercase tracking-wide">Teor Integral do E-mail</span>
+                    <button
+                      onClick={() => handleCopyText(selectedEmailDetail.bodyText || '', 'Texto completo do e-mail')}
+                      className="text-indigo-600 hover:text-indigo-800 text-xs font-bold flex items-center gap-1"
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                      Copiar teor
+                    </button>
+                  </div>
+
+                  <div className="bg-slate-50 border border-slate-100 rounded-2xl p-5 text-slate-700 text-xs leading-relaxed whitespace-pre-wrap font-mono overflow-x-auto max-h-96">
+                    {selectedEmailDetail.bodyText || selectedEmailDetail.snippet || "Sem conteúdo textual disponível."}
+                  </div>
+                </div>
+
+                {/* Attachments Section */}
+                {selectedEmailDetail.hasAttachments && selectedEmailDetail.attachments && (
+                  <div className="space-y-2">
+                    <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wide">Anexos Disponíveis ({selectedEmailDetail.attachments.length})</h4>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {selectedEmailDetail.attachments.map((file: any, idx: number) => (
+                        <div key={idx} className="bg-white border border-slate-200 rounded-xl p-3 flex items-center justify-between">
+                          <div className="min-w-0">
+                            <span className="text-xs font-bold text-slate-800 block truncate" title={file.filename}>{file.filename}</span>
+                            <span className="text-[9px] text-slate-400 uppercase block font-mono font-bold">{file.mimeType} ({(file.size / 1024).toFixed(1)} KB)</span>
+                          </div>
+                          
+                          <a
+                            href={`https://gmail.googleapis.com/v1/users/me/messages/${selectedEmailDetail.id}/attachments/${file.attachmentId}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 p-2 rounded-lg transition"
+                          >
+                            <Download className="h-4 w-4" />
+                          </a>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Conferencia History for this process */}
+                <div className="space-y-2">
+                  <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wide">Histórico de Conferências para este Processo</h4>
+                  {getConferenciaHistory(selectedEmailDetail.processNumber).length === 0 ? (
+                    <p className="text-xs text-slate-400 italic">Não há histórico de conferências para este processo no banco de dados.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {getConferenciaHistory(selectedEmailDetail.processNumber).map((historyItem: any, hIdx: number) => (
+                        <div key={hIdx} className="bg-slate-50 border border-slate-100 rounded-xl p-3 flex items-center justify-between text-xs">
+                          <div>
+                            <span className="font-semibold text-slate-700 block">{historyItem.title}</span>
+                            <span className="text-[10px] text-slate-400">
+                              Data da conferência: {new Date(historyItem.createdAt).toLocaleString('pt-BR')}
+                            </span>
+                          </div>
+                          <span className="font-bold text-slate-500 bg-white border border-slate-200 px-2 py-0.5 rounded text-[10px]">
+                            {historyItem.userId === 'demo-user' ? 'direito.rgr@gmail.com' : (user?.email || 'Sistema BOSS')}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+              </div>
+
+              {/* Footer */}
+              <div className="bg-slate-50 border-t border-slate-200 p-4 shrink-0 flex justify-between items-center text-xs">
+                <span className="text-slate-500 font-medium">Sincronizado via Google Workspace API</span>
+                <a
+                  href={`https://mail.google.com/mail/u/0/#inbox/${selectedEmailDetail.id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs py-2 px-4 rounded-xl flex items-center gap-1.5 transition"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  Visualizar Original no Gmail
+                </a>
+              </div>
+
             </div>
           </div>
         )}
