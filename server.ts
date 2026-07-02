@@ -67,6 +67,42 @@ function calculateBusinessDaysDate(startDate: Date, days: number): string {
   return resultDate.toISOString();
 }
 
+// Helper to execute promises with a concurrency limit
+async function fetchWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = [];
+  const executing: Promise<any>[] = [];
+  for (const item of items) {
+    const p = Promise.resolve().then(() => fn(item));
+    results.push(p as any);
+    if (limit <= items.length) {
+      const e: any = p.then(() => executing.splice(executing.indexOf(e), 1));
+      executing.push(e);
+      if (executing.length >= limit) {
+        await Promise.race(executing);
+      }
+    }
+  }
+  return Promise.all(results);
+}
+
+// Helper to extract CNJ process numbers from text with whitespace tolerance
+function extractCNJsFromText(text: string): string[] {
+  if (!text) return [];
+  const regex = /\d{7}\s*-\s*\d{2}\s*\.\s*\d{4}\s*\.\s*\d\s*\.\s*\d{2}\s*\.\s*\d{4}/g;
+  const matches = text.match(regex);
+  if (!matches) return [];
+  const unique = new Set<string>();
+  for (const m of matches) {
+    const cleaned = m.replace(/\s+/g, '');
+    unique.add(cleaned);
+  }
+  return Array.from(unique);
+}
+
 // 1. API: AI Analyzer for manual copy-pasted publications
 app.post("/api/analyze-publication", async (req, res) => {
   const { content, subpoenaDate } = req.body;
@@ -391,6 +427,297 @@ app.post("/api/gmail-pushes", async (req, res) => {
   } catch (error: any) {
     console.error("Erro no endpoint /api/gmail-pushes:", error);
     return res.status(500).json({ error: "Falha ao recuperar estatísticas dos PUSHes: " + error.message });
+  }
+});
+
+// 2.6 API: Gmail Pushes grouped by CNJ (for the operational cleaning and checking panel)
+app.post("/api/gmail-pushes/grouped-by-cnj", async (req, res) => {
+  const { accessToken, sender, page = 1, limit = 50, search = "" } = req.body;
+
+  if (!accessToken) {
+    return res.status(400).json({ error: "Access token do Gmail não fornecido." });
+  }
+  if (!sender) {
+    return res.status(400).json({ error: "Remetente do push (sender) não fornecido." });
+  }
+
+  try {
+    let messages: Array<{ id: string, threadId: string }> = [];
+    let nextPageToken: string | undefined = undefined;
+    let q = `in:inbox from:(${sender})`;
+    if (search && search.trim() !== "") {
+      q += ` "${search.trim()}"`;
+    }
+
+    let pageCount = 0;
+    do {
+      const url: string = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(q)}&maxResults=500${nextPageToken ? `&pageToken=${nextPageToken}` : ''}`;
+      const apiRes = await fetch(url, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+      if (!apiRes.ok) {
+        const errText = await apiRes.text();
+        throw new Error(`Erro ao listar mensagens do Gmail: ${errText}`);
+      }
+      const data = await apiRes.json() as any;
+      if (data.messages) {
+        messages = messages.concat(data.messages);
+      }
+      nextPageToken = data.nextPageToken;
+      pageCount++;
+    } while (nextPageToken && pageCount < 3); // limit to 1500 messages max to prevent timeout
+
+    const totalEmails = messages.length;
+
+    // Fetch details for all messages with concurrency control (up to 40 parallel requests)
+    const msgDetails = await fetchWithConcurrency(messages, 40, async (msg) => {
+      try {
+        const detailUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=metadata&metadataHeaders=subject&metadataHeaders=date`;
+        const detailRes = await fetch(detailUrl, {
+          headers: { Authorization: `Bearer ${accessToken}` }
+        });
+        if (!detailRes.ok) return null;
+        const detailData = await detailRes.json() as any;
+        const headers = detailData.payload?.headers || [];
+        const subject = headers.find((h: any) => h.name.toLowerCase() === "subject")?.value || "Sem Assunto";
+        const dateHeader = headers.find((h: any) => h.name.toLowerCase() === "date")?.value;
+        const emailDate = dateHeader ? new Date(dateHeader).toISOString() : new Date().toISOString();
+        const snippet = detailData.snippet || "";
+        const labelIds = detailData.labelIds || [];
+        const isUnread = labelIds.includes("UNREAD");
+
+        return {
+          id: msg.id,
+          threadId: msg.threadId,
+          subject,
+          snippet,
+          date: emailDate,
+          isUnread
+        };
+      } catch (err) {
+        console.error(`Erro ao buscar detalhes da mensagem ${msg.id}:`, err);
+        return null;
+      }
+    });
+
+    const validDetails = msgDetails.filter((m): m is any => m !== null);
+
+    // Filter out messages that don't have CNJs in subject or snippet, to fetch bodyText and try finding CNJ there
+    const messagesWithoutCnj = validDetails.filter(m => {
+      const subjectCnjs = extractCNJsFromText(m.subject);
+      const snippetCnjs = extractCNJsFromText(m.snippet);
+      return subjectCnjs.length === 0 && snippetCnjs.length === 0;
+    });
+
+    // Fetch full format only for up to 30 messages without CNJ to avoid rate limiting
+    const bodyFetchedMsgs = await fetchWithConcurrency(messagesWithoutCnj.slice(0, 30), 15, async (msg) => {
+      try {
+        const detailUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=full`;
+        const detailRes = await fetch(detailUrl, {
+          headers: { Authorization: `Bearer ${accessToken}` }
+        });
+        if (!detailRes.ok) return null;
+        const detailData = await detailRes.json() as any;
+        
+        let bodyText = detailData.snippet || "";
+        const parts = detailData.payload?.parts || [];
+        if (parts.length > 0) {
+          const textPart = parts.find((p: any) => p.mimeType === "text/plain");
+          if (textPart && textPart.body?.data) {
+            bodyText = Buffer.from(textPart.body.data, 'base64').toString('utf-8');
+          }
+        } else if (detailData.payload?.body?.data) {
+          bodyText = Buffer.from(detailData.payload.body.data, 'base64').toString('utf-8');
+        }
+        
+        return {
+          id: msg.id,
+          bodyText
+        };
+      } catch (err) {
+        return null;
+      }
+    });
+
+    const bodyTextMap = new Map<string, string>();
+    for (const b of bodyFetchedMsgs) {
+      if (b) bodyTextMap.set(b.id, b.bodyText);
+    }
+
+    // Now process and extract all CNJs
+    const processedMessages = validDetails.map(msg => {
+      let cnjs = Array.from(new Set([
+        ...extractCNJsFromText(msg.subject),
+        ...extractCNJsFromText(msg.snippet)
+      ]));
+
+      if (cnjs.length === 0) {
+        const bodyText = bodyTextMap.get(msg.id);
+        if (bodyText) {
+          cnjs = extractCNJsFromText(bodyText);
+        }
+      }
+
+      return {
+        ...msg,
+        cnjs
+      };
+    });
+
+    // Grouping by CNJ
+    // Key: CNJ number, or "Não identificado"
+    const cnjGroupsMap = new Map<string, any>();
+    const unassignedGroup: any[] = [];
+
+    // Helper to get Source ID from sender email
+    const PUSH_SOURCES_MAP = [
+      { id: "trt-mg", sender: "nao-responda@trt3.jus.br" },
+      { id: "pje-mg", sender: "pje@tjmg.jus.br" },
+      { id: "tjmg", sender: "push@tjmg.jus.br" },
+      { id: "eproc-tjmg", sender: "noreply@tjmg.jus.br" },
+      { id: "trf6", sender: "eproc@trf6.jus.br" }
+    ];
+    const sourceId = PUSH_SOURCES_MAP.find(s => s.sender === sender)?.id || "trt-mg";
+
+    for (const msg of processedMessages) {
+      if (msg.cnjs.length === 0) {
+        unassignedGroup.push(msg);
+      } else {
+        for (const cnj of msg.cnjs) {
+          if (!cnjGroupsMap.has(cnj)) {
+            cnjGroupsMap.set(cnj, {
+              processNumber: cnj,
+              messages: [],
+              totalCount: 0,
+              unreadCount: 0,
+              latestSubject: "",
+              latestDate: ""
+            });
+          }
+          const group = cnjGroupsMap.get(cnj);
+          group.messages.push(msg);
+        }
+      }
+    }
+
+    // Finalize groups
+    const groupsList: any[] = [];
+    for (const [cnj, group] of cnjGroupsMap.entries()) {
+      // Sort messages in group by date descending to get the latest subject/date
+      group.messages.sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      
+      const unreadCount = group.messages.filter((m: any) => m.isUnread).length;
+      const latestMessage = group.messages[0];
+
+      // Build URLs
+      const gmailSearchUrl = `https://mail.google.com/mail/u/0/#search/in%3Ainbox+from%3A${encodeURIComponent(sender)}+%22${encodeURIComponent(cnj)}%22`;
+      const todoistUrl = `https://app.todoist.com/app/search/${encodeURIComponent(cnj)}?intent=searchCompleted`;
+      
+      let courtSearchUrl = `https://pje.trt3.jus.br/consultaprocessual/detalhe-processo/${cnj}`;
+      if (sourceId === "pje-mg" || sourceId === "tjmg") {
+        courtSearchUrl = "https://pje.tjmg.jus.br/pje/ConsultaPublica/listView.seam";
+      } else if (sourceId === "eproc-tjmg") {
+        courtSearchUrl = "https://eproc.tjmg.jus.br/eproc/externo_controlador.php?controle=publicacao_pesquisa";
+      } else if (sourceId === "trf6") {
+        courtSearchUrl = "https://eproc.trf6.jus.br/eproc/externo_controlador.php?controle=publicacao_pesquisa";
+      }
+
+      groupsList.push({
+        processNumber: cnj,
+        totalCount: group.messages.length,
+        unreadCount,
+        latestSubject: latestMessage.subject,
+        latestDate: latestMessage.date,
+        messageIds: group.messages.map((m: any) => m.id),
+        gmailSearchUrl,
+        todoistUrl,
+        courtSearchUrl,
+        messages: group.messages
+      });
+    }
+
+    // Sort valid CNJ groups from highest email count to lowest
+    groupsList.sort((a, b) => b.totalCount - a.totalCount);
+
+    // If there are unassigned messages, append a "Não identificado" group at the end
+    if (unassignedGroup.length > 0) {
+      unassignedGroup.sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      const unreadCount = unassignedGroup.filter((m: any) => m.isUnread).length;
+      const latestMessage = unassignedGroup[0];
+
+      groupsList.push({
+        processNumber: "Não identificado",
+        totalCount: unassignedGroup.length,
+        unreadCount,
+        latestSubject: latestMessage.subject,
+        latestDate: latestMessage.date,
+        messageIds: unassignedGroup.map((m: any) => m.id),
+        gmailSearchUrl: `https://mail.google.com/mail/u/0/#search/in%3Ainbox+from%3A${encodeURIComponent(sender)}`,
+        todoistUrl: "",
+        courtSearchUrl: "",
+        messages: unassignedGroup
+      });
+    }
+
+    const totalProcesses = cnjGroupsMap.size;
+
+    // Apply pagination
+    const pageNum = parseInt(page as any || "1", 10);
+    const limitNum = parseInt(limit as any || "50", 10);
+    const startIndex = (pageNum - 1) * limitNum;
+    const endIndex = pageNum * limitNum;
+    const paginatedGroups = groupsList.slice(startIndex, endIndex);
+
+    return res.json({
+      sender,
+      totalEmails,
+      totalProcesses,
+      page: pageNum,
+      limit: limitNum,
+      totalPages: Math.ceil(groupsList.length / limitNum),
+      groups: paginatedGroups
+    });
+
+  } catch (error: any) {
+    console.error("Erro no endpoint /api/gmail-pushes/grouped-by-cnj:", error);
+    return res.status(500).json({ error: "Falha ao agrupar PUSHes por CNJ: " + error.message });
+  }
+});
+
+// 2.7 API: Mark Gmail messages as read in batch
+app.post("/api/gmail-pushes/mark-as-read", async (req, res) => {
+  const { accessToken, messageIds } = req.body;
+
+  if (!accessToken) {
+    return res.status(400).json({ error: "Access token do Gmail não fornecido." });
+  }
+  if (!messageIds || !Array.isArray(messageIds) || messageIds.length === 0) {
+    return res.status(400).json({ error: "Lista de messageIds é obrigatória." });
+  }
+
+  try {
+    const url = "https://gmail.googleapis.com/gmail/v1/users/me/messages/batchModify";
+    const apiRes = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        ids: messageIds,
+        removeLabelIds: ["UNREAD"]
+      })
+    });
+
+    if (!apiRes.ok) {
+      const errText = await apiRes.text();
+      throw new Error(`Erro ao marcar mensagens como lidas: ${errText}`);
+    }
+
+    return res.json({ success: true, count: messageIds.length });
+  } catch (error: any) {
+    console.error("Erro no endpoint /api/gmail-pushes/mark-as-read:", error);
+    return res.status(500).json({ error: "Falha ao marcar PUSHes como lidos: " + error.message });
   }
 });
 

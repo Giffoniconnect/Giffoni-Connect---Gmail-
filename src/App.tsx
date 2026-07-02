@@ -15,7 +15,9 @@ import { initialPublications, calculateBusinessDaysDate } from './mockData';
 export default function App() {
   // Auth state
   const [user, setUser] = useState<User | null>(null);
-  const [cachedToken, setCachedToken] = useState<string | null>(null);
+  const [cachedToken, setCachedToken] = useState<string | null>(() => {
+    return localStorage.getItem('boss_gmail_token') || null;
+  });
   const [authLoading, setAuthLoading] = useState(true);
 
   // Core Data state
@@ -183,6 +185,8 @@ export default function App() {
         setActiveTab('consulta.recorte-digital');
       } else if (path === 'pushes') {
         setActiveTab('pushes');
+      } else if (path.startsWith('pushes/push-')) {
+        setActiveTab(path as any);
       } else if (path === 'publications') {
         setActiveTab('publications');
       } else if (path === 'deadlines') {
@@ -262,6 +266,86 @@ export default function App() {
   const [pushesLastUpdated, setPushesLastUpdated] = useState<string | null>(null);
   const [pushesError, setPushesError] = useState<string | null>(null);
 
+  // Grouped pushes (operational dashboard) states
+  const [groupedPushes, setGroupedPushes] = useState<any>(null);
+  const [groupedPushesLoading, setGroupedPushesLoading] = useState(false);
+  const [groupedPushesSearch, setGroupedPushesSearch] = useState('');
+  const [groupedPushesPage, setGroupedPushesPage] = useState(1);
+  const [expandedGroupCNJ, setExpandedGroupCNJ] = useState<string | null>(null);
+  const [clearingGroupCNJ, setClearingGroupCNJ] = useState<string | null>(null);
+
+  const fetchGroupedPushes = async (sender: string, pageNum: number = 1, searchQuery: string = "") => {
+    let token = cachedToken;
+    if (!token) {
+      token = localStorage.getItem('boss_gmail_token');
+      if (token) {
+        setCachedToken(token);
+      }
+    }
+    if (!token) {
+      addSystemLog('warning', 'Não foi possível carregar o painel operacional: necessita conectar conta Google.', 'gmail_sync');
+      return;
+    }
+
+    setGroupedPushesLoading(true);
+    try {
+      const res = await fetch("/api/gmail-pushes/grouped-by-cnj", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accessToken: token,
+          sender,
+          page: pageNum,
+          limit: 10,
+          search: searchQuery
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Erro ao buscar dados agrupados.");
+      }
+      setGroupedPushes(data);
+      setGroupedPushesPage(pageNum);
+    } catch (err: any) {
+      console.error(err);
+      addSystemLog('error', `Falha ao carregar painel operacional por CNJ: ${err.message}`, 'gmail_sync');
+    } finally {
+      setGroupedPushesLoading(false);
+    }
+  };
+
+  const clearGroupAsRead = async (sender: string, processNumber: string, messageIds: string[]) => {
+    let token = cachedToken;
+    if (!token) {
+      token = localStorage.getItem('boss_gmail_token');
+    }
+    if (!token) return;
+
+    setClearingGroupCNJ(processNumber);
+    try {
+      const res = await fetch("/api/gmail-pushes/mark-as-read", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accessToken: token,
+          messageIds
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Erro ao limpar.");
+      }
+      addSystemLog('success', `Sucesso: ${messageIds.length} e-mails do Processo ${processNumber} foram marcados como lidos no seu Gmail!`, 'gmail_sync');
+      await fetchGroupedPushes(sender, groupedPushesPage, groupedPushesSearch);
+      fetchAllPushes();
+    } catch (err: any) {
+      console.error(err);
+      addSystemLog('error', `Erro ao marcar como lido: ${err.message}`, 'gmail_sync');
+    } finally {
+      setClearingGroupCNJ(null);
+    }
+  };
+
   // Gmail Explorer states
   const [isGmailExplorerOpen, setIsGmailExplorerOpen] = useState(false);
   const [explorerSource, setExplorerSource] = useState<{ name: string; sender: string } | null>(null);
@@ -285,6 +369,18 @@ export default function App() {
   };
 
   const openGmailExplorer = async (source: { name: string; sender?: string; query?: string }, filter: 'all' | 'unread') => {
+    let token = cachedToken;
+    if (!token) {
+      token = localStorage.getItem('boss_gmail_token');
+      if (token) {
+        setCachedToken(token);
+      }
+    }
+    if (!token) {
+      addSystemLog('warning', 'Acesso ao Gmail expirado ou não fornecido. Por favor, conecte sua conta Google no painel para autorizar o acesso.', 'gmail_sync');
+      return;
+    }
+
     setIsGmailExplorerOpen(true);
     setExplorerSource({ name: source.name, sender: source.sender || source.query || '' });
     setExplorerFilter(filter);
@@ -625,6 +721,7 @@ export default function App() {
       } else {
         setUser(null);
         setCachedToken(null);
+        localStorage.removeItem('boss_gmail_token');
         setAuthLoading(false);
         setActiveTab('login');
         try {
@@ -724,6 +821,7 @@ export default function App() {
         // Sign out immediately and block
         await signOut(auth);
         setCachedToken(null);
+        localStorage.removeItem('boss_gmail_token');
         setLoginError('Usuário não autorizado para acessar este sistema.');
         addSystemLog('error', `Acesso negado para o e-mail não autorizado: ${loggedEmail}`);
         setActiveTab('login');
@@ -737,6 +835,7 @@ export default function App() {
 
       if (token) {
         setCachedToken(token);
+        localStorage.setItem('boss_gmail_token', token);
         addSystemLog('success', 'Autorização do Gmail obtida com sucesso.', 'gmail_sync');
       }
 
@@ -761,6 +860,7 @@ export default function App() {
     try {
       await signOut(auth);
       setCachedToken(null);
+      localStorage.removeItem('boss_gmail_token');
       setPublications(initialPublications);
       setHasAutoUpdated(false);
       setLoginError(null);
@@ -778,8 +878,15 @@ export default function App() {
 
   // Dedicated sync for Prius via Gmail API
   const syncPrius = async () => {
-    if (!cachedToken) {
-      handleGoogleLogin();
+    let token = cachedToken;
+    if (!token) {
+      token = localStorage.getItem('boss_gmail_token');
+      if (token) {
+        setCachedToken(token);
+      }
+    }
+    if (!token) {
+      addSystemLog('warning', 'Acesso ao Gmail expirado ou não fornecido para sincronizar Prius. Por favor, conecte sua conta Google.', 'gmail_sync');
       return;
     }
     setPriusState(prev => ({ ...prev, isLoading: true, error: null }));
@@ -819,8 +926,15 @@ export default function App() {
 
   // Dedicated sync for a specific Recorte Digital service via Gmail API
   const syncRecorteService = async (serviceId: string, serviceName: string) => {
-    if (!cachedToken) {
-      handleGoogleLogin();
+    let token = cachedToken;
+    if (!token) {
+      token = localStorage.getItem('boss_gmail_token');
+      if (token) {
+        setCachedToken(token);
+      }
+    }
+    if (!token) {
+      addSystemLog('warning', `Acesso ao Gmail expirado ou não fornecido para sincronizar ${serviceName}. Por favor, conecte sua conta Google.`, 'gmail_sync');
       return;
     }
     setRecorteStates(prev => {
@@ -909,10 +1023,32 @@ export default function App() {
     }
   }, [user, cachedToken, hasAutoUpdated]);
 
+  // Trigger loading of grouped pushes when entering a specific push sub-dashboard
+  useEffect(() => {
+    if (activeTab.startsWith('pushes/push-')) {
+      const subRouteId = activeTab.replace('pushes/push-', '');
+      const source = PUSH_SOURCES.find(s => s.id === subRouteId);
+      if (source) {
+        setGroupedPushes(null);
+        setGroupedPushesSearch('');
+        setGroupedPushesPage(1);
+        setExpandedGroupCNJ(null);
+        fetchGroupedPushes(source.sender, 1, '');
+      }
+    }
+  }, [activeTab, cachedToken]);
+
   // Sync Gmail (scans Gmail inbox via server proxy)
   const syncGmailInbox = async () => {
-    if (!cachedToken) {
-      handleGoogleLogin();
+    let token = cachedToken;
+    if (!token) {
+      token = localStorage.getItem('boss_gmail_token');
+      if (token) {
+        setCachedToken(token);
+      }
+    }
+    if (!token) {
+      addSystemLog('warning', 'Acesso ao Gmail expirado ou não fornecido para varrer caixa de entrada. Por favor, conecte sua conta Google.', 'gmail_sync');
       return;
     }
 
@@ -2732,7 +2868,7 @@ export default function App() {
                             </div>
 
                             <div className="border-t border-slate-100 mt-4 pt-3 flex items-center justify-between text-xs font-bold text-purple-600 group-hover:text-purple-800">
-                              <span>Acessar Dashboard</span>
+                              <span>Abrir painel operacional</span>
                               <ChevronRight className="h-4 w-4 transform group-hover:translate-x-1 transition-transform" />
                             </div>
                           </div>
@@ -2759,27 +2895,44 @@ export default function App() {
                 );
               }
 
-              const data = pushesData[source.sender] || {
-                sender: source.sender,
-                totalCount: 0,
-                unreadCount: 0,
-                newestSubject: "Sem consulta",
-                newestDate: null,
-                success: true
+              // Custom theme colors helper based on requirements (Blue for Docs/General, Red for Todoist/PJe)
+              const getSourceTheme = (id: string) => {
+                switch (id) {
+                  case 'pje-mg':
+                  case 'eproc-tjmg':
+                    return {
+                      primary: 'text-red-600',
+                      bg: 'bg-red-600 hover:bg-red-700',
+                      lightBg: 'bg-red-50',
+                      border: 'border-red-200',
+                      badge: 'bg-red-50 text-red-700 border-red-100',
+                      accent: 'red'
+                    };
+                  case 'trt-mg':
+                  case 'tjmg':
+                  case 'trf6':
+                  default:
+                    return {
+                      primary: 'text-blue-600',
+                      bg: 'bg-blue-600 hover:bg-blue-700',
+                      lightBg: 'bg-blue-50',
+                      border: 'border-blue-200',
+                      badge: 'bg-blue-50 text-blue-700 border-blue-100',
+                      accent: 'blue'
+                    };
+                }
               };
-              const isLoading = pushesLoading[source.sender] || false;
-              const isError = data.success === false;
-              const hasUnread = data.unreadCount > 0;
-              const newestDateObj = data.newestDate ? new Date(data.newestDate) : null;
-              const diffTime = newestDateObj ? Date.now() - newestDateObj.getTime() : 0;
-              const isOlderThan48h = !isError && hasUnread && diffTime > 48 * 60 * 60 * 1000;
+
+              const theme = getSourceTheme(source.id);
+              const isLoading = groupedPushesLoading;
+              const hasData = groupedPushes && groupedPushes.groups;
 
               return (
-                <div className="space-y-6">
+                <div className="space-y-6 animate-fade-in text-slate-800">
                   {/* Back button */}
                   <button 
                     onClick={() => handleTabChange('pushes')} 
-                    className="inline-flex items-center gap-1.5 text-xs text-indigo-600 hover:text-indigo-800 font-bold cursor-pointer transition"
+                    className={`inline-flex items-center gap-1.5 text-xs ${theme.primary} hover:opacity-85 font-bold cursor-pointer transition`}
                   >
                     <ArrowLeft className="h-4 w-4" />
                     Voltar para Painel Geral de Pushes
@@ -2789,121 +2942,299 @@ export default function App() {
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 pb-5">
                     <div>
                       <h1 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
-                        <Inbox className="h-6 w-6 text-indigo-600" />
-                        Dashboard: {source.name}
+                        <Inbox className={`h-6 w-6 ${theme.primary}`} />
+                        Painel Operacional: {source.name}
                       </h1>
                       <p className="text-slate-500 text-xs mt-1">
-                        Consulta em tempo real na Inbox para {source.sender}
+                        Central de limpeza, conferência e acesso rápido aos e-mails de {source.sender}
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={() => fetchSinglePush(source.sender)}
+                        onClick={() => fetchGroupedPushes(source.sender, groupedPushesPage, groupedPushesSearch)}
                         disabled={isLoading}
-                        className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-xs py-2.5 px-4 rounded-xl flex items-center gap-2 transition shadow-md shadow-indigo-600/15 cursor-pointer"
+                        className={`${theme.bg} disabled:opacity-50 text-white font-bold text-xs py-2.5 px-4 rounded-xl flex items-center gap-2 transition shadow-md cursor-pointer`}
                       >
                         <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-                        {isLoading ? 'Atualizando...' : 'Atualizar'}
+                        {isLoading ? 'Atualizando...' : 'Atualizar Dados'}
                       </button>
                     </div>
                   </div>
 
-                  {/* Error display */}
-                  {isError && (
-                    <div className="bg-red-50 border border-red-200 text-red-800 p-5 rounded-2xl text-xs space-y-2">
-                      <div className="flex items-center gap-2 font-bold text-sm">
-                        <AlertCircle className="h-5 w-5 text-red-600 shrink-0" />
-                        <span>Não foi possível consultar o Gmail. Verifique se a sessão Google está ativa e tente atualizar novamente.</span>
+                  {/* Operational Search Form - Pure Vertical Column */}
+                  <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+                    <form 
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        fetchGroupedPushes(source.sender, 1, groupedPushesSearch);
+                      }} 
+                      className="space-y-2"
+                    >
+                      <label className="text-xs font-bold text-slate-700 block">Pesquisa Rápida</label>
+                      <div className="flex flex-col sm:flex-row gap-3">
+                        <input
+                          type="text"
+                          placeholder="Digite o CNJ ou assunto para filtrar..."
+                          value={groupedPushesSearch}
+                          onChange={(e) => setGroupedPushesSearch(e.target.value)}
+                          className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-xs focus:bg-white focus:outline-slate-400 transition-all text-slate-800"
+                        />
+                        <button
+                          type="submit"
+                          disabled={isLoading}
+                          className="bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs py-3 px-6 rounded-xl transition"
+                        >
+                          Filtrar Processos
+                        </button>
                       </div>
-                      {data.error && (
-                        <p className="font-mono text-[10px] bg-red-100/40 p-2.5 rounded border border-red-200/20 text-red-700 break-words">
-                          Detalhe Técnico: {data.error}
-                        </p>
-                      )}
+                      <span className="text-[10px] text-slate-400 block mt-1">
+                        A busca filtrará as mensagens reais do tribunal que contêm a palavra-chave informada.
+                      </span>
+                    </form>
+                  </div>
+
+                  {/* Stats counters row */}
+                  {hasData && (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-1">
+                        <p className="text-[10px] text-slate-400 uppercase tracking-wider font-bold">Processos Únicos (CNJs)</p>
+                        <h3 className="text-3xl font-extrabold text-slate-800 font-mono">
+                          {groupedPushes.totalProcesses}
+                        </h3>
+                      </div>
+                      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-1">
+                        <p className="text-[10px] text-slate-400 uppercase tracking-wider font-bold">Total de e-mails</p>
+                        <h3 className="text-3xl font-extrabold text-slate-800 font-mono">
+                          {groupedPushes.totalEmails}
+                        </h3>
+                      </div>
+                      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-1">
+                        <p className="text-[10px] text-slate-400 uppercase tracking-wider font-bold">Pendentes sem Leitura</p>
+                        <h3 className={`text-3xl font-extrabold font-mono ${groupedPushes.groups.some((g: any) => g.unreadCount > 0) ? 'text-amber-600' : 'text-slate-600'}`}>
+                          {groupedPushes.groups.reduce((acc: number, g: any) => acc + (g.unreadCount || 0), 0)}
+                        </h3>
+                      </div>
                     </div>
                   )}
 
-                  {/* Stats counters row */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div 
-                      onClick={() => openGmailExplorer(source, 'all')}
-                      className="bg-white border border-slate-200 hover:border-indigo-300 rounded-2xl p-6 shadow-sm hover:shadow-md transition cursor-pointer space-y-2 relative group"
-                    >
-                      <p className="text-xs text-slate-400 uppercase tracking-wider font-bold">Total real na Inbox</p>
-                      <h3 className="text-4xl font-extrabold text-slate-800">{data.totalCount}</h3>
-                      <p className="text-xs text-indigo-600 font-semibold group-hover:underline flex items-center gap-1">
-                        Ver listagem completa <ChevronRight className="h-3 w-3" />
-                      </p>
+                  {/* Clipboard feedback tooltip banner */}
+                  {copiedText && (
+                    <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs px-4 py-3 rounded-xl flex items-center gap-2 animate-fade-in font-medium shadow-sm">
+                      <CheckCircle className="h-4 w-4 text-emerald-600" />
+                      <span>{copiedText} copiado para a área de transferência!</span>
                     </div>
+                  )}
 
-                    <div 
-                      onClick={() => openGmailExplorer(source, 'unread')}
-                      className={`border rounded-2xl p-6 shadow-sm hover:shadow-md transition cursor-pointer space-y-2 relative group ${hasUnread ? 'bg-purple-50/50 border-purple-200 hover:border-purple-400' : 'bg-white border-slate-200 hover:border-indigo-300'}`}
-                    >
-                      <p className="text-xs text-slate-400 uppercase tracking-wider font-bold">Não Lidos</p>
-                      <h3 className={`text-4xl font-extrabold ${hasUnread ? 'text-purple-600' : 'text-slate-500'}`}>{data.unreadCount}</h3>
-                      <p className="text-xs text-indigo-600 font-semibold group-hover:underline flex items-center gap-1">
-                        Ver não lidos <ChevronRight className="h-3 w-3" />
-                      </p>
+                  {/* Main grouped list */}
+                  {isLoading ? (
+                    <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center space-y-4 shadow-sm">
+                      <RefreshCw className={`h-8 w-8 ${theme.primary} animate-spin mx-auto`} />
+                      <p className="text-slate-500 text-xs font-semibold">Buscando e agrupando pushes da sua conta Gmail...</p>
                     </div>
-                  </div>
-
-                  {/* Latest email block */}
-                  <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4">
-                    <h3 className="text-sm font-bold text-slate-900 border-b border-slate-100 pb-3 uppercase tracking-wider">E-mail mais recente</h3>
-                    <div className="space-y-2">
-                      <span className="text-[10px] text-slate-400 uppercase font-bold block">Assunto</span>
-                      <p className="text-slate-800 text-sm font-medium bg-slate-50 p-3 rounded-xl border border-slate-100">
-                        {data.newestSubject}
-                      </p>
+                  ) : hasData && groupedPushes.groups.length === 0 ? (
+                    <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center space-y-3 shadow-sm">
+                      <Inbox className="h-10 w-10 text-slate-300 mx-auto" />
+                      <p className="text-sm font-bold text-slate-800">Nenhum processo encontrado</p>
+                      <p className="text-slate-500 text-xs">Tente ajustar seus termos de pesquisa ou recarregue a página.</p>
                     </div>
+                  ) : hasData ? (
+                    <div className="space-y-4">
+                      {groupedPushes.groups.map((group: any, idx: number) => {
+                        const isExpanded = expandedGroupCNJ === group.processNumber;
+                        const isClearing = clearingGroupCNJ === group.processNumber;
+                        const hasUnreadGroup = group.unreadCount > 0;
+                        const isNotIdentified = group.processNumber === "Não identificado";
 
-                    {newestDateObj && (
-                      <div className="flex justify-between items-center text-xs text-slate-500 pt-1">
-                        <span>Data de recebimento:</span>
-                        <span className="font-mono font-semibold">
-                          {newestDateObj.toLocaleString('pt-BR', { dateStyle: 'long', timeStyle: 'short' })}
-                        </span>
-                      </div>
-                    )}
+                        return (
+                          <div 
+                            key={idx}
+                            className={`bg-white border rounded-2xl overflow-hidden shadow-sm transition-all duration-200 ${
+                              hasUnreadGroup ? `border-l-4 border-l-${theme.accent === 'red' ? 'red' : 'blue'}-500 border-slate-200` : 'border-slate-200'
+                            }`}
+                          >
+                            {/* Card Header row */}
+                            <div className="p-5 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 bg-slate-50/50 border-b border-slate-100">
+                              <div className="space-y-1.5 flex-1 min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <h3 
+                                    onClick={() => {
+                                      if (!isNotIdentified) {
+                                        handleCopyText(group.processNumber, `Processo ${group.processNumber}`);
+                                      }
+                                    }}
+                                    className={`font-mono text-sm font-black text-slate-800 cursor-pointer hover:${theme.primary} flex items-center gap-1.5 select-all`}
+                                    title="Clique para copiar"
+                                  >
+                                    {group.processNumber}
+                                    {!isNotIdentified && <Copy className="h-3.5 w-3.5 opacity-50 hover:opacity-100" />}
+                                  </h3>
+                                  <span className="bg-slate-100 text-slate-600 text-[10px] px-2.5 py-0.5 rounded-full border border-slate-200 font-bold font-mono">
+                                    {group.totalCount} e-mails
+                                  </span>
+                                  {hasUnreadGroup && (
+                                    <span className={`bg-${theme.accent}-50 text-${theme.accent}-700 border border-${theme.accent}-100 text-[10px] px-2.5 py-0.5 rounded-full font-extrabold uppercase tracking-wider animate-pulse`}>
+                                      {group.unreadCount} novos / pendente
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-xs text-slate-500 font-medium truncate max-w-2xl leading-relaxed">
+                                  <strong className="text-slate-700">Assunto mais recente:</strong> {group.latestSubject}
+                                </p>
+                              </div>
 
-                    {/* Age warning if unread and >48h */}
-                    {isOlderThan48h && (
-                      <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs p-3.5 rounded-xl flex items-start gap-2 font-medium">
-                        <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
-                        <span>Atenção: Há e-mails PUSH pendentes sem leitura há mais de 48 horas! Verifique imediatamente.</span>
-                      </div>
-                    )}
-                  </div>
+                              <div className="text-right shrink-0">
+                                <span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wider">Último e-mail recebido</span>
+                                <span className="text-xs font-mono font-bold text-slate-700 block mt-0.5">
+                                  {new Date(group.latestDate).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
+                                </span>
+                              </div>
+                            </div>
 
-                  {/* Action buttons list */}
-                  <div className="flex flex-wrap gap-3 pt-2">
-                    <button
-                      onClick={() => openGmailExplorer(source, 'all')}
-                      className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs py-2.5 px-5 rounded-xl transition cursor-pointer"
-                    >
-                      Ver Total
-                    </button>
-                    <button
-                      onClick={() => openGmailExplorer(source, 'unread')}
-                      className="bg-purple-50 hover:bg-purple-100 text-purple-700 font-bold text-xs py-2.5 px-5 rounded-xl transition cursor-pointer"
-                    >
-                      Ver Não Lidos
-                    </button>
-                    <a 
-                      href={`https://mail.google.com/mail/u/0/#search/${encodeURIComponent(source.search)}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs py-2.5 px-5 rounded-xl flex items-center gap-1.5 transition text-center cursor-pointer"
-                    >
-                      <ExternalLink className="h-3.5 w-3.5" />
-                      Abrir no Gmail
-                    </a>
-                  </div>
+                            {/* Actions bar */}
+                            <div className="px-5 py-3.5 bg-white border-b border-slate-100 flex flex-wrap gap-2 justify-between items-center">
+                              {/* Left navigation shortcuts */}
+                              <div className="flex flex-wrap gap-2">
+                                <a
+                                  href={group.gmailSearchUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={() => {
+                                    if (!isNotIdentified) {
+                                      handleCopyText(group.processNumber, "Número do Processo");
+                                    }
+                                  }}
+                                  className="bg-slate-900 hover:bg-slate-800 text-white font-bold text-[11px] py-2 px-3.5 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+                                >
+                                  <ExternalLink className="h-3 w-3" />
+                                  Ver no Gmail
+                                </a>
+
+                                {!isNotIdentified && (
+                                  <>
+                                    <a
+                                      href={group.todoistUrl}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      onClick={() => handleCopyText(group.processNumber, "Número do Processo")}
+                                      className="bg-red-50 hover:bg-red-100 text-red-700 font-bold text-[11px] py-2 px-3.5 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer border border-red-100"
+                                    >
+                                      <CheckCircle className="h-3 w-3 text-red-600" />
+                                      Ver no Todoist
+                                    </a>
+
+                                    <a
+                                      href={group.courtSearchUrl}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      onClick={() => handleCopyText(group.processNumber, "Número do Processo")}
+                                      className="bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-[11px] py-2 px-3.5 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer border border-blue-100"
+                                    >
+                                      <Scale className="h-3 w-3 text-blue-600" />
+                                      Buscar no Tribunal
+                                    </a>
+                                  </>
+                                )}
+                              </div>
+
+                              {/* Right cleaning operations */}
+                              <div className="flex gap-2">
+                                {hasUnreadGroup && (
+                                  <button
+                                    onClick={() => clearGroupAsRead(source.sender, group.processNumber, group.messageIds)}
+                                    disabled={isClearing}
+                                    className={`bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-[11px] py-2 px-4 rounded-lg flex items-center gap-1.5 transition shadow-sm cursor-pointer`}
+                                  >
+                                    {isClearing ? (
+                                      <RefreshCw className="h-3 w-3 animate-spin" />
+                                    ) : (
+                                      <Check className="h-3 w-3" />
+                                    )}
+                                    {isClearing ? 'Limpando...' : 'Limpar / Lido'}
+                                  </button>
+                                )}
+
+                                <button
+                                  onClick={() => setExpandedGroupCNJ(isExpanded ? null : group.processNumber)}
+                                  className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[11px] py-2 px-4 rounded-lg flex items-center gap-1 transition-colors cursor-pointer border border-slate-200"
+                                >
+                                  {isExpanded ? 'Recolher' : 'Expandir'}
+                                  <ChevronRight className={`h-3.5 w-3.5 transform transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Expanded individual emails list */}
+                            {isExpanded && (
+                              <div className="bg-slate-50/50 p-5 border-t border-slate-100 space-y-4 divide-y divide-slate-100 font-sans">
+                                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider pb-1">Histórico de e-mails recebidos</h4>
+                                {group.messages.map((msg: any, mIdx: number) => (
+                                  <div key={mIdx} className="pt-3 first:pt-0 space-y-2">
+                                    <div className="flex justify-between items-start gap-4">
+                                      <div className="space-y-0.5">
+                                        <p className="font-bold text-slate-800 text-xs flex items-center gap-2">
+                                          {msg.isUnread && <span className="w-2 h-2 rounded-full bg-amber-500 block shrink-0" />}
+                                          {msg.subject}
+                                        </p>
+                                        <p className="text-[11px] text-slate-500 leading-relaxed font-normal">{msg.snippet}</p>
+                                      </div>
+                                      <span className="text-[10px] font-mono text-slate-400 shrink-0 font-bold mt-0.5">
+                                        {new Date(msg.date).toLocaleString('pt-BR')}
+                                      </span>
+                                    </div>
+                                    <div className="flex gap-2">
+                                      <a
+                                        href={`https://mail.google.com/mail/u/0/#inbox/${msg.id}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-0.5"
+                                      >
+                                        Abrir e-mail original <ExternalLink className="h-2.5 w-2.5" />
+                                      </a>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                          </div>
+                        );
+                      })}
+
+                      {/* Pagination row */}
+                      {groupedPushes.totalPages > 1 && (
+                        <div className="flex justify-center items-center gap-4 pt-4 border-t border-slate-100">
+                          <button
+                            onClick={() => fetchGroupedPushes(source.sender, groupedPushesPage - 1, groupedPushesSearch)}
+                            disabled={groupedPushesPage <= 1 || isLoading}
+                            className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-xs py-2 px-4 rounded-xl transition disabled:opacity-50 cursor-pointer"
+                          >
+                            Anterior
+                          </button>
+                          <span className="text-xs text-slate-500 font-medium font-mono">
+                            Página <strong className="text-slate-800">{groupedPushesPage}</strong> de <strong className="text-slate-800">{groupedPushes.totalPages}</strong>
+                          </span>
+                          <button
+                            onClick={() => fetchGroupedPushes(source.sender, groupedPushesPage + 1, groupedPushesSearch)}
+                            disabled={groupedPushesPage >= groupedPushes.totalPages || isLoading}
+                            className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-xs py-2 px-4 rounded-xl transition disabled:opacity-50 cursor-pointer"
+                          >
+                            Próxima
+                          </button>
+                        </div>
+                      )}
+
+                    </div>
+                  ) : (
+                    <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center space-y-4 shadow-sm">
+                      <Inbox className="h-10 w-10 text-slate-300 mx-auto" />
+                      <p className="text-sm font-bold text-slate-800">Pronto para carregar</p>
+                      <p className="text-slate-500 text-xs">Clique no botão "Atualizar Dados" acima para buscar as mensagens agrupadas.</p>
+                    </div>
+                  )}
 
                   {/* Sincronização info */}
                   <p className="text-[10px] text-slate-400 font-mono text-right">
-                    Última consulta realizada: {pushesLastUpdated || 'Nunca atualizada'}
+                    Último agrupamento realizado: {pushesLastUpdated || 'Nunca'}
                   </p>
                 </div>
               );
