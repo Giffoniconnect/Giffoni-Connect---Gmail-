@@ -4,13 +4,14 @@ import {
   PlusCircle, FileText, CheckCircle, AlertTriangle, RefreshCw, 
   LogOut, ExternalLink, Code, Copy, Check, Printer, Download, 
   Trash2, AlertCircle, Info, ChevronRight, Send, UserCheck, Play, HelpCircle, Inbox,
-  Settings, Compass, Layers, ArrowLeft, ArrowRight
+  Settings, Compass, Layers, ArrowLeft, ArrowRight, Sliders, CalendarRange, Zap, MousePointerClick
 } from 'lucide-react';
 import { onAuthStateChanged, signInWithPopup, signOut, GoogleAuthProvider, User } from 'firebase/auth';
 import { collection, query, where, getDocs, addDoc, updateDoc, doc, deleteDoc, writeBatch } from 'firebase/firestore';
 import { auth, db, googleProvider } from './firebase';
 import { Publication, ApiToken, SystemLog } from './types';
 import { initialPublications, calculateBusinessDaysDate } from './mockData';
+import { ControladoriaWorkspaceComponent } from './components/ControladoriaWorkspaceComponent';
 
 export default function App() {
   // Auth state
@@ -22,33 +23,8 @@ export default function App() {
 
   // Core Data state
   const [publications, setPublications] = useState<Publication[]>([]);
-  const [apiTokens, setApiTokens] = useState<ApiToken[]>([
-    {
-      id: "tok-default",
-      token: "BOSS_LEGACY_INTEGRATION_TOKEN_DEFAULT",
-      name: "ERP Legado ProJuris",
-      userId: "demo-user",
-      createdAt: new Date().toISOString()
-    }
-  ]);
-  const [systemLogs, setSystemLogs] = useState<SystemLog[]>([
-    {
-      id: "log-1",
-      timestamp: new Date(Date.now() - 3600000).toISOString(),
-      type: "api_received",
-      message: "Integração API: Processo 1002345-67 recebido do ERP Legado ProJuris com sucesso.",
-      userId: "demo-user",
-      status: "success"
-    },
-    {
-      id: "log-2",
-      timestamp: new Date(Date.now() - 7200000).toISOString(),
-      type: "manual_add",
-      message: "Cadastro Manual: Publicação do processo 5001234-89 inserida no sistema.",
-      userId: "demo-user",
-      status: "info"
-    }
-  ]);
+  const [apiTokens, setApiTokens] = useState<ApiToken[]>([]);
+  const [systemLogs, setSystemLogs] = useState<SystemLog[]>([]);
 
   // App control states
   const [activeTab, setActiveTab] = useState<'login' | 'dashboard' | 'publications' | 'deadlines' | 'gmail' | 'api' | 'new-pub' | 'pushes' | 'consulta.prius' | 'consulta.recorte-digital' | 'configuracoes.gmail'>('login');
@@ -302,7 +278,12 @@ export default function App() {
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || "Erro ao buscar dados agrupados.");
+        if (res.status === 401 || data.error === "UNAUTHENTICATED") {
+          setCachedToken(null);
+          localStorage.removeItem('boss_gmail_token');
+          addSystemLog('warning', 'Sessão Google expirada ou inválida. Por favor, conecte sua conta Google novamente.', 'gmail_sync');
+        }
+        throw new Error(data.message || data.error || "Erro ao buscar dados agrupados.");
       }
       setGroupedPushes(data);
       setGroupedPushesPage(pageNum);
@@ -360,6 +341,597 @@ export default function App() {
   const [selectedEmailDetail, setSelectedEmailDetail] = useState<any | null>(null);
   const [emailDetailsLoading, setEmailDetailsLoading] = useState(false);
   const [copiedText, setCopiedText] = useState<string | null>(null);
+  const [controladoriaModalData, setControladoriaModalData] = useState<any | null>(null);
+  const [delegarPrazoModalData, setDelegarPrazoModalData] = useState<any | null>(null);
+  const [manualCNJModalData, setManualCNJModalData] = useState<any | null>(null);
+  const [manualCNJInput, setManualCNJInput] = useState('');
+  const [notificationAlert, setNotificationAlert] = useState<{ isOpen: boolean; message: string; systemName?: string } | null>(null);
+
+  // --- STATE FOR CENTRAL DE PROCESSAMENTO (TODOIST INTEGRATION) ---
+  const [controladoriaActiveItem, setControladoriaActiveItem] = useState<any | null>(null);
+  const [todoistTaskTitle, setTodoistTaskTitle] = useState('');
+  const [todoistTaskDescription, setTodoistTaskDescription] = useState('');
+  const [todoistTaskProject, setTodoistTaskProject] = useState('');
+  const [todoistTaskSection, setTodoistTaskSection] = useState('');
+  const [todoistTaskAssignee, setTodoistTaskAssignee] = useState('direito.rgr@gmail.com');
+  const [todoistTaskPriority, setTodoistTaskPriority] = useState(2); // 1: low, 2: medium, 4: high
+  const [todoistTaskDate, setTodoistTaskDate] = useState('');
+  const [todoistTaskComments, setTodoistTaskComments] = useState('');
+  const [todoistTaskLabels, setTodoistTaskLabels] = useState<string[]>([]);
+  const [todoistTaskSubtasks, setTodoistTaskSubtasks] = useState<string[]>([]);
+  const [newSubtaskInput, setNewSubtaskInput] = useState('');
+  const [todoistProjects, setTodoistProjects] = useState<any[]>([]);
+  const [todoistSections, setTodoistSections] = useState<any[]>([]);
+  const [todoistLoading, setTodoistLoading] = useState(false);
+  const [todoistSyncing, setTodoistSyncing] = useState(false);
+  const [todoistLinkedTask, setTodoistLinkedTask] = useState<any | null>(null);
+  const [isDelegarPanelOpen, setIsDelegarPanelOpen] = useState(false);
+  const [isRevisaoPanelOpen, setIsRevisaoPanelOpen] = useState(false);
+  const [selectedRevisionOption, setSelectedRevisionOption] = useState('');
+  const [showHistoryPanel, setShowHistoryPanel] = useState(false);
+  const [todoistToken, setTodoistToken] = useState(() => {
+    return localStorage.getItem('boss_todoist_api_token') || '';
+  });
+
+  const handleAcesseProcessoClique = (cnj: string | undefined, senderRaw: string, subject: string = '', snippet: string = '') => {
+    // Clean sender email
+    const senderMatch = senderRaw.match(/<([^>]+)>/);
+    const sender = senderMatch ? senderMatch[1].trim().toLowerCase() : senderRaw.trim().toLowerCase();
+
+    if (!cnj || cnj === 'Não identificado') {
+      // Open modal to preencher manualmente
+      setManualCNJModalData({ sender, subject, snippet });
+      setManualCNJInput('');
+      return;
+    }
+
+    const cleanCnj = cnj.replace(/\s+/g, '');
+
+    // Copy to clipboard
+    navigator.clipboard.writeText(cleanCnj);
+    setCopiedText("Número CNJ");
+    setTimeout(() => setCopiedText(null), 2500);
+
+    // Heuristics based on sender
+    let targetUrl = '';
+    let systemName = '';
+
+    if (sender === 'nao-responda@trt3.jus.br') {
+      // TRT3 / PJe Trabalhista
+      targetUrl = `https://pje.trt3.jus.br/consultaprocessual/detalhe-processo/${cleanCnj}`;
+      systemName = 'PJe do TRT3';
+    } else if (sender === 'pje@tjmg.jus.br') {
+      // TJMG / PJe
+      targetUrl = 'https://pje.tjmg.jus.br/pje/ConsultaPublica/listView.seam';
+      systemName = 'PJe do TJMG';
+    } else if (sender === 'push@tjmg.jus.br') {
+      // TJMG / Push -> Identify PJe vs Eproc
+      const content = `${subject} ${snippet}`.toLowerCase();
+      if (content.includes('eproc')) {
+        targetUrl = 'https://eproc.tjmg.jus.br/eproc/externo_controlador.php?controle=publicacao_pesquisa';
+        systemName = 'Eproc do TJMG';
+      } else {
+        targetUrl = 'https://pje.tjmg.jus.br/pje/ConsultaPublica/listView.seam';
+        systemName = 'PJe do TJMG';
+      }
+    } else if (sender === 'noreply@tjmg.jus.br') {
+      // TJMG / Eproc
+      targetUrl = 'https://eproc.tjmg.jus.br/eproc/externo_controlador.php?controle=publicacao_pesquisa';
+      systemName = 'Eproc do TJMG';
+    } else if (sender === 'eproc@trf6.jus.br') {
+      // TRF6 / Eproc
+      targetUrl = 'https://eproc.trf6.jus.br/eproc/externo_controlador.php?controle=publicacao_pesquisa';
+      systemName = 'Eproc do TRF6';
+    } else {
+      // General fallback
+      targetUrl = 'https://pje.tjmg.jus.br/pje/ConsultaPublica/listView.seam';
+      systemName = 'PJe / Tribunal';
+    }
+
+    // Open target url
+    window.open(targetUrl, '_blank');
+
+    addSystemLog('info', `Acesso ao processo (${cleanCnj}) iniciado para o tribunal ${systemName}. CNJ copiado para área de transferência.`, 'gmail_sync');
+
+    setNotificationAlert({
+      isOpen: true,
+      message: `CNJ copiado: ${cleanCnj}. Cole no campo de busca do tribunal (${systemName}).`,
+      systemName
+    });
+  };
+
+  const [lastUpdateCompletedAt, setLastUpdateCompletedAt] = useState<string | null>(() => {
+    return localStorage.getItem('boss_pushes_last_updated') || null;
+  });
+
+  const handleOpenControladoriaFromPush = (msg: any, group: any) => {
+    setControladoriaModalData({
+      id: msg.id,
+      subject: msg.subject,
+      from: group.senderName || group.sender || 'Gmail Push',
+      to: 'direito.rgr@gmail.com',
+      date: msg.date,
+      snippet: msg.snippet,
+      processNumber: group.processNumber,
+      autor: group.autor,
+      reu: group.reu,
+      vara: group.vara,
+      classe: group.classe,
+      tribunal: group.tribunal,
+      movementType: group.movementType || 'Movimentação PUSH'
+    });
+  };
+
+  const handleOpenDelegarPrazoFromPush = (msg: any, group: any) => {
+    setDelegarPrazoModalData({
+      id: msg.id,
+      subject: msg.subject,
+      from: group.senderName || group.sender || 'Gmail Push',
+      to: 'direito.rgr@gmail.com',
+      date: msg.date,
+      snippet: msg.snippet,
+      processNumber: group.processNumber,
+      autor: group.autor,
+      reu: group.reu,
+      vara: group.vara,
+      classe: group.classe,
+      tribunal: group.tribunal,
+      movementType: group.movementType || 'Movimentação PUSH',
+      prazoSugerido: 15,
+      responsavel: 'direito.rgr@gmail.com',
+      prioridade: 'Alta',
+      observacoes: ''
+    });
+  };
+
+  // --- METHODS FOR CENTRAL DE PROCESSAMENTO & TODOIST INTEGRATION ---
+  
+  const prefillTodoistForm = (item: any) => {
+    if (!item) return;
+
+    let partyTitle = '';
+    if (item.autor && item.autor !== 'Não identificado' && item.reu && item.reu !== 'Não identificado') {
+      partyTitle = `${item.autor} x ${item.reu}`;
+    } else if (item.processNumber && item.processNumber !== 'Não identificado') {
+      partyTitle = item.processNumber;
+    } else {
+      partyTitle = 'Parte Não Identificada';
+    }
+
+    let action = 'Cumprir intimação';
+    const textToScan = `${item.subject} ${item.snippet} ${item.bodyText || ''}`.toLowerCase();
+    
+    if (textToScan.includes('réplica') || textToScan.includes('impugnação')) {
+      action = 'Apresentar réplica à contestação';
+    } else if (textToScan.includes('recurso')) {
+      action = 'Interpor recurso';
+    } else if (textToScan.includes('audiência') || textToScan.includes('audiencia') || textToScan.includes('julgamento')) {
+      action = 'Audiência designada';
+    } else if (textToScan.includes('perito') || textToScan.includes('perícia') || textToScan.includes('pericia')) {
+      action = 'Manifestar sobre laudo pericial';
+    } else if (textToScan.includes('liminar') || textToScan.includes('tutela') || textToScan.includes('decisão liminar')) {
+      action = 'Cumprir decisão liminar';
+    } else if (item.movementType && item.movementType !== 'Movimentação PUSH' && item.movementType !== 'Publicação Geral') {
+      action = item.movementType;
+    }
+
+    const cleanCnj = (item.processNumber || 'Não identificado').replace(/\s+/g, '');
+    const title = `${partyTitle} — ${action} — ${cleanCnj}`;
+
+    const desc = `### Detalhes do Processo
+* **CNJ:** ${cleanCnj}
+* **Tribunal:** ${item.tribunal || 'Não identificado'}
+* **Classe:** ${item.classe || 'Não identificada'}
+* **Vara:** ${item.vara || 'Não identificada'}
+* **Autor:** ${item.autor || 'Não identificado'}
+* **Réu:** ${item.reu || 'Não identificado'}
+* **Movimentação:** ${item.movementType || 'Não identificada'}
+* **Link do Gmail:** https://mail.google.com/mail/u/0/#search/in%3Ainbox+%22${encodeURIComponent(cleanCnj)}%22
+
+### Resumo do E-mail
+${item.snippet || item.subject || 'Sem resumo disponível.'}`;
+
+    setTodoistTaskTitle(title);
+    setTodoistTaskDescription(desc);
+    
+    // Set auto-labels
+    const autoLabels = ["Push", "Prazo", "Controladoria"];
+    const senderLower = (item.from || '').toLowerCase();
+    if (senderLower.includes('trt3') || textToScan.includes('trt')) {
+      autoLabels.push("TRT");
+    } else if (senderLower.includes('tjmg') || textToScan.includes('tjmg')) {
+      autoLabels.push("TJMG");
+    } else if (senderLower.includes('trf6') || textToScan.includes('trf6')) {
+      autoLabels.push("TRF6");
+    }
+    setTodoistTaskLabels(autoLabels);
+
+    // Suggested Deadline & Priority
+    let days = 15;
+    if (textToScan.includes('urgente') || textToScan.includes('liminar') || textToScan.includes('tutela')) {
+      days = 3;
+      setTodoistTaskPriority(4); // Highest in Todoist
+    } else {
+      setTodoistTaskPriority(2); // Medium-high
+    }
+    const defaultDueDate = new Date();
+    defaultDueDate.setDate(defaultDueDate.getDate() + days);
+    setTodoistTaskDate(defaultDueDate.toISOString().split('T')[0]);
+
+    setTodoistTaskAssignee('direito.rgr@gmail.com');
+    setTodoistTaskComments('');
+    
+    // Subtasks default
+    setTodoistTaskSubtasks([
+      'Conferir CNJ no sistema do tribunal',
+      'Fazer carga/leitura integral dos autos',
+      'Elaborar minuta da peça processual',
+      'Protocolar e atualizar controladoria'
+    ]);
+  };
+
+  const searchTodoistTasks = async (item: any, tokenToUse: string) => {
+    if (!item || !tokenToUse) return;
+    setTodoistLoading(true);
+    try {
+      const cleanCnj = (item.processNumber || '').replace(/\s+/g, '');
+      if (!cleanCnj || cleanCnj === 'Nãoidentificado') {
+        setTodoistLoading(false);
+        return;
+      }
+
+      // Call Todoist API search proxy
+      const response = await fetch(`/api/todoist/tasks?filter=${encodeURIComponent(`search:${cleanCnj}`)}`, {
+        headers: {
+          'x-todoist-token': tokenToUse
+        }
+      });
+
+      if (response.ok) {
+        const tasks = await response.json();
+        if (Array.isArray(tasks) && tasks.length > 0) {
+          // Linked task found!
+          const linked = tasks[0];
+          setTodoistLinkedTask(linked);
+          setTodoistTaskTitle(linked.content);
+          setTodoistTaskDescription(linked.description || '');
+          setTodoistTaskPriority(linked.priority || 1);
+          if (linked.due) {
+            setTodoistTaskDate(linked.due.date || '');
+          }
+          setTodoistTaskLabels(linked.labels || []);
+          addSystemLog('info', `Tarefa relacionada encontrada no Todoist: "${linked.content}". Carregando para edição.`, 'gmail_sync');
+        } else {
+          setTodoistLinkedTask(null);
+          // If not found by CNJ, try searching by party name
+          let partyName = '';
+          if (item.autor && item.autor !== 'Não identificado') partyName = item.autor;
+          else if (item.reu && item.reu !== 'Não identificado') partyName = item.reu;
+
+          if (partyName && partyName.length > 3) {
+            const nameRes = await fetch(`/api/todoist/tasks?filter=${encodeURIComponent(`search:${partyName}`)}`, {
+              headers: { 'x-todoist-token': tokenToUse }
+            });
+            if (nameRes.ok) {
+              const nameTasks = await nameRes.json();
+              if (Array.isArray(nameTasks) && nameTasks.length > 0) {
+                const linkedByName = nameTasks[0];
+                setTodoistLinkedTask(linkedByName);
+                setTodoistTaskTitle(linkedByName.content);
+                setTodoistTaskDescription(linkedByName.description || '');
+                setTodoistTaskPriority(linkedByName.priority || 1);
+                if (linkedByName.due) {
+                  setTodoistTaskDate(linkedByName.due.date || '');
+                }
+                setTodoistTaskLabels(linkedByName.labels || []);
+                addSystemLog('info', `Tarefa por nome da parte encontrada no Todoist: "${linkedByName.content}". Carregando para edição.`, 'gmail_sync');
+              }
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Erro ao buscar no Todoist:", err);
+    } finally {
+      setTodoistLoading(false);
+    }
+  };
+
+  const fetchTodoistMetadata = async (tokenToUse: string) => {
+    if (!tokenToUse) return;
+    try {
+      const projRes = await fetch("/api/todoist/projects", {
+        headers: { 'x-todoist-token': tokenToUse }
+      });
+      if (projRes.ok) {
+        const projects = await projRes.json();
+        setTodoistProjects(projects);
+        if (projects.length > 0) {
+          const defaultProj = projects.find((p: any) => p.name.toLowerCase() === 'inbox' || p.is_inbox_project) || projects[0];
+          setTodoistTaskProject(defaultProj.id);
+        }
+      }
+
+      const secRes = await fetch("/api/todoist/sections", {
+        headers: { 'x-todoist-token': tokenToUse }
+      });
+      if (secRes.ok) {
+        const sections = await secRes.json();
+        setTodoistSections(sections);
+      }
+    } catch (err) {
+      console.error("Erro ao carregar metadados do Todoist:", err);
+    }
+  };
+
+  const handleSaveTodoistTask = async (skipRedirect = false) => {
+    if (!todoistToken) {
+      addSystemLog('warning', 'Token de API do Todoist não configurado. Por favor, insira o token para salvar.');
+      return;
+    }
+
+    setTodoistSyncing(true);
+    try {
+      const taskPayload: any = {
+        content: todoistTaskTitle,
+        description: todoistTaskDescription,
+        priority: todoistTaskPriority,
+        labels: todoistTaskLabels,
+      };
+
+      if (todoistTaskProject) taskPayload.project_id = todoistTaskProject;
+      if (todoistTaskSection) taskPayload.section_id = todoistTaskSection;
+      if (todoistTaskDate) taskPayload.due_date = todoistTaskDate;
+
+      let savedTask: any = null;
+
+      if (todoistLinkedTask) {
+        // Update existing task
+        const updateRes = await fetch(`/api/todoist/tasks/${todoistLinkedTask.id}`, {
+          method: "POST",
+          headers: {
+            'x-todoist-token': todoistToken,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(taskPayload)
+        });
+
+        if (!updateRes.ok) {
+          throw new Error("Erro ao atualizar tarefa existente no Todoist.");
+        }
+
+        savedTask = await updateRes.json();
+        addSystemLog('success', `Sucesso: Tarefa no Todoist atualizada com sucesso! (${todoistTaskTitle})`, 'gmail_sync');
+      } else {
+        // Create new task
+        const createRes = await fetch(`/api/todoist/tasks`, {
+          method: "POST",
+          headers: {
+            'x-todoist-token': todoistToken,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(taskPayload)
+        });
+
+        if (!createRes.ok) {
+          throw new Error("Erro ao criar nova tarefa no Todoist.");
+        }
+
+        savedTask = await createRes.json();
+        addSystemLog('success', `Sucesso: Tarefa no Todoist criada com sucesso! (${todoistTaskTitle})`, 'gmail_sync');
+      }
+
+      // Add comments if any
+      if (todoistTaskComments && savedTask?.id) {
+        await fetch(`/api/todoist/comments`, {
+          method: "POST",
+          headers: {
+            'x-todoist-token': todoistToken,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            task_id: savedTask.id,
+            content: todoistTaskComments
+          })
+        });
+      }
+
+      // Add subtasks
+      if (todoistTaskSubtasks.length > 0 && savedTask?.id && !todoistLinkedTask) {
+        for (const sub of todoistTaskSubtasks) {
+          await fetch(`/api/todoist/tasks`, {
+            method: "POST",
+            headers: {
+              'x-todoist-token': todoistToken,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              content: sub,
+              parent_id: savedTask.id
+            })
+          });
+        }
+      }
+
+      addSystemLog('info', `Controladoria atualizada para o processo ${controladoriaActiveItem.processNumber}.`, 'gmail_sync');
+      
+      if (!skipRedirect) {
+        // Navigate back
+        setTimeout(() => {
+          const sender = (controladoriaActiveItem.from || '').toLowerCase();
+          const source = PUSH_SOURCES.find(s => sender.includes(s.sender.toLowerCase()) || s.sender.toLowerCase().includes(sender));
+          const resolvedPushId = source ? source.id : 'trt-mg';
+          setActiveTab(`pushes/push-${resolvedPushId}` as any);
+        }, 1500);
+      }
+
+    } catch (err: any) {
+      console.error(err);
+      addSystemLog('error', `Falha ao salvar no Todoist: ${err.message}`, 'gmail_sync');
+    } finally {
+      setTodoistSyncing(false);
+    }
+  };
+
+  const handleOpenControladoriaWorkspace = async (msg: any, group: any = null, sourceId: string = '') => {
+    let resolvedSourceId = sourceId;
+    if (!resolvedSourceId) {
+      const sender = (msg.from || msg.sender || group?.sender || '').toLowerCase();
+      const source = PUSH_SOURCES.find(s => sender.includes(s.sender.toLowerCase()) || s.sender.toLowerCase().includes(sender));
+      resolvedSourceId = source ? source.id : 'trt-mg';
+    }
+
+    const initialItem = {
+      id: msg.id,
+      subject: msg.subject || '',
+      from: msg.from || msg.sender || group?.senderName || group?.sender || 'Gmail Push',
+      to: msg.to || 'direito.rgr@gmail.com',
+      date: msg.date || new Date().toISOString(),
+      snippet: msg.snippet || '',
+      bodyText: msg.bodyText || '',
+      processNumber: msg.processNumber || group?.processNumber || 'Não identificado',
+      autor: msg.autor || group?.autor || 'Não identificado',
+      reu: msg.reu || group?.reu || 'Não identificado',
+      vara: msg.vara || group?.vara || '',
+      classe: msg.classe || group?.classe || 'Não identificada',
+      tribunal: msg.tribunal || group?.tribunal || '',
+      movementType: msg.movementType || group?.movementType || 'Movimentação PUSH',
+      hasAttachments: msg.hasAttachments || false,
+      attachments: msg.attachments || []
+    };
+
+    setControladoriaActiveItem(initialItem);
+    prefillTodoistForm(initialItem);
+    
+    // Navigate immediately
+    setActiveTab(`pushes/push-${resolvedSourceId}/atualizar-controladoria` as any);
+
+    // Fetch Todoist projects/sections if token is present
+    const savedToken = localStorage.getItem('boss_todoist_api_token');
+    if (savedToken) {
+      fetchTodoistMetadata(savedToken);
+    }
+
+    // If no bodyText, fetch details
+    if (!msg.bodyText) {
+      try {
+        const gmailToken = cachedToken || localStorage.getItem('boss_gmail_token');
+        if (gmailToken) {
+          const response = await fetch("/api/gmail-messages-details", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              accessToken: gmailToken,
+              messageIds: [msg.id]
+            })
+          });
+          if (response.ok) {
+            const data = await response.json();
+            if (data.messages && data.messages.length > 0 && data.messages[0].success) {
+              const detailed = data.messages[0];
+              const updatedItem = {
+                ...initialItem,
+                bodyText: detailed.bodyText || '',
+                processNumber: detailed.processNumber || initialItem.processNumber,
+                autor: detailed.autor || initialItem.autor,
+                reu: detailed.reu || initialItem.reu,
+                vara: detailed.vara || initialItem.vara,
+                classe: detailed.classe || initialItem.classe,
+                tribunal: detailed.tribunal || initialItem.tribunal,
+                movementType: detailed.movementType || initialItem.movementType,
+                hasAttachments: detailed.hasAttachments || false,
+                attachments: detailed.attachments || []
+              };
+              setControladoriaActiveItem(updatedItem);
+              prefillTodoistForm(updatedItem);
+              
+              if (savedToken) {
+                searchTodoistTasks(updatedItem, savedToken);
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Erro ao buscar detalhes da publicação:", err);
+      }
+    } else {
+      if (savedToken) {
+        searchTodoistTasks(initialItem, savedToken);
+      }
+    }
+  };
+
+  const handleNextPublication = (activeSubRouteId: string) => {
+    if (!groupedPushes || !groupedPushes.groups || !controladoriaActiveItem) {
+      addSystemLog('warning', 'Nenhuma lista de publicações carregada para localizar o próximo item.', 'gmail_sync');
+      return;
+    }
+    const groups = groupedPushes.groups;
+    const currentIndex = groups.findIndex((g: any) => g.processNumber === controladoriaActiveItem.processNumber);
+    if (currentIndex !== -1 && currentIndex < groups.length - 1) {
+      const nextGroup = groups[currentIndex + 1];
+      const nextMsg = nextGroup.messages[0];
+      handleOpenControladoriaWorkspace(nextMsg, nextGroup, activeSubRouteId);
+      addSystemLog('info', `Avançando para próxima publicação: Processo ${nextGroup.processNumber}`, 'gmail_sync');
+    } else {
+      addSystemLog('warning', 'Esta já é a última publicação desta lista de pushes.', 'gmail_sync');
+    }
+  };
+
+  const renderControladoriaWorkspace = (source: any, theme: any) => {
+    if (!controladoriaActiveItem) {
+      return (
+        <div className="flex flex-col items-center justify-center py-20 bg-slate-50 border border-slate-200 rounded-3xl text-center space-y-4">
+          <RefreshCw className="h-10 w-10 text-indigo-500 animate-spin" />
+          <h3 className="text-base font-bold text-slate-800">Carregando Área de Trabalho...</h3>
+          <p className="text-xs text-slate-500 max-w-sm">
+            Aguarde enquanto os metadados do e-mail e as informações da publicação jurídica são carregados e analisados pelo Portal BOSS.
+          </p>
+        </div>
+      );
+    }
+
+    return (
+      <ControladoriaWorkspaceComponent
+        controladoriaActiveItem={controladoriaActiveItem}
+        groupedPushes={groupedPushes}
+        theme={theme}
+        todoistToken={todoistToken}
+        setTodoistToken={setTodoistToken}
+        todoistProjects={todoistProjects}
+        todoistTaskTitle={todoistTaskTitle}
+        setTodoistTaskTitle={setTodoistTaskTitle}
+        todoistTaskDescription={todoistTaskDescription}
+        setTodoistTaskDescription={setTodoistTaskDescription}
+        todoistTaskAssignee={todoistTaskAssignee}
+        setTodoistTaskAssignee={setTodoistTaskAssignee}
+        todoistTaskDate={todoistTaskDate}
+        setTodoistTaskDate={setTodoistTaskDate}
+        todoistTaskPriority={todoistTaskPriority}
+        setTodoistTaskPriority={setTodoistTaskPriority}
+        todoistTaskProject={todoistTaskProject}
+        setTodoistTaskProject={setTodoistTaskProject}
+        todoistTaskComments={todoistTaskComments}
+        setTodoistTaskComments={setTodoistTaskComments}
+        todoistTaskSubtasks={todoistTaskSubtasks}
+        setTodoistTaskSubtasks={setTodoistTaskSubtasks}
+        todoistTaskLabels={todoistTaskLabels}
+        setTodoistTaskLabels={setTodoistTaskLabels}
+        todoistLinkedTask={todoistLinkedTask}
+        todoistLoading={todoistLoading}
+        todoistSyncing={todoistSyncing}
+        handleSaveTodoistTask={handleSaveTodoistTask}
+        handleOpenControladoriaWorkspace={handleOpenControladoriaWorkspace}
+        handleMarkAsConferred={handleMarkAsConferred}
+        publications={publications}
+        setPublications={setPublications}
+        systemLogs={systemLogs}
+        addSystemLog={addSystemLog}
+        setActiveTab={setActiveTab}
+        source={source}
+      />
+    );
+  };
 
   const handleCopyText = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
@@ -593,7 +1165,12 @@ export default function App() {
 
       if (!res.ok) {
         const errData = await res.json();
-        throw new Error(errData.error || "Erro ao consultar o Gmail.");
+        if (res.status === 401 || errData.error === "UNAUTHENTICATED") {
+          setCachedToken(null);
+          localStorage.removeItem('boss_gmail_token');
+          addSystemLog('warning', 'Sessão Google expirada ou inválida. Por favor, conecte sua conta Google novamente.', 'gmail_sync');
+        }
+        throw new Error(errData.message || errData.error || "Erro ao consultar o Gmail.");
       }
 
       const data = await res.json() as { stats: PushStat[] };
@@ -639,7 +1216,12 @@ export default function App() {
 
       if (!res.ok) {
         const errData = await res.json();
-        throw new Error(errData.error || "Erro ao consultar o Gmail.");
+        if (res.status === 401 || errData.error === "UNAUTHENTICATED") {
+          setCachedToken(null);
+          localStorage.removeItem('boss_gmail_token');
+          addSystemLog('warning', 'Sessão Google expirada ou inválida. Por favor, conecte sua conta Google novamente.', 'gmail_sync');
+        }
+        throw new Error(errData.message || errData.error || "Erro ao consultar o Gmail.");
       }
 
       const data = await res.json() as { stats: PushStat[] };
@@ -704,8 +1286,8 @@ export default function App() {
         setUser(currentUser);
         setAuthLoading(false);
         setLoginError(null);
-        // Load data from firestore
-        await loadUserPublications(currentUser.uid);
+        // Load data from firestore in the background
+        loadUserPublications(currentUser.uid);
         addSystemLog('info', `Usuário ${currentUser.email} autenticado com sucesso.`);
 
         // Redirect to dashboard if currently on /login or default path
@@ -764,6 +1346,16 @@ export default function App() {
 
   // Load from firestore
   const loadUserPublications = async (uid: string) => {
+    // 1. First, attempt to load from local cache instantly to prevent empty flash
+    const stored = localStorage.getItem('boss_publications');
+    if (stored) {
+      try {
+        setPublications(JSON.parse(stored));
+      } catch {
+        // no-op
+      }
+    }
+
     try {
       const q = query(collection(db, "publications"), where("userId", "==", uid));
       const querySnapshot = await getDocs(q);
@@ -774,6 +1366,7 @@ export default function App() {
       
       if (fetched.length > 0) {
         setPublications(fetched);
+        localStorage.setItem('boss_publications', JSON.stringify(fetched));
       } else {
         // Seed first-time logged in user with mock data
         const batch = writeBatch(db);
@@ -785,13 +1378,16 @@ export default function App() {
         }
         await batch.commit();
         setPublications(seeded);
+        localStorage.setItem('boss_publications', JSON.stringify(seeded));
         addSystemLog('success', 'Base de demonstração migrada e salva com sucesso no seu Firestore.');
       }
     } catch (err: any) {
       console.error("Erro ao carregar do Firestore:", err);
       addSystemLog('error', `Falha ao conectar com o banco de dados Cloud Firestore: ${err.message}`);
       // Fallback
-      setPublications(initialPublications);
+      if (publications.length === 0) {
+        setPublications(initialPublications);
+      }
     }
   };
 
@@ -983,7 +1579,7 @@ export default function App() {
     }
   };
 
-  // General Sincronização Automática
+  // General Sincronização Automática - Background & Progressive & Parallelized
   const triggerGeneralUpdate = async () => {
     if (!cachedToken) {
       addSystemLog('warning', 'Não foi possível iniciar a atualização geral automática: Necessário conectar ao Google.');
@@ -991,15 +1587,8 @@ export default function App() {
     }
 
     setIsGeneralUpdating(true);
-    addSystemLog('info', 'Iniciando varredura e sincronização automática de todas as fontes jurídicas...', 'gmail_sync');
+    addSystemLog('info', 'Iniciando varredura e sincronização automática de todas as fontes jurídicas em segundo plano...', 'gmail_sync');
 
-    // 1. Update pushes
-    fetchAllPushes(); // runs asynchronously, updates pushesData and pushesLoading
-
-    // 2. Update Prius
-    await syncPrius();
-
-    // 3. Update Recorte Digital services
     const services = [
       { id: 'oab-mg', name: 'Recorte Digital OAB/MG' },
       { id: 'rj', name: 'Recorte Digital RJ' },
@@ -1007,19 +1596,31 @@ export default function App() {
       { id: 'sao-paulo', name: 'Recorte Digital São Paulo' }
     ];
 
-    for (const service of services) {
-      await syncRecorteService(service.id, service.name);
-    }
-
-    setIsGeneralUpdating(false);
-    addSystemLog('success', 'Varredura de atualização geral automática concluída.', 'gmail_sync');
+    // Fire all requests concurrently (Parallel) and progressively update without blocking
+    Promise.allSettled([
+      fetchAllPushes(),
+      syncPrius(),
+      ...services.map(service => syncRecorteService(service.id, service.name))
+    ]).then(() => {
+      setIsGeneralUpdating(false);
+      const nowTime = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      setLastUpdateCompletedAt(nowTime);
+      addSystemLog('success', 'Varredura de atualização geral concluída em segundo plano.', 'gmail_sync');
+    }).catch((err) => {
+      console.error(err);
+      setIsGeneralUpdating(false);
+      addSystemLog('warning', 'Varredura concluída com alguns avisos ou falhas nas conexões.', 'gmail_sync');
+    });
   };
 
-  // Trigger general update on first successful authorization
+  // Trigger general update on first successful authorization (with small safety delay to render layout first)
   useEffect(() => {
     if (user && user.email === 'direito.rgr@gmail.com' && cachedToken && !hasAutoUpdated) {
       setHasAutoUpdated(true);
-      triggerGeneralUpdate();
+      const timer = setTimeout(() => {
+        triggerGeneralUpdate();
+      }, 1500);
+      return () => clearTimeout(timer);
     }
   }, [user, cachedToken, hasAutoUpdated]);
 
@@ -1037,6 +1638,31 @@ export default function App() {
       }
     }
   }, [activeTab, cachedToken]);
+
+  // Trigger loading of Prius on-demand when entering its tab
+  useEffect(() => {
+    if (activeTab === 'consulta.prius' && cachedToken && priusState.status === 'desconectado') {
+      syncPrius();
+    }
+  }, [activeTab, cachedToken, priusState.status]);
+
+  // Trigger loading of Recorte Digital services on-demand when entering its tab
+  useEffect(() => {
+    if (activeTab === 'consulta.recorte-digital' && cachedToken) {
+      const services = [
+        { id: 'oab-mg', name: 'Recorte Digital OAB/MG' },
+        { id: 'rj', name: 'Recorte Digital RJ' },
+        { id: 'ceara', name: 'Recorte Digital Ceará' },
+        { id: 'sao-paulo', name: 'Recorte Digital São Paulo' }
+      ];
+      services.forEach(service => {
+        const sState = recorteStates[service.id];
+        if (!sState || sState.status === 'desconectado') {
+          syncRecorteService(service.id, service.name);
+        }
+      });
+    }
+  }, [activeTab, cachedToken, recorteStates]);
 
   // Sync Gmail (scans Gmail inbox via server proxy)
   const syncGmailInbox = async () => {
@@ -1742,18 +2368,66 @@ export default function App() {
         {/* 1. TAB: DASHBOARD */}
         {activeTab === 'dashboard' && (
           <div className="space-y-8 animate-fade-in">
-            {isGeneralUpdating && (
-              <div className="bg-blue-50/70 border border-blue-200 rounded-2xl p-5 flex items-center justify-between gap-4 text-blue-900 animate-pulse">
-                <div className="flex items-center gap-3">
-                  <RefreshCw className="h-5 w-5 text-blue-600 animate-spin" />
-                  <div>
-                    <h4 className="font-bold text-sm">Atualização Geral em Progresso...</h4>
-                    <p className="text-[11px] text-blue-700 mt-0.5 font-medium">Sincronizando Pushes, Prius, Recorte Digital e indicadores em tempo real diretamente das APIs.</p>
+            {(() => {
+              const hasBackgroundSyncError = !!pushesError || 
+                                             priusState.status === 'erro' || 
+                                             Object.values(recorteStates).some(r => r.status === 'erro');
+              if (isGeneralUpdating) {
+                return (
+                  <div className="bg-blue-50/80 border border-blue-200 rounded-2xl p-4 flex items-center justify-between gap-4 text-blue-900 animate-pulse">
+                    <div className="flex items-center gap-3">
+                      <RefreshCw className="h-4 w-4 text-blue-600 animate-spin" />
+                      <div>
+                        <h4 className="font-bold text-xs">Atualizando em segundo plano...</h4>
+                        <p className="text-[10px] text-blue-700 mt-0.5">Sincronizando Pushes, Prius e Recorte Digital diretamente do Gmail de forma segura e paralela.</p>
+                      </div>
+                    </div>
+                    <span className="text-[9px] font-mono font-bold uppercase tracking-wider bg-blue-100 text-blue-800 px-2 py-0.5 rounded border border-blue-200">Segundo Plano</span>
                   </div>
-                </div>
-                <span className="text-[10px] font-mono font-bold uppercase tracking-wider bg-blue-100 text-blue-800 px-2.5 py-1 rounded border border-blue-200">Sincronia Global</span>
-              </div>
-            )}
+                );
+              }
+              if (hasBackgroundSyncError) {
+                return (
+                  <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-center justify-between gap-4 text-amber-900">
+                    <div className="flex items-center gap-3">
+                      <AlertTriangle className="h-4.5 w-4.5 text-amber-600 shrink-0" />
+                      <div>
+                        <h4 className="font-bold text-xs">Falha em uma fonte. Clique para tentar novamente.</h4>
+                        <p className="text-[10px] text-amber-700 mt-0.5">Ocorreu um erro ao sincronizar uma ou mais fontes jurídicas no Gmail.</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => triggerGeneralUpdate()}
+                      className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-[10px] px-3 py-1.5 rounded-lg transition flex items-center gap-1.5"
+                    >
+                      <RefreshCw className="h-3 w-3" />
+                      Tentar Novamente
+                    </button>
+                  </div>
+                );
+              }
+              if (lastUpdateCompletedAt) {
+                return (
+                  <div className="bg-emerald-50/60 border border-emerald-200 rounded-2xl p-4 flex items-center justify-between gap-4 text-emerald-900">
+                    <div className="flex items-center gap-3">
+                      <CheckCircle className="h-4 w-4 text-emerald-600 shrink-0" />
+                      <div>
+                        <h4 className="font-bold text-xs">Última atualização concluída às {lastUpdateCompletedAt}.</h4>
+                        <p className="text-[10px] text-emerald-700 mt-0.5">Todas as fontes de dados estão sincronizadas e em conformidade.</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => triggerGeneralUpdate()}
+                      className="bg-emerald-100 hover:bg-emerald-200 text-emerald-800 border border-emerald-200 font-bold text-[10px] px-3 py-1.5 rounded-lg transition flex items-center gap-1.5"
+                    >
+                      <RefreshCw className="h-3 w-3" />
+                      Atualizar Agora
+                    </button>
+                  </div>
+                );
+              }
+              return null;
+            })()}
 
             {/* Page header */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -2879,7 +3553,10 @@ export default function App() {
                 )}
               </>
             ) : (() => {
-              const subRouteId = activeTab.replace('pushes/push-', '');
+              const isControladoriaWorkspace = activeTab.endsWith('/atualizar-controladoria');
+              const subRouteId = isControladoriaWorkspace 
+                ? activeTab.replace('pushes/push-', '').replace('/atualizar-controladoria', '') 
+                : activeTab.replace('pushes/push-', '');
               const source = PUSH_SOURCES.find(s => s.id === subRouteId);
               if (!source) {
                 return (
@@ -2926,6 +3603,10 @@ export default function App() {
               const theme = getSourceTheme(source.id);
               const isLoading = groupedPushesLoading;
               const hasData = groupedPushes && groupedPushes.groups;
+
+              if (isControladoriaWorkspace) {
+                return renderControladoriaWorkspace(source, theme);
+              }
 
               return (
                 <div className="space-y-6 animate-fade-in text-slate-800">
@@ -3094,20 +3775,20 @@ export default function App() {
                             <div className="px-5 py-3.5 bg-white border-b border-slate-100 flex flex-wrap gap-2 justify-between items-center">
                               {/* Left navigation shortcuts */}
                               <div className="flex flex-wrap gap-2">
-                                <a
-                                  href={group.gmailSearchUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
+                                <button
                                   onClick={() => {
-                                    if (!isNotIdentified) {
-                                      handleCopyText(group.processNumber, "Número do Processo");
+                                    if (source) {
+                                      openGmailExplorer({
+                                        name: source.name,
+                                        sender: source.sender
+                                      }, 'all');
                                     }
                                   }}
                                   className="bg-slate-900 hover:bg-slate-800 text-white font-bold text-[11px] py-2 px-3.5 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
                                 >
-                                  <ExternalLink className="h-3 w-3" />
-                                  Ver no Gmail
-                                </a>
+                                  <Inbox className="h-3 w-3" />
+                                  Ver todos os e-mails deste Push
+                                </button>
 
                                 {!isNotIdentified && (
                                   <>
@@ -3122,16 +3803,13 @@ export default function App() {
                                       Ver no Todoist
                                     </a>
 
-                                    <a
-                                      href={group.courtSearchUrl}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      onClick={() => handleCopyText(group.processNumber, "Número do Processo")}
+                                    <button
+                                      onClick={() => handleAcesseProcessoClique(group.processNumber, source?.sender || '', group.latestSubject || '', '')}
                                       className="bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-[11px] py-2 px-3.5 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer border border-blue-100"
                                     >
-                                      <Scale className="h-3 w-3 text-blue-600" />
-                                      Buscar no Tribunal
-                                    </a>
+                                      <Zap className="h-3 w-3 text-blue-600" />
+                                      Acesse o Processo com 1 Clique
+                                    </button>
                                   </>
                                 )}
                               </div>
@@ -3181,15 +3859,39 @@ export default function App() {
                                         {new Date(msg.date).toLocaleString('pt-BR')}
                                       </span>
                                     </div>
-                                    <div className="flex gap-2">
+                                    <div className="flex flex-wrap items-center gap-3 pt-1">
                                       <a
                                         href={`https://mail.google.com/mail/u/0/#inbox/${msg.id}`}
                                         target="_blank"
                                         rel="noopener noreferrer"
-                                        className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-0.5"
+                                        className="text-[10px] font-bold text-slate-500 hover:text-slate-800 flex items-center gap-0.5 bg-slate-100 hover:bg-slate-200 border border-slate-200/60 rounded-md px-2 py-1 transition"
                                       >
                                         Abrir e-mail original <ExternalLink className="h-2.5 w-2.5" />
                                       </a>
+
+                                      <button
+                                        onClick={() => handleOpenControladoriaWorkspace(msg, group, source.id)}
+                                        className="text-[10px] font-bold text-indigo-700 hover:text-indigo-950 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/50 rounded-md px-2 py-1 transition flex items-center gap-1"
+                                      >
+                                        <Sliders className="h-2.5 w-2.5" />
+                                        Atualizar Controladoria
+                                      </button>
+
+                                      <button
+                                        onClick={() => handleOpenDelegarPrazoFromPush(msg, group)}
+                                        className="text-[10px] font-bold text-amber-700 hover:text-amber-950 bg-amber-50 hover:bg-amber-100 border border-amber-200/50 rounded-md px-2 py-1 transition flex items-center gap-1"
+                                      >
+                                        <CalendarRange className="h-2.5 w-2.5" />
+                                        Delegar Prazo
+                                      </button>
+
+                                      <button
+                                        onClick={() => handleAcesseProcessoClique(group.processNumber, source?.sender || '', msg.subject || '', msg.snippet || '')}
+                                        className="text-[10px] font-bold text-blue-700 hover:text-blue-950 bg-blue-50 hover:bg-blue-100 border border-blue-200/50 rounded-md px-2 py-1 transition flex items-center gap-1"
+                                      >
+                                        <Zap className="h-2.5 w-2.5 text-blue-600" />
+                                        Acesse o Processo com 1 Clique
+                                      </button>
                                     </div>
                                   </div>
                                 ))}
@@ -3908,6 +4610,32 @@ export default function App() {
                                   <CheckCircle className="h-3.5 w-3.5" />
                                   {isConferred ? 'Conferido' : 'Marcar como Conferido'}
                                 </button>
+
+                                {isConferred && (
+                                  <div className="flex items-center gap-1.5 ml-1">
+                                    <button
+                                      onClick={() => handleOpenControladoriaWorkspace(email)}
+                                      className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-[10px] py-1.5 px-2.5 rounded-lg border border-indigo-200 flex items-center gap-1 transition animate-fade-in"
+                                    >
+                                      <Sliders className="h-3 w-3" />
+                                      Atualizar Controladoria
+                                    </button>
+                                    <button
+                                      onClick={() => setDelegarPrazoModalData({ ...email, prazoSugerido: 15, responsavel: 'direito.rgr@gmail.com', prioridade: 'Alta', observacoes: '' })}
+                                      className="bg-amber-50 hover:bg-amber-100 text-amber-700 font-bold text-[10px] py-1.5 px-2.5 rounded-lg border border-amber-200 flex items-center gap-1 transition animate-fade-in"
+                                    >
+                                      <CalendarRange className="h-3 w-3" />
+                                      Delegar Prazo
+                                    </button>
+                                    <button
+                                      onClick={() => handleAcesseProcessoClique(email.processNumber, email.from || '', email.subject, email.snippet)}
+                                      className="bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-[10px] py-1.5 px-2.5 rounded-lg border border-blue-200 flex items-center gap-1 transition animate-fade-in"
+                                    >
+                                      <Zap className="h-3 w-3 text-blue-600" />
+                                      Acesse o Processo com 1 Clique
+                                    </button>
+                                  </div>
+                                )}
                               </div>
 
                               <div className="flex items-center gap-2">
@@ -4180,8 +4908,31 @@ export default function App() {
               </div>
 
               {/* Footer */}
-              <div className="bg-slate-50 border-t border-slate-200 p-4 shrink-0 flex justify-between items-center text-xs">
-                <span className="text-slate-500 font-medium">Sincronizado via Google Workspace API</span>
+              <div className="bg-slate-50 border-t border-slate-200 p-4 shrink-0 flex flex-wrap justify-between items-center gap-3 text-xs">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handleOpenControladoriaWorkspace(selectedEmailDetail)}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs py-2 px-4 rounded-xl flex items-center gap-1.5 transition"
+                  >
+                    <Sliders className="h-3.5 w-3.5" />
+                    Atualizar Controladoria
+                  </button>
+                  <button
+                    onClick={() => setDelegarPrazoModalData({ ...selectedEmailDetail, prazoSugerido: 15, responsavel: 'direito.rgr@gmail.com', prioridade: 'Alta', observacoes: '' })}
+                    className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs py-2 px-4 rounded-xl flex items-center gap-1.5 transition"
+                  >
+                    <CalendarRange className="h-3.5 w-3.5" />
+                    Delegar Prazo
+                  </button>
+                  <button
+                    onClick={() => handleAcesseProcessoClique(selectedEmailDetail.processNumber, selectedEmailDetail.from || '', selectedEmailDetail.subject, selectedEmailDetail.snippet)}
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs py-2 px-4 rounded-xl flex items-center gap-1.5 transition"
+                  >
+                    <Zap className="h-3.5 w-3.5 text-white" />
+                    Acesse o Processo com 1 Clique
+                  </button>
+                </div>
+
                 <a
                   href={`https://mail.google.com/mail/u/0/#inbox/${selectedEmailDetail.id}`}
                   target="_blank"
@@ -4204,6 +4955,102 @@ export default function App() {
             <p className="mt-1 font-mono text-[10px]">Tecnologia Gemini 3.5 Flash & Google Workspace</p>
           </div>
         </footer>
+
+        {/* Manual CNJ Input Modal */}
+        {manualCNJModalData && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-[100] animate-fade-in p-4">
+            <div className="bg-white rounded-2xl border border-slate-100 shadow-2xl max-w-md w-full overflow-hidden animate-scale-up">
+              <div className="p-6 space-y-4">
+                <div className="flex items-start justify-between">
+                  <div className="space-y-1">
+                    <h3 className="text-base font-bold text-slate-900">Número do Processo Necessário</h3>
+                    <p className="text-xs text-slate-500">
+                      Não foi possível identificar o número do processo neste e-mail. Por favor, insira o CNJ manualmente para prosseguir.
+                    </p>
+                  </div>
+                  <button 
+                    onClick={() => setManualCNJModalData(null)}
+                    className="text-slate-400 hover:text-slate-600 p-1 rounded-lg transition"
+                  >
+                    <AlertCircle className="h-5 w-5" />
+                  </button>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                    Número CNJ (apenas números, ou com pontos e traços)
+                  </label>
+                  <input
+                    type="text"
+                    value={manualCNJInput}
+                    onChange={(e) => setManualCNJInput(e.target.value)}
+                    placeholder="ex: 0010928-34.2023.5.03.0011"
+                    className="w-full bg-slate-50 border border-slate-200 focus:border-indigo-500 rounded-xl px-4 py-3 text-sm font-mono font-medium outline-none transition"
+                  />
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    onClick={() => setManualCNJModalData(null)}
+                    className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs py-2 px-4 rounded-xl transition"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (!manualCNJInput.trim()) {
+                        addSystemLog('warning', 'O preenchimento do CNJ é obrigatório.');
+                        return;
+                      }
+                      const cnjInput = manualCNJInput.trim();
+                      setManualCNJModalData(null);
+                      handleAcesseProcessoClique(
+                        cnjInput,
+                        manualCNJModalData.sender,
+                        manualCNJModalData.subject,
+                        manualCNJModalData.snippet
+                      );
+                    }}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs py-2 px-4 rounded-xl transition"
+                  >
+                    Prosseguir para o Tribunal
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Notification Alert Modal for Tribunal Access */}
+        {notificationAlert && notificationAlert.isOpen && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-[110] animate-fade-in p-4">
+            <div className="bg-white rounded-2xl border border-slate-100 shadow-2xl max-w-sm w-full overflow-hidden animate-scale-up">
+              <div className="p-6 text-center space-y-4">
+                <div className="mx-auto w-12 h-12 bg-blue-50 border border-blue-100 rounded-full flex items-center justify-center text-blue-600">
+                  <Check className="h-6 w-6 stroke-[3]" />
+                </div>
+                
+                <div className="space-y-1">
+                  <h3 className="text-base font-bold text-slate-900">Acesso ao Tribunal</h3>
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    Se o tribunal bloquear o preenchimento automático, utilize o CNJ que já foi copiado para a sua área de transferência.
+                  </p>
+                </div>
+
+                <div className="bg-slate-50 border border-slate-100 p-3 rounded-xl font-mono text-xs font-bold text-indigo-700">
+                  CNJ copiado. Cole no campo de busca do tribunal.
+                </div>
+
+                <button
+                  onClick={() => setNotificationAlert(null)}
+                  className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs py-3 px-4 rounded-xl transition shadow-sm"
+                >
+                  Entendi, ir para o Tribunal
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
       </main>
       </div>
