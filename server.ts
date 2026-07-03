@@ -3,6 +3,7 @@ import path from "path";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
 import { createServer as createViteServer } from "vite";
+import { ComunicaApiService } from "./src/services/comunicaApiService.js";
 
 // Load environment variables
 dotenv.config();
@@ -1691,7 +1692,7 @@ app.post("/api/recorte-digital/sync", async (req, res) => {
   }
 });
 
-// 12. API: DJEN National search
+// 12. API: DJEN National search (now using Comunica API/PJe)
 app.post("/api/djen/search", async (req, res) => {
   const { nome, oab, uf, periodo, dataInicio, dataFim } = req.body;
 
@@ -1713,12 +1714,6 @@ app.post("/api/djen/search", async (req, res) => {
     yesterday.setDate(today.getDate() - 1);
     start = yesterday;
     end = yesterday;
-  } else if (['5', '7', '10', '15', '20', '30'].includes(periodoLower)) {
-    const days = parseInt(periodoLower);
-    const startDate = new Date();
-    startDate.setDate(today.getDate() - days);
-    start = startDate;
-    end = today;
   } else if (periodoLower === 'personalizado') {
     if (!dataInicio || !dataFim) {
       return res.status(400).json({ error: "Período personalizado exige data de início e fim." });
@@ -1726,8 +1721,18 @@ app.post("/api/djen/search", async (req, res) => {
     start = new Date(dataInicio);
     end = new Date(dataFim);
   } else {
-    start = today;
-    end = today;
+    // Matches "ultimos X dias" or just "X"
+    const matchDays = periodoLower.match(/\d+/);
+    if (matchDays) {
+      const days = parseInt(matchDays[0], 10);
+      const startDate = new Date();
+      startDate.setDate(today.getDate() - days);
+      start = startDate;
+      end = today;
+    } else {
+      start = today;
+      end = today;
+    }
   }
 
   function formatDate(date: Date): string {
@@ -1741,159 +1746,27 @@ app.post("/api/djen/search", async (req, res) => {
   const dataFimStr = formatDate(end);
 
   try {
-    const djenUrl = "https://djen.cnj.jus.br/api/v1/diario/pesquisar";
-    
-    const oabVariants = [
-      `${uf}${oab}`,
-      `${oab}/${uf}`,
-      oab
-    ];
-
-    const fetchPromises = [
-      fetch(djenUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          "Accept": "application/json"
-        },
-        body: JSON.stringify({
-          nomeOab: nome,
-          dataInicio: dataInicioStr,
-          dataFim: dataFimStr,
-          pagina: 1,
-          tamanhoPagina: 100
-        })
-      })
-    ];
-
-    oabVariants.forEach(variant => {
-      fetchPromises.push(
-        fetch(djenUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "application/json"
-          },
-          body: JSON.stringify({
-            nomeOab: variant,
-            dataInicio: dataInicioStr,
-            dataFim: dataFimStr,
-            pagina: 1,
-            tamanhoPagina: 100
-          })
-        })
-      );
+    const publications = await ComunicaApiService.searchCommunications({
+      nome,
+      oab,
+      uf,
+      dataInicial: dataInicioStr,
+      dataFinal: dataFimStr
     });
-
-    const responses = await Promise.all(fetchPromises);
-    
-    for (const response of responses) {
-      if (response.status === 403 || response.status === 503 || response.status === 429) {
-        throw new Error("CAPTCHA_OR_BLOCK");
-      }
-      if (!response.ok) {
-        const text = await response.text();
-        if (text.includes("cloudflare") || text.includes("captcha") || text.includes("challenge") || text.includes("blocked")) {
-          throw new Error("CAPTCHA_OR_BLOCK");
-        }
-      }
-    }
-
-    const allResults: any[] = [];
-    for (const response of responses) {
-      if (response.ok) {
-        const data: any = await response.json();
-        const records = data.registros || data.content || data.diarios || data.publicacoes || [];
-        allResults.push(...records);
-      }
-    }
-
-    const normalizedList: any[] = [];
-    const seenHashes = new Set<string>();
-
-    for (const rec of allResults) {
-      const processNumberList = extractCNJsFromText(rec.conteudo || "");
-      const processo = rec.processo || rec.numeroProcesso || (processNumberList.length > 0 ? processNumberList[0] : "Sem número");
-      const tribunal = rec.tribunal || rec.nomeTribunal || "DJEN Nacional";
-      const orgao = rec.orgao || rec.orgaoJulgador || "Juízo do DJEN";
-      const dataDisponibilizacao = rec.dataDisponibilizacao || rec.dataPublicacao || dataInicioStr;
-      
-      const availDateObj = new Date(dataDisponibilizacao);
-      const dataPublicacao = calculateBusinessDaysDate(availDateObj, 1).split('T')[0];
-
-      const conteudo = rec.conteudo || rec.texto || "";
-      const classe = rec.classe || "Não informada";
-      const partes = rec.partes || "Não identificadas";
-
-      const deadlineRegex = /prazo\s+de\s+(\d+)\s+dia/gi;
-      let apparentDeadlineDays = 0;
-      const match = deadlineRegex.exec(conteudo);
-      if (match) {
-        apparentDeadlineDays = parseInt(match[1]);
-      }
-
-      const informativePhrases = ["meramente informativo", "ciência", "registro", "arquivamento", "ciência da decisão"];
-      const hasInformativePhrase = informativePhrases.some(phrase => conteudo.toLowerCase().includes(phrase));
-      const informativeOnly = apparentDeadlineDays === 0 || hasInformativePhrase;
-
-      const cleanConteudo = conteudo
-        .replace(/<[^>]*>/g, "")
-        .replace(/\s+/g, " ")
-        .trim();
-
-      const contentExcerpt = cleanConteudo.substring(0, 100).toLowerCase().replace(/[^a-z0-9]/g, "");
-      const hashInput = `${processo}_${dataDisponibilizacao}_${tribunal}_${orgao}_${contentExcerpt}`;
-      const hashDuplicidade = Buffer.from(hashInput).toString("base64");
-
-      const normalizedRec = {
-        id: rec.id?.toString() || `djen-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-        fonte: 'djen',
-        dataDisponibilizacao,
-        dataPublicacao,
-        tribunal,
-        orgao,
-        processo,
-        classe,
-        partes,
-        advogadoEncontrado: nome,
-        oabEncontrada: oab,
-        conteudo,
-        conteudoLimpo: cleanConteudo,
-        linkOriginal: rec.linkOriginal || `https://djen.cnj.jus.br/diario/${rec.id || ''}`,
-        hashDuplicidade,
-        status: 'pendente',
-        apparentDeadlineDays,
-        informativeOnly,
-        isDuplicate: false,
-        primaryPubId: null as string | null
-      };
-
-      if (!seenHashes.has(hashDuplicidade)) {
-        seenHashes.add(hashDuplicidade);
-        normalizedList.push(normalizedRec);
-      } else {
-        normalizedRec.isDuplicate = true;
-        normalizedRec.status = 'duplicada';
-        const primary = normalizedList.find(p => p.hashDuplicidade === hashDuplicidade);
-        if (primary) {
-          normalizedRec.primaryPubId = primary.id;
-        }
-        normalizedList.push(normalizedRec);
-      }
-    }
 
     return res.json({
       success: true,
-      publications: normalizedList
+      publications
     });
 
   } catch (err: any) {
-    console.error("Erro ao consultar o DJEN:", err);
-    let errMsg = "Não foi possível consultar o DJEN automaticamente. O site do cnj.jus.br pode estar instável.";
-    if (err.message === "CAPTCHA_OR_BLOCK") {
-      errMsg = "O servidor do DJEN (CNJ) está bloqueando requisições automatizadas temporariamente (Proteção Cloudflare/CAPTCHA). Por favor, utilize a 'Importação Manual de Texto' abaixo.";
+    console.error("Erro ao consultar a Comunica API/PJe:", err);
+    let errMsg = "Não foi possível consultar o PJe/Comunica API automaticamente. O site comunicaapi.pje.jus.br pode estar instável.";
+    let isBlocked = false;
+
+    if (err.message === "SWAGGER_GEO_BLOCKED" || err.message === "GEO_BLOCKED" || err.message === "HTTP_403_FORBIDDEN") {
+      isBlocked = true;
+      errMsg = "O servidor oficial da Comunica API/PJe (comunicaapi.pje.jus.br) bloqueou o acesso temporariamente devido a restrições de localização/IP (Proteção de Geo-blocking via CloudFront). Tribunais costumam restringir conexões originadas em servidores de nuvem fora do Brasil. Por favor, utilize o botão 'Abrir Swagger/Consulta Oficial' para realizar a consulta manualmente em seu navegador.";
     } else if (
       err.code === "ENOTFOUND" || 
       err.message?.includes("getaddrinfo") || 
@@ -1901,14 +1774,14 @@ app.post("/api/djen/search", async (req, res) => {
       err.cause?.message?.includes("getaddrinfo") ||
       err.cause?.message?.includes("ENOTFOUND")
     ) {
-      errMsg = "O servidor oficial do DJEN Nacional (djen.cnj.jus.br) está temporariamente inacessível ou offline (Erro de Conexão/DNS). O CNJ costuma restringir acessos automatizados. Por favor, utilize a 'Importação Manual de Texto' abaixo para processar publicações diretamente.";
+      errMsg = "O servidor oficial da Comunica API/PJe (comunicaapi.pje.jus.br) está temporariamente inacessível ou offline (Erro de Conexão/DNS). Por favor, tente novamente mais tarde ou clique em 'Abrir Swagger/Consulta Oficial'.";
     } else if (err.message) {
-      errMsg = `Erro ao acessar o DJEN: ${err.message}. Por favor, utilize a 'Importação Manual de Texto' abaixo para prosseguir.`;
+      errMsg = `Erro ao acessar a Comunica API/PJe: ${err.message}.`;
     }
 
-    return res.status(503).json({
+    return res.status(200).json({
       success: false,
-      blocked: true,
+      blocked: isBlocked,
       error: errMsg
     });
   }

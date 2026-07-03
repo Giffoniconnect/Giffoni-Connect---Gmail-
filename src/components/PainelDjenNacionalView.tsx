@@ -45,6 +45,7 @@ export function PainelDjenNacionalView({ user }: PainelDjenNacionalViewProps) {
   const [publications, setPublications] = useState<DjenPublication[]>([]);
   const [loading, setLoading] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [apiBlocked, setApiBlocked] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   
   // Filtering & Selection
@@ -192,6 +193,7 @@ export function PainelDjenNacionalView({ user }: PainelDjenNacionalViewProps) {
   const handleDjenConsultation = async () => {
     setLoading(true);
     setSyncError(null);
+    setApiBlocked(false);
     setSuccessMessage(null);
     try {
       const res = await fetch('/api/djen/search', {
@@ -201,38 +203,52 @@ export function PainelDjenNacionalView({ user }: PainelDjenNacionalViewProps) {
           nome: "RODRIGO GIFFONI RODRIGUES",
           oab: "157320",
           uf: "MG",
-          periodo: selectedPeriod,
+          periodo: selectedPeriod === 'todos' ? '30' : selectedPeriod,
           dataInicio: customStartDate,
           dataFim: customEndDate
         })
       });
 
+      const bodyText = await res.text();
+      let data: any = null;
+      let parseError = false;
+      try {
+        data = JSON.parse(bodyText);
+      } catch (jsonErr) {
+        parseError = true;
+      }
+
       if (!res.ok) {
         let errMsg = "Não foi possível conectar à fonte oficial.";
-        try {
-          const errData = await res.json();
-          errMsg = errData.error || errMsg;
-        } catch (jsonErr) {
-          try {
-            const errText = await res.text();
-            if (errText.includes("cloudflare") || errText.includes("captcha") || errText.includes("challenge") || errText.includes("blocked")) {
-              errMsg = "O servidor do DJEN (CNJ) está bloqueando requisições automatizadas temporariamente (Proteção Cloudflare/CAPTCHA). Por favor, utilize a 'Importação Manual de Texto' abaixo.";
-            } else {
-              errMsg = `Erro ${res.status}: Servidor do DJEN indisponível ou em manutenção. Por favor, utilize a 'Importação Manual de Texto' abaixo.`;
-            }
-          } catch (textErr) {
-            errMsg = `Erro de rede/HTTP ${res.status}. Por favor, utilize a 'Importação Manual de Texto' abaixo.`;
+        if (!parseError && data) {
+          errMsg = data.error || errMsg;
+          if (data.blocked) {
+            setApiBlocked(true);
+          }
+        } else {
+          if (bodyText.includes("cloudflare") || bodyText.includes("captcha") || bodyText.includes("challenge") || bodyText.includes("blocked")) {
+            errMsg = "O servidor oficial da Comunica API/PJe está bloqueando requisições automatizadas temporariamente (Proteção Cloudflare/CAPTCHA/Geo-block). Por favor, utilize a 'Importação Manual de Texto' abaixo.";
+          } else {
+            errMsg = `Erro ${res.status}: Servidor da Comunica API/PJe indisponível ou em manutenção. Por favor, utilize a 'Importação Manual de Texto' abaixo.`;
           }
         }
         throw new Error(errMsg);
       }
 
-      let data;
-      try {
-        data = await res.json();
-      } catch (jsonErr) {
+      if (parseError || !data) {
+        if (bodyText.includes("<!DOCTYPE html>") || bodyText.includes("<html")) {
+          throw new Error("A resposta do servidor foi uma página HTML (possivelmente devido a um erro de proxy, redirecionamento ou sessão expirada). Por favor, utilize a 'Importação Manual de Texto' abaixo.");
+        }
         throw new Error("A resposta recebida do servidor é inválida. Por favor, utilize a 'Importação Manual de Texto' abaixo.");
       }
+
+      if (data && (data.success === false || data.error)) {
+        if (data.blocked) {
+          setApiBlocked(true);
+        }
+        throw new Error(data.error || "Erro na consulta ao DJEN.");
+      }
+
       const fetchedPubs: DjenPublication[] = data.publications || [];
 
       if (fetchedPubs.length === 0) {
@@ -578,21 +594,73 @@ export function PainelDjenNacionalView({ user }: PainelDjenNacionalViewProps) {
     setTimeout(() => setSuccessMessage(null), 3000);
   };
 
-  // Calculations for Stats (Upper Cards)
-  const statsTotal = publications.length;
-  const statsUnique = publications.filter(p => !p.isDuplicate).length;
-  const statsDuplicates = publications.filter(p => p.isDuplicate).length;
-  const statsChecked = publications.filter(p => p.status === 'conferida').length;
-  const statsPending = publications.filter(p => p.status === 'pendente').length;
-  const statsDelegated = publications.filter(p => p.status === 'delegada').length;
-  const statsIgnored = publications.filter(p => p.status === 'ignorada').length;
+  // Helpers for filtering by selectedPeriod
+  const getLocalDateString = (date: Date) => {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, "0");
+    const d = String(date.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  };
+
+  const getXDaysAgoDateString = (days: number) => {
+    const d = new Date();
+    d.setDate(d.getDate() - days);
+    return getLocalDateString(d);
+  };
+
+  // Filter raw publications by the active/selected consultation period
+  const publicationsByPeriod = publications.filter(p => {
+    if (selectedPeriod === 'todos') return true;
+
+    const pubDateStr = p.dataDisponibilizacao ? p.dataDisponibilizacao.substring(0, 10) : '';
+    if (!pubDateStr) return false;
+
+    const todayStr = getLocalDateString(new Date());
+
+    if (selectedPeriod === 'hoje') {
+      return pubDateStr === todayStr;
+    } else if (selectedPeriod === 'ontem') {
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const yesterdayStr = getLocalDateString(yesterday);
+      return pubDateStr === yesterdayStr;
+    } else if (selectedPeriod === 'personalizado') {
+      if (customStartDate && customEndDate) {
+        return pubDateStr >= customStartDate && pubDateStr <= customEndDate;
+      } else if (customStartDate) {
+        return pubDateStr >= customStartDate;
+      } else if (customEndDate) {
+        return pubDateStr <= customEndDate;
+      }
+      return true;
+    } else {
+      // Matches last X days (e.g., '5', '7', '10', '15', '20', '30')
+      const days = parseInt(selectedPeriod, 10);
+      if (!isNaN(days)) {
+        const limitStr = getXDaysAgoDateString(days);
+        return pubDateStr >= limitStr && pubDateStr <= todayStr;
+      }
+    }
+    return true;
+  });
+
+  // Calculations for Stats (Upper Cards) - based on selected period
+  const statsTotal = publicationsByPeriod.length;
+  const statsUnique = publicationsByPeriod.filter(p => !p.isDuplicate).length;
+  const statsDuplicates = publicationsByPeriod.filter(p => p.isDuplicate).length;
+  const statsChecked = publicationsByPeriod.filter(p => p.status === 'conferida').length;
+  const statsPending = publicationsByPeriod.filter(p => p.status === 'pendente').length;
+  const statsDelegated = publicationsByPeriod.filter(p => p.status === 'delegada').length;
+  const statsIgnored = publicationsByPeriod.filter(p => p.status === 'ignorada').length;
+  const statsEmConferencia = publicationsByPeriod.filter(p => p.status === 'em_conferencia').length;
+  const statsRevisarDepois = publicationsByPeriod.filter(p => p.status === 'revisar_depois').length;
   
   const lastSyncDate = publications.length > 0 
     ? new Date(Math.max(...publications.map(p => new Date(p.createdAt).getTime()))).toLocaleString('pt-BR')
     : "Nunca consultado";
 
   // Filter list
-  const filteredPublications = publications.filter(p => {
+  const filteredPublications = publicationsByPeriod.filter(p => {
     // Search filter
     const matchesSearch = searchTerm.trim() === '' || 
       p.processo.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -669,9 +737,22 @@ export function PainelDjenNacionalView({ user }: PainelDjenNacionalViewProps) {
       {syncError && (
         <div className="bg-rose-50 border-l-4 border-rose-500 p-4 rounded-r-xl flex items-start gap-3">
           <AlertCircle className="h-5 w-5 text-rose-500 shrink-0 mt-0.5" />
-          <div>
-            <p className="text-xs font-bold text-rose-800">Erro na Integração DJEN</p>
+          <div className="flex-1">
+            <p className="text-xs font-bold text-rose-800">Erro na Integração DJEN/PJe</p>
             <p className="text-xs text-rose-700 mt-1">{syncError}</p>
+            {apiBlocked && (
+              <div className="mt-3">
+                <a
+                  href="https://comunicaapi.pje.jus.br/swagger/index.html"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold text-[10px] uppercase tracking-wider py-1.5 px-3 rounded-lg shadow-sm transition-all"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  Abrir Swagger/Consulta Oficial
+                </a>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -744,6 +825,7 @@ export function PainelDjenNacionalView({ user }: PainelDjenNacionalViewProps) {
               { id: '15', label: '15 dias' },
               { id: '20', label: '20 dias' },
               { id: '30', label: '30 dias' },
+              { id: 'todos', label: 'Todo o histórico' },
               { id: 'personalizado', label: 'Período personalizado' }
             ].map(b => (
               <button
@@ -822,12 +904,12 @@ export function PainelDjenNacionalView({ user }: PainelDjenNacionalViewProps) {
           {[
             { id: 'todos', label: 'Todas as publicações', count: statsTotal },
             { id: 'pendente', label: 'Pendentes', count: statsPending, badgeColor: 'bg-slate-100 text-slate-700' },
-            { id: 'em_conferencia', label: 'Em conferência', count: publications.filter(p => p.status === 'em_conferencia').length, badgeColor: 'bg-indigo-100 text-indigo-700' },
+            { id: 'em_conferencia', label: 'Em conferência', count: statsEmConferencia, badgeColor: 'bg-indigo-100 text-indigo-700' },
             { id: 'conferida', label: 'Conferidas', count: statsChecked, badgeColor: 'bg-emerald-100 text-emerald-700' },
             { id: 'delegada', label: 'Delegadas (Todoist)', count: statsDelegated, badgeColor: 'bg-blue-100 text-blue-700' },
             { id: 'ignorada', label: 'Ignoradas', count: statsIgnored, badgeColor: 'bg-slate-100 text-slate-500' },
             { id: 'duplicada', label: 'Duplicadas', count: statsDuplicates, badgeColor: 'bg-amber-100 text-amber-700' },
-            { id: 'revisar_depois', label: 'Revisar depois', count: publications.filter(p => p.status === 'revisar_depois').length, badgeColor: 'bg-violet-100 text-violet-700' }
+            { id: 'revisar_depois', label: 'Revisar depois', count: statsRevisarDepois, badgeColor: 'bg-violet-100 text-violet-700' }
           ].map(tab => (
             <button
               key={tab.id}
@@ -869,7 +951,7 @@ export function PainelDjenNacionalView({ user }: PainelDjenNacionalViewProps) {
         <div className="lg:col-span-3 space-y-4">
           <div className="flex justify-between items-center px-1">
             <p className="text-xs text-slate-500">
-              Mostrando <strong className="text-slate-800">{filteredPublications.length}</strong> de <strong className="text-slate-800">{publications.length}</strong> publicações encontradas.
+              Mostrando <strong className="text-slate-800">{filteredPublications.length}</strong> de <strong className="text-slate-800">{publicationsByPeriod.length}</strong> publicações encontradas.
             </p>
           </div>
 
@@ -1499,11 +1581,11 @@ export function PainelDjenNacionalView({ user }: PainelDjenNacionalViewProps) {
             <div className="bg-slate-50 p-3.5 border border-slate-200 rounded-xl text-xs space-y-2">
               <div className="flex justify-between">
                 <span>Publicações com Prazos Aparentes:</span>
-                <strong className="text-indigo-950">{publications.filter(p => p.apparentDeadlineDays > 0).length}</strong>
+                <strong className="text-indigo-950">{publicationsByPeriod.filter(p => p.apparentDeadlineDays > 0).length}</strong>
               </div>
               <div className="flex justify-between">
                 <span>Publicações de Caráter Meramente Informativo:</span>
-                <strong className="text-indigo-950">{publications.filter(p => p.informativeOnly).length}</strong>
+                <strong className="text-indigo-950">{publicationsByPeriod.filter(p => p.informativeOnly).length}</strong>
               </div>
               <div className="flex justify-between">
                 <span>Itens Pendentes Restantes na Fila:</span>
@@ -1515,7 +1597,7 @@ export function PainelDjenNacionalView({ user }: PainelDjenNacionalViewProps) {
             <div className="mt-5 border-t border-slate-100 pt-4">
               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Histórico de Conferência</p>
               <div className="space-y-2 max-h-[250px] overflow-y-auto pr-1">
-                {publications.map(p => (
+                {publicationsByPeriod.map(p => (
                   <div key={p.id} className="text-xs border border-slate-200 p-2.5 rounded-lg flex justify-between items-center bg-white">
                     <div className="truncate max-w-[400px]">
                       <span className="font-mono font-bold block text-indigo-950">{p.processo}</span>
