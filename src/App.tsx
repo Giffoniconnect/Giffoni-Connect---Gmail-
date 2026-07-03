@@ -19,6 +19,9 @@ import { CentralGlobalEmailsView } from './components/CentralGlobalEmailsView';
 import { IntensivoGmailZeroView } from './components/IntensivoGmailZeroView';
 import { PainelDjenNacionalView } from './components/PainelDjenNacionalView';
 
+function buildOriginalGmailPushUrl(sender: string): string {
+  return `https://mail.google.com/mail/u/0/#search/in%3Ainbox+from%3A${encodeURIComponent(sender)}`;
+}
 
 export default function App() {
   // Auth state
@@ -4661,21 +4664,33 @@ BOSS JUDICIAL - CONTROLADORIA INTELIGENTE
                             {/* Actions bar */}
                             <div className="px-5 py-3.5 bg-white border-b border-slate-100 flex flex-wrap gap-2 justify-between items-center">
                               {/* Left navigation shortcuts */}
-                              <div className="flex flex-wrap gap-2">
-                                <button
-                                  onClick={() => {
-                                    if (source) {
-                                      openGmailExplorer({
-                                        name: source.name,
-                                        sender: source.sender
-                                      }, 'all');
-                                    }
-                                  }}
-                                  className="bg-slate-900 hover:bg-slate-800 text-white font-bold text-[11px] py-2 px-3.5 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
-                                >
-                                  <Inbox className="h-3 w-3" />
-                                  Ver todos os e-mails deste Push
-                                </button>
+                              <div className="flex flex-wrap gap-2 items-start">
+                                <div className="flex flex-col gap-1.5">
+                                  <button
+                                    onClick={() => {
+                                      if (source) {
+                                        openGmailExplorer({
+                                          name: source.name,
+                                          sender: source.sender
+                                        }, 'all');
+                                      }
+                                    }}
+                                    className="bg-slate-900 hover:bg-slate-800 text-white font-bold text-[11px] py-2 px-3.5 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer w-full justify-center"
+                                  >
+                                    <Inbox className="h-3 w-3" />
+                                    Ver todos os e-mails deste PUSH
+                                  </button>
+
+                                  <a
+                                    href={buildOriginalGmailPushUrl(source?.sender || '')}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-[11px] py-2 px-3.5 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer border border-slate-200 w-full justify-center"
+                                  >
+                                    <ExternalLink className="h-3 w-3 text-slate-600" />
+                                    Ver todos os e-mails deste PUSH no Gmail ORIGINAL
+                                  </a>
+                                </div>
 
                                 {!isNotIdentified && (
                                   <>
