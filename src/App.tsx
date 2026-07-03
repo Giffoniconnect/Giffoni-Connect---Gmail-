@@ -1248,7 +1248,7 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
         id: `gmail-checked-${Date.now()}`,
         processNumber: processNum,
         title: email.subject || "E-mail de Push",
-        content: `Remetente: ${email.from}\nDestinatário: ${email.to}\nData do E-mail: ${new Date(email.date).toLocaleString('pt-BR')}\n\nSnippet: ${email.snippet}\n\nConteúdo Integral:\n${email.bodyText || ''}`,
+        content: `Remetente: ${email.from}\nDestinatário: ${email.to}\nData do E-mail: ${new Date(email.date).toLocaleString('pt-BR')}\n\nSnippet: ${email.snippet}`,
         source: "gmail",
         category: "informativo",
         urgencyLevel: "baixa",
