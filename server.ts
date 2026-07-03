@@ -2020,9 +2020,16 @@ app.post("/api/gmail-messages-details", async (req, res) => {
 
 // --- TODOIST PROXY ENDPOINTS ---
 app.use("/api/todoist", (req: any, res, next) => {
-  const token = req.headers["x-todoist-token"] || req.headers["authorization"]?.toString().replace("Bearer ", "");
+  let token = process.env.TODOIST_API_KEY;
   if (!token) {
-    return res.status(401).json({ error: "Token do Todoist não fornecido." });
+    const headerToken = req.headers["x-todoist-token"] || req.headers["authorization"]?.toString().replace("Bearer ", "");
+    if (headerToken && headerToken !== "env_secret") {
+      token = headerToken;
+    }
+  }
+
+  if (!token) {
+    return res.status(401).json({ error: "TODOIST_API_KEY não configurada nos secrets." });
   }
   req.todoistToken = token;
   next();

@@ -452,7 +452,7 @@ export default function App() {
   const [selectedRevisionOption, setSelectedRevisionOption] = useState('');
   const [showHistoryPanel, setShowHistoryPanel] = useState(false);
   const [todoistToken, setTodoistToken] = useState(() => {
-    return localStorage.getItem('boss_todoist_api_token') || '';
+    return 'env_secret';
   });
 
   const handleAcesseProcessoClique = (cnj: string | undefined, senderRaw: string, subject: string = '', snippet: string = '') => {
@@ -659,86 +659,305 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
     setIsTodoistSelectionModalOpen(false);
     setTodoistMultipleTasksFound([]);
     try {
-      const cleanCnj = (item.processNumber || '').replace(/\s+/g, '');
-      if (!cleanCnj || cleanCnj === 'Nãoidentificado' || cleanCnj === 'Não identificado') {
-        setTodoistLoading(false);
-        return;
-      }
+      // 1. Extrair do push
+      const cnj = (item.processNumber || '').trim();
+      const autor = (item.autor || '').trim();
+      const reu = (item.reu || '').trim();
+      const vara = (item.vara || '').trim();
+      const tribunal = (item.tribunal || '').trim();
 
-      // Check if there is a saved link for this CNJ
-      const savedLinksRaw = localStorage.getItem('boss_cnj_todoist_links');
-      const savedLinks = savedLinksRaw ? JSON.parse(savedLinksRaw) : {};
-      const savedTaskId = savedLinks[cleanCnj];
+      const isCnjValid = cnj && cnj !== 'Não identificado' && cnj !== 'Nãoidentificado';
+      const isAutorValid = autor && autor !== 'Não identificado' && autor !== 'Nãoidentificado';
+      const isReuValid = reu && reu !== 'Não identificado' && reu !== 'Nãoidentificado';
 
-      if (savedTaskId) {
-        // Fetch specific task
-        const taskRes = await fetch(`/api/todoist/tasks/${savedTaskId}`, {
-          headers: { 'x-todoist-token': tokenToUse }
-        });
-        if (taskRes.ok) {
-          const task = await taskRes.json();
-          if (task && !task.error) {
-            setTodoistLinkedTask(task);
-            setTodoistTaskTitle(task.content);
-            setTodoistTaskDescription(task.description || '');
-            setTodoistTaskPriority(task.priority || 1);
-            if (task.due) {
-              setTodoistTaskDate(task.due.date || '');
+      // First check if there is a saved link for this CNJ
+      const cleanCnjForSaved = isCnjValid ? cnj.replace(/\s+/g, '') : '';
+      if (cleanCnjForSaved) {
+        const savedLinksRaw = localStorage.getItem('boss_cnj_todoist_links');
+        const savedLinks = savedLinksRaw ? JSON.parse(savedLinksRaw) : {};
+        const savedTaskId = savedLinks[cleanCnjForSaved];
+
+        if (savedTaskId) {
+          // Fetch specific task
+          const taskRes = await fetch(`/api/todoist/tasks/${savedTaskId}`, {
+            headers: { 'x-todoist-token': tokenToUse }
+          });
+          if (taskRes.ok) {
+            const task = await taskRes.json();
+            if (task && !task.error) {
+              setTodoistLinkedTask(task);
+              setTodoistTaskTitle(task.content);
+              setTodoistTaskDescription(task.description || '');
+              setTodoistTaskPriority(task.priority || 1);
+              if (task.due) {
+                setTodoistTaskDate(task.due.date || '');
+              } else {
+                setTodoistTaskDate('');
+              }
+              setTodoistTaskLabels(task.labels || []);
+              setTodoistMultipleTasksFound([]);
+              setIsTodoistSelectionModalOpen(false);
+              setTodoistNotFoundForCnj(false);
+              addSystemLog('info', `Tarefa vinculada carregada do histórico para o CNJ ${cnj}.`, 'gmail_sync');
+              setTodoistLoading(false);
+              return;
             }
-            setTodoistTaskLabels(task.labels || []);
-            setTodoistMultipleTasksFound([]);
-            setIsTodoistSelectionModalOpen(false);
-            setTodoistNotFoundForCnj(false);
-            addSystemLog('info', `Tarefa vinculada carregada do histórico para o CNJ ${cleanCnj}.`, 'gmail_sync');
-            setTodoistLoading(false);
-            return;
           }
         }
       }
 
-      // If no saved link or loading fails, call the consolidated search-all endpoint
-      const response = await fetch(`/api/todoist/search-all?cnj=${encodeURIComponent(cleanCnj)}`, {
-        headers: {
-          'x-todoist-token': tokenToUse
+      // 2. Gerar buscas em ordem
+      const queriesToTry: string[] = [];
+
+      // a) CNJ completo
+      if (isCnjValid) {
+        queriesToTry.push(cnj);
+        const digitsCnj = cnj.replace(/[^0-9]/g, '');
+        if (digitsCnj && digitsCnj !== cnj) {
+          queriesToTry.push(digitsCnj);
+        }
+      }
+
+      // If no valid CNJ, but processNumber contains letters/search terms (manual search), use it
+      if (!isCnjValid && item.processNumber && item.processNumber.trim().length > 0) {
+        queriesToTry.push(item.processNumber.trim());
+      }
+
+      // b) Nome do autor
+      if (isAutorValid && autor.length > 2) {
+        queriesToTry.push(autor);
+      }
+
+      // c) Nome do réu
+      if (isReuValid && reu.length > 2) {
+        queriesToTry.push(reu);
+      }
+
+      // d) Autor + réu
+      if (isAutorValid && isReuValid) {
+        queriesToTry.push(`${autor} ${reu}`);
+      }
+
+      // e) Padrão de tarefa
+      if (isAutorValid && isReuValid) {
+        queriesToTry.push(`Controladoria trabalhista ${autor} ${reu}`);
+      } else if (isAutorValid) {
+        queriesToTry.push(`Controladoria trabalhista ${autor}`);
+      }
+
+      // f) Trecho parcial mais forte
+      const getStrongKeywords = (text: string): string => {
+        if (!text) return "";
+        const words = text.toLowerCase()
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .replace(/[^a-z0-9]/g, " ")
+          .split(/\s+/);
+        const stopWords = new Set(["de", "do", "da", "dos", "das", "e", "com", "x", "em", "para", "por", "o", "a", "os", "as"]);
+        return words.filter(w => w && w.length > 2 && !stopWords.has(w)).join(" ");
+      };
+
+      const strongAutor = getStrongKeywords(autor);
+      const strongReu = getStrongKeywords(reu);
+      const strongKeywords = `${strongAutor} ${strongReu}`.trim();
+      if (strongKeywords && strongKeywords.length > 3) {
+        queriesToTry.push(strongKeywords);
+      }
+
+      // Deduplicate and filter queriesToTry
+      const uniqueQueries = Array.from(new Set(queriesToTry.map(q => q.trim()).filter(Boolean)));
+
+      addSystemLog('info', `Iniciando busca inteligente no Todoist com queries: ${JSON.stringify(uniqueQueries)}`, 'gmail_sync');
+
+      // 3. Normalizar tudo antes da comparação helper
+      const normalizeText = (text: string): string => {
+        if (!text) return "";
+        let clean = text.toLowerCase();
+        clean = clean.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        const termsToRemove = ["pasta fisica", "pasta física", "acao", "ação", "processo", "nº", "n°"];
+        for (const term of termsToRemove) {
+          clean = clean.split(term).join(" ");
+        }
+        clean = clean.replace(/\bx\b/gi, " ");
+        clean = clean.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, " ");
+        clean = clean.replace(/\s+/g, " ");
+        return clean.trim();
+      };
+
+      // 4. Buscar no Todoist por múltiplas queries usando GET /api/todoist/tasks?filter=search:{query}
+      const fetchedTasksMap = new Map<string, any>();
+
+      const fetchPromises = uniqueQueries.map(async (query) => {
+        try {
+          const filter = `search:${encodeURIComponent(query)}`;
+          const response = await fetch(`/api/todoist/tasks?filter=${filter}`, {
+            headers: { 'x-todoist-token': tokenToUse }
+          });
+          if (response.ok) {
+            const tasks = await response.json();
+            if (Array.isArray(tasks)) {
+              for (const t of tasks) {
+                if (t && t.id) {
+                  fetchedTasksMap.set(t.id, t);
+                }
+              }
+            }
+          }
+        } catch (err) {
+          console.error(`Erro na busca por query "${query}":`, err);
         }
       });
 
-      if (response.ok) {
-        const tasks = await response.json();
-        if (Array.isArray(tasks) && tasks.length > 0) {
-          if (tasks.length === 1) {
-            // Exactly one task found
-            const linked = tasks[0];
-            setTodoistLinkedTask(linked);
-            setTodoistTaskTitle(linked.content);
-            setTodoistTaskDescription(linked.description || '');
-            setTodoistTaskPriority(linked.priority || 1);
-            if (linked.due) {
-              setTodoistTaskDate(linked.due.date || '');
-            }
-            setTodoistTaskLabels(linked.labels || []);
-            setTodoistMultipleTasksFound([]);
-            setIsTodoistSelectionModalOpen(false);
-            setTodoistNotFoundForCnj(false);
-            addSystemLog('info', `Tarefa relacionada encontrada no Todoist: "${linked.content}". Carregando para edição.`, 'gmail_sync');
-          } else {
-            // Multiple tasks found
-            setTodoistMultipleTasksFound(tasks);
-            setIsTodoistSelectionModalOpen(true);
-            setTodoistLinkedTask(null);
-            setTodoistNotFoundForCnj(false);
-            addSystemLog('info', `Encontramos ${tasks.length} tarefas possíveis para este CNJ. Seleção obrigatória pendente.`, 'gmail_sync');
+      await Promise.all(fetchPromises);
+
+      // 5. Fazer ranking dos resultados
+      const allTasks = Array.from(fetchedTasksMap.values());
+      const rankedTasks = allTasks.map(task => {
+        let score = 0;
+        const taskText = normalizeText(task.content + " " + (task.description || ""));
+
+        // - +100 se contiver CNJ
+        if (isCnjValid) {
+          const normCnj = normalizeText(cnj);
+          const digitsCnj = cnj.replace(/[^0-9]/g, '');
+          const cleanTaskText = taskText.replace(/[^0-9]/g, '');
+          if (taskText.includes(normCnj) || (digitsCnj && cleanTaskText.includes(digitsCnj))) {
+            score += 100;
           }
+        }
+
+        // - +80 se contiver autor completo
+        if (isAutorValid) {
+          const normAutor = normalizeText(autor);
+          if (normAutor && taskText.includes(normAutor)) {
+            score += 80;
+          }
+        }
+
+        // - +80 se contiver réu completo
+        if (isReuValid) {
+          const normReu = normalizeText(reu);
+          if (normReu && taskText.includes(normReu)) {
+            score += 80;
+          }
+        }
+
+        // - +50 se contiver “Controladoria”
+        if (taskText.includes("controladoria")) {
+          score += 50;
+        }
+
+        // - +50 se contiver “trabalhista”
+        if (taskText.includes("trabalhista")) {
+          score += 50;
+        }
+
+        // - +30 se contiver vara/comarca
+        if (vara) {
+          const normVara = normalizeText(vara);
+          const cleanVara = normVara.replace(/\b(vara|do|trabalho|de|comarca)\b/g, "").trim();
+          if (cleanVara && taskText.includes(cleanVara)) {
+            score += 30;
+          } else if (normVara && taskText.includes(normVara)) {
+            score += 30;
+          }
+        }
+
+        // - +20 se contiver pasta física
+        if (taskText.includes("pasta fisica") || taskText.includes("pasta física") || /\bpasta\b/.test(taskText)) {
+          score += 20;
+        }
+
+        return {
+          ...task,
+          score
+        };
+      });
+
+      // Filter tasks to keep only those with a score > 0 and sort by score descending
+      const sortedTasks = rankedTasks
+        .filter(t => t.score > 0)
+        .sort((a, b) => b.score - a.score);
+
+      if (sortedTasks.length > 0) {
+        // 6. Selecionar automaticamente a tarefa com maior pontuação se ela for claramente superior.
+        const topTask = sortedTasks[0];
+        let isClearlySuperior = false;
+
+        if (sortedTasks.length === 1) {
+          isClearlySuperior = true;
         } else {
-          setTodoistLinkedTask(null);
+          const secondTask = sortedTasks[1];
+          // Clearly superior if highest score is >= 80 and at least 40 points above the second, or if the second task has a very low score (< 30)
+          if (topTask.score >= 80 && (topTask.score - secondTask.score >= 40 || secondTask.score < 30)) {
+            isClearlySuperior = true;
+          }
+        }
+
+        if (isClearlySuperior) {
+          // Fetch comments for the selected task to make sure they are available immediately
+          try {
+            const commentsRes = await fetch(`/api/todoist/comments?task_id=${topTask.id}`, {
+              headers: { 'x-todoist-token': tokenToUse }
+            });
+            if (commentsRes.ok) {
+              const comments = await commentsRes.json();
+              topTask.comments = Array.isArray(comments) ? comments : [];
+            }
+          } catch (err) {
+            console.error("Erro ao buscar comentários da tarefa selecionada:", err);
+          }
+
+          setTodoistLinkedTask(topTask);
+          setTodoistTaskTitle(topTask.content);
+          setTodoistTaskDescription(topTask.description || '');
+          setTodoistTaskPriority(topTask.priority || 1);
+          if (topTask.due) {
+            setTodoistTaskDate(topTask.due.date || '');
+          } else {
+            setTodoistTaskDate('');
+          }
+          setTodoistTaskLabels(topTask.labels || []);
           setTodoistMultipleTasksFound([]);
           setIsTodoistSelectionModalOpen(false);
-          setTodoistNotFoundForCnj(true);
-          addSystemLog('warning', `Nenhuma tarefa Todoist encontrada para este CNJ: ${cleanCnj}`, 'gmail_sync');
+          setTodoistNotFoundForCnj(false);
+          addSystemLog('success', `Tarefa vinculada automaticamente: "${topTask.content}" (Pontuação: ${topTask.score}).`, 'gmail_sync');
+        } else {
+          // 7. Se houver mais de uma tarefa plausível, abrir seletor.
+          // Fetch comments for these top tasks as well so they show up beautifully in the selection modal
+          const enrichPromises = sortedTasks.slice(0, 5).map(async (task) => {
+            try {
+              const commentsRes = await fetch(`/api/todoist/comments?task_id=${task.id}`, {
+                headers: { 'x-todoist-token': tokenToUse }
+              });
+              if (commentsRes.ok) {
+                const comments = await commentsRes.json();
+                task.comments = Array.isArray(comments) ? comments : [];
+              }
+            } catch (err) {
+              task.comments = [];
+            }
+          });
+          await Promise.all(enrichPromises);
+
+          setTodoistMultipleTasksFound(sortedTasks);
+          setIsTodoistSelectionModalOpen(true);
+          setTodoistLinkedTask(null);
+          setTodoistNotFoundForCnj(false);
+          addSystemLog('info', `Encontramos ${sortedTasks.length} tarefas possíveis para esta publicação. Seleção necessária.`, 'gmail_sync');
         }
+      } else {
+        // 8. Se não encontrar por CNJ, jamais declarar “nenhuma tarefa encontrada” antes de tentar localizar pelo nome da tarefa.
+        // We already searched everything in parallel! So if sortedTasks is empty, it means we tried CNJ AND names and found nothing.
+        setTodoistLinkedTask(null);
+        setTodoistMultipleTasksFound([]);
+        setIsTodoistSelectionModalOpen(false);
+        setTodoistNotFoundForCnj(true);
+        addSystemLog('warning', `Nenhuma tarefa Todoist encontrada por CNJ ou por nome de partes para esta publicação.`, 'gmail_sync');
       }
     } catch (err) {
       console.error("Erro ao buscar no Todoist:", err);
+      addSystemLog('error', `Falha na sincronização inteligente com o Todoist.`, 'gmail_sync');
     } finally {
       setTodoistLoading(false);
     }
@@ -914,7 +1133,7 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
     handleTabChange(`pushes/push-${resolvedSourceId}/atualizar-controladoria`);
 
     // Fetch Todoist projects/sections if token is present
-    const savedToken = localStorage.getItem('boss_todoist_api_token');
+    const savedToken = todoistToken || 'env_secret';
     if (savedToken) {
       fetchTodoistMetadata(savedToken);
     }

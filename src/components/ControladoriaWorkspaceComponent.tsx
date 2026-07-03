@@ -2362,6 +2362,11 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
                               Concluída
                             </span>
                           )}
+                          {task.score !== undefined && task.score > 0 && (
+                            <span className="bg-amber-50 text-amber-700 border border-amber-100 font-bold px-1.5 py-0.5 rounded">
+                              Score: {task.score} pts
+                            </span>
+                          )}
                         </div>
                       </div>
 
