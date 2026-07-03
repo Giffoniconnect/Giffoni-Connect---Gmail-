@@ -3,7 +3,7 @@ import {
   Sliders, CalendarRange, Clock, Database, CheckCircle, RefreshCw, 
   ArrowLeft, ArrowRight, Save, Trash2, Check, Plus, ExternalLink, 
   AlertTriangle, User, Calendar, Tag, ChevronDown, Download, Copy, 
-  Inbox, Flame, Target, Sparkles, Keyboard, Key, MessageSquare, 
+  Inbox, Flame, Target, Sparkles, Keyboard, Key, MessageSquare, Search,
   Folder, Flag, X, FileText, CheckSquare
 } from "lucide-react";
 
@@ -75,6 +75,7 @@ interface ControladoriaWorkspaceProps {
   setTodoistNotFoundForCnj: (v: boolean) => void;
   handleSelectTask: (task: any) => void;
   cachedToken: string;
+  searchTodoistTasks?: (item: any, tokenToUse: string) => Promise<void>;
   
   handleSaveTodoistTask: (skipRedirect?: boolean) => Promise<any>;
   handleOpenControladoriaWorkspace: (msg: any, group: any, sourceId: string) => Promise<void>;
@@ -135,8 +136,11 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
   systemLogs,
   addSystemLog,
   setActiveTab,
-  source
+  source,
+  searchTodoistTasks
 }) => {
+  const cleanCnjStr = (controladoriaActiveItem.processNumber || '').replace(/\s+/g, '');
+
   // Panel States
   const [viewRawCode, setViewRawCode] = useState(false);
   const [isDelegarOpen, setIsDelegarOpen] = useState(true);
@@ -205,6 +209,22 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
   const [todoistLoadingLocal, setTodoistLoadingLocal] = useState(false);
   const [isAddingLabel, setIsAddingLabel] = useState(false);
   const [labelInput, setLabelInput] = useState("");
+
+  const [searchQuery, setSearchQuery] = useState("");
+
+  useEffect(() => {
+    if (cleanCnjStr) {
+      setSearchQuery(cleanCnjStr);
+    }
+  }, [cleanCnjStr]);
+
+  const handleManualSearch = () => {
+    if (searchTodoistTasks && searchQuery.trim()) {
+      searchTodoistTasks({ processNumber: searchQuery.trim() }, todoistToken);
+    } else {
+      addSystemLog("warning", "Digite um número de processo ou termo válido.");
+    }
+  };
 
   // Synchronize local editors when the active task changes
   useEffect(() => {
@@ -522,7 +542,6 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
   }, [smartQueues]);
 
   // Compute values
-  const cleanCnjStr = (controladoriaActiveItem.processNumber || '').replace(/\s+/g, '');
   const groups = groupedPushes?.groups || [];
   const currentIdx = groups.findIndex((g: any) => g.processNumber === controladoriaActiveItem.processNumber);
   const totalInQueue = groups.length || 0;
@@ -1033,8 +1052,8 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
       {/* 2. THREE-PANEL CORE LAYOUT */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         
-        {/* COLUMN 1: LEFT OPERATIONAL SIDEBAR (3 Cols) */}
-        <div className="lg:col-span-3 space-y-4">
+        {/* COLUMN 1: LEFT OPERATIONAL SIDEBAR (4 Cols) */}
+        <div className="lg:col-span-4 space-y-4">
           <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm space-y-3.5">
             <div className="border-b border-slate-100 pb-2 flex items-center justify-between">
               <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
@@ -1101,6 +1120,186 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
                 <ChevronDown className={`h-3.5 w-3.5 transition ${isHistoricoOpen ? "rotate-180" : ""}`} />
               </button>
             </div>
+
+            {/* Collapsible Panel: AGENDAR REVISÃO */}
+            {isRevisaoOpen && (
+              <div className="bg-gradient-to-br from-blue-50/70 to-white border border-blue-200 rounded-xl p-3.5 space-y-3.5 shadow-sm mt-3 animate-fade-in">
+                <div className="flex justify-between items-center border-b border-blue-100 pb-1.5">
+                  <span className="text-xs font-bold text-blue-800 flex items-center gap-1.5">
+                    <Clock className="h-4 w-4" /> Programar Revisão Processual
+                  </span>
+                  <button onClick={() => setIsRevisaoOpen(false)} className="text-slate-400 hover:text-slate-600 text-xs">✕</button>
+                </div>
+                <p className="text-[10px] text-slate-500 leading-relaxed">
+                  Adicione gatilhos de conferência ou revisão futura como subtarefas do Todoist:
+                </p>
+                <div className="grid grid-cols-1 gap-1.5 text-xs">
+                  <button 
+                    onClick={async () => {
+                      const subText = `Revisar publicação em 15 dias: Processo ${cleanCnjStr}`;
+                      if (todoistLinkedTask?.id) {
+                        setTodoistLoadingLocal(true);
+                        try {
+                          const res = await fetch(`/api/todoist/tasks`, {
+                            method: "POST",
+                            headers: {
+                              'x-todoist-token': todoistToken,
+                              'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                              content: subText,
+                              parent_id: todoistLinkedTask.id,
+                              project_id: todoistLinkedTask.project_id
+                            })
+                          });
+                          if (res.ok) {
+                            addSystemLog('success', 'Gatilho de revisão em 15 dias adicionado ao Todoist!');
+                            fetchRealTimeSubtasks();
+                          }
+                        } catch (e) { console.error(e); }
+                        finally { setTodoistLoadingLocal(false); }
+                      } else {
+                        setTodoistTaskSubtasks([...todoistTaskSubtasks, subText]);
+                        addSystemLog('success', 'Gatilho de revisão em 15 dias planejado!');
+                      }
+                      setIsRevisaoOpen(false);
+                    }}
+                    className="p-2 bg-white hover:bg-blue-50 border border-slate-200 rounded-lg text-left font-semibold text-slate-700 hover:text-blue-700 transition text-[11px]"
+                  >
+                    Revisar em 15 dias
+                  </button>
+                  <button 
+                    onClick={async () => {
+                      const subText = `Revisar publicação em 30 dias: Processo ${cleanCnjStr}`;
+                      if (todoistLinkedTask?.id) {
+                        setTodoistLoadingLocal(true);
+                        try {
+                          const res = await fetch(`/api/todoist/tasks`, {
+                            method: "POST",
+                            headers: {
+                              'x-todoist-token': todoistToken,
+                              'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                              content: subText,
+                              parent_id: todoistLinkedTask.id,
+                              project_id: todoistLinkedTask.project_id
+                            })
+                          });
+                          if (res.ok) {
+                            addSystemLog('success', 'Gatilho de revisão em 30 dias adicionado ao Todoist!');
+                            fetchRealTimeSubtasks();
+                          }
+                        } catch (e) { console.error(e); }
+                        finally { setTodoistLoadingLocal(false); }
+                      } else {
+                        setTodoistTaskSubtasks([...todoistTaskSubtasks, subText]);
+                        addSystemLog('success', 'Gatilho de revisão em 30 dias planejado!');
+                      }
+                      setIsRevisaoOpen(false);
+                    }}
+                    className="p-2 bg-white hover:bg-blue-50 border border-slate-200 rounded-lg text-left font-semibold text-slate-700 hover:text-blue-700 transition text-[11px]"
+                  >
+                    Revisar em 30 dias
+                  </button>
+                  <button 
+                    onClick={async () => {
+                      const subText = `Revisar após julgamento de embargos: Processo ${cleanCnjStr}`;
+                      if (todoistLinkedTask?.id) {
+                        setTodoistLoadingLocal(true);
+                        try {
+                          const res = await fetch(`/api/todoist/tasks`, {
+                            method: "POST",
+                            headers: {
+                              'x-todoist-token': todoistToken,
+                              'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                              content: subText,
+                              parent_id: todoistLinkedTask.id,
+                              project_id: todoistLinkedTask.project_id
+                            })
+                          });
+                          if (res.ok) {
+                            addSystemLog('success', 'Gatilho pós-julgamento de embargos adicionado ao Todoist!');
+                            fetchRealTimeSubtasks();
+                          }
+                        } catch (e) { console.error(e); }
+                        finally { setTodoistLoadingLocal(false); }
+                      } else {
+                        setTodoistTaskSubtasks([...todoistTaskSubtasks, subText]);
+                        addSystemLog('success', 'Gatilho pós-julgamento planejado!');
+                      }
+                      setIsRevisaoOpen(false);
+                    }}
+                    className="p-2 bg-white hover:bg-blue-50 border border-slate-200 rounded-lg text-left font-semibold text-slate-700 hover:text-blue-700 transition text-[11px]"
+                  >
+                    Pós Julgamento
+                  </button>
+                  <button 
+                    onClick={async () => {
+                      const subText = `Conferir decurso e trânsito em julgado: Processo ${cleanCnjStr}`;
+                      if (todoistLinkedTask?.id) {
+                        setTodoistLoadingLocal(true);
+                        try {
+                          const res = await fetch(`/api/todoist/tasks`, {
+                            method: "POST",
+                            headers: {
+                              'x-todoist-token': todoistToken,
+                              'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                              content: subText,
+                              parent_id: todoistLinkedTask.id,
+                              project_id: todoistLinkedTask.project_id
+                            })
+                          });
+                          if (res.ok) {
+                            addSystemLog('success', 'Gatilho de decurso e trânsito adicionado ao Todoist!');
+                            fetchRealTimeSubtasks();
+                          }
+                        } catch (e) { console.error(e); }
+                        finally { setTodoistLoadingLocal(false); }
+                      } else {
+                        setTodoistTaskSubtasks([...todoistTaskSubtasks, subText]);
+                        addSystemLog('success', 'Gatilho pós prazo fatal planejado!');
+                      }
+                      setIsRevisaoOpen(false);
+                    }}
+                    className="p-2 bg-white hover:bg-blue-50 border border-slate-200 rounded-lg text-left font-semibold text-slate-700 hover:text-blue-700 transition text-[11px]"
+                  >
+                    Pós Prazo Fatal
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Collapsible Panel: HISTÓRICO */}
+            {isHistoricoOpen && (
+              <div className="bg-gradient-to-br from-purple-50/70 to-white border border-purple-200 rounded-xl p-3.5 space-y-3.5 shadow-sm mt-3 max-h-80 overflow-y-auto animate-fade-in">
+                <div className="flex justify-between items-center border-b border-purple-100 pb-1.5">
+                  <span className="text-xs font-bold text-purple-800 flex items-center gap-1.5">
+                    <Database className="h-4 w-4" /> Histórico Operacional
+                  </span>
+                  <button onClick={() => setIsHistoricoOpen(false)} className="text-slate-400 hover:text-slate-600 text-xs">✕</button>
+                </div>
+                <div className="space-y-2">
+                  {systemLogs
+                    .filter(log => log.message.includes(cleanCnjStr))
+                    .map(log => (
+                      <div key={log.id} className="text-[11px] border-l-2 border-purple-400 pl-2 space-y-0.5">
+                        <div className="text-[9px] text-slate-400">{new Date(log.timestamp).toLocaleString('pt-BR')}</div>
+                        <p className="text-slate-600 leading-relaxed">{log.message}</p>
+                      </div>
+                    ))}
+                  {systemLogs.filter(log => log.message.includes(cleanCnjStr)).length === 0 && (
+                    <div className="text-center py-4 text-[10px] text-slate-400">
+                      Nenhum histórico anterior para este processo.
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Subtarefas Automáticas (Migrated here) */}
             <div className="space-y-2 border-t border-slate-100 pt-3">
@@ -1254,360 +1453,74 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
           </div>
         </div>
 
-        {/* COLUMN 2: CENTER PANEL (EXTRACTED STRUCTURED METADATA) (4 Cols) */}
-        <div className="lg:col-span-4 bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-5">
-          <div className="border-b border-slate-200 pb-3 flex items-center justify-between">
-            <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
-              <Sparkles className="h-4 w-4 text-purple-500 animate-pulse" /> Metadados da Publicação
-            </h3>
-            <span className="bg-purple-50 text-purple-800 text-[9px] px-2 py-0.5 rounded-full font-black border border-purple-150 uppercase tracking-wide">
-              Estruturados por IA
-            </span>
-          </div>
+        {/* COLUMN 2 & 3 CONSOLIDATED: RIGHT PANEL (8 Cols) */}
+        <div className="lg:col-span-8 space-y-6">
+          
+          {/* BUSCADOR DE TAREFAS DO TODOIST */}
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="text-xs font-black uppercase tracking-wider text-slate-950 flex items-center gap-1.5">
+                <Search className="h-4.5 w-4.5 text-indigo-600" /> Buscador de Tarefas do Todoist
+              </h3>
+              <span className="bg-indigo-50 text-indigo-700 text-[10px] px-2.5 py-1 rounded-full font-bold border border-indigo-100">
+                Sincronização Ativa
+              </span>
+            </div>
 
-          {/* Structured Metadata Fields */}
-          <div className="space-y-3">
-            {/* CNJ */}
-            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex justify-between items-center">
-              <div className="space-y-0.5">
-                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Número do Processo (CNJ)</span>
-                <div className="font-mono text-xs font-black text-slate-800">{controladoriaActiveItem.processNumber || "Não identificado"}</div>
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              Digite um número de processo (CNJ) ou termo de busca para localizar e acoplar uma tarefa do Todoist.
+            </p>
+
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Buscar processo por CNJ ou termo..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full bg-slate-50 hover:bg-slate-100/70 focus:bg-white border border-slate-200 rounded-xl pl-10 pr-4 py-2.5 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-indigo-500 transition"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      handleManualSearch();
+                    }
+                  }}
+                />
               </div>
-              <button 
-                onClick={() => {
-                  navigator.clipboard.writeText(controladoriaActiveItem.processNumber || '');
-                  addSystemLog("success", "Número do processo (CNJ) copiado.");
-                }}
-                className="p-1.5 hover:bg-slate-200 rounded-lg text-slate-500 hover:text-indigo-600 transition"
-                title="Copiar CNJ"
+              <button
+                onClick={handleManualSearch}
+                disabled={todoistLoading || !searchQuery.trim()}
+                className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-100 disabled:text-slate-400 text-white font-bold text-xs px-5 py-2.5 rounded-xl transition flex items-center gap-1.5 shadow-sm"
               >
-                <Copy className="h-3.5 w-3.5" />
+                {todoistLoading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
+                Buscar
               </button>
             </div>
 
-            {/* Tribunal & Classe */}
-            <div className="grid grid-cols-2 gap-2">
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5">
-                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block mb-0.5">Tribunal</span>
-                <div className="text-xs font-bold text-slate-800 truncate" title={source?.name || "TRT-MG"}>
-                  {source?.name || "TRT-MG"}
-                </div>
-              </div>
-
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5">
-                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block mb-0.5">Classe Processual</span>
-                <div className="text-xs font-bold text-slate-800 truncate" title={controladoriaActiveItem.classe || "Não identificada"}>
-                  {controladoriaActiveItem.classe || "Não identificada"}
-                </div>
-              </div>
-            </div>
-
-            {/* Órgão Julgador */}
-            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
-              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block mb-0.5">Órgão Julgador</span>
-              <div className="text-xs font-bold text-slate-800 leading-snug">
-                {controladoriaActiveItem.vara || "Não identificado"}
-              </div>
-            </div>
-
-            {/* Partes: Autor & Réu */}
-            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
-              <div className="flex justify-between items-center">
-                <div className="space-y-0.5 min-w-0 flex-1">
-                  <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Autor / Requerente</span>
-                  <div className="text-xs font-semibold text-slate-800 truncate" title={controladoriaActiveItem.autor}>{controladoriaActiveItem.autor || "Não identificado"}</div>
-                </div>
-                <button 
-                  onClick={() => {
-                    navigator.clipboard.writeText(controladoriaActiveItem.autor || '');
-                    addSystemLog("success", "Autor copiado.");
-                  }}
-                  className="p-1 hover:bg-slate-200 rounded text-slate-500 hover:text-indigo-600 transition"
-                  title="Copiar Autor"
-                >
-                  <Copy className="h-3 w-3" />
-                </button>
-              </div>
-
-              <div className="border-t border-slate-200 pt-2 flex justify-between items-center">
-                <div className="space-y-0.5 min-w-0 flex-1">
-                  <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Réu / Requerido</span>
-                  <div className="text-xs font-semibold text-slate-800 truncate" title={controladoriaActiveItem.reu}>{controladoriaActiveItem.reu || "Não identificado"}</div>
-                </div>
-                <button 
-                  onClick={() => {
-                    navigator.clipboard.writeText(controladoriaActiveItem.reu || '');
-                    addSystemLog("success", "Réu copiado.");
-                  }}
-                  className="p-1 hover:bg-slate-200 rounded text-slate-500 hover:text-indigo-600 transition"
-                  title="Copiar Réu"
-                >
-                  <Copy className="h-3 w-3" />
-                </button>
-              </div>
-            </div>
-
-            {/* Advogados & Tipo Movimentação */}
-            <div className="grid grid-cols-2 gap-2">
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5">
-                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block mb-0.5">Data Movimentação</span>
-                <div className="text-xs font-bold text-slate-800">
-                  {controladoriaActiveItem.date ? new Date(controladoriaActiveItem.date).toLocaleDateString('pt-BR') : new Date().toLocaleDateString('pt-BR')}
-                </div>
-              </div>
-
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5">
-                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block mb-0.5">Tipo Movimentação</span>
-                <div className="text-xs font-bold text-purple-700 truncate uppercase">
-                  {controladoriaActiveItem.category || controladoriaActiveItem.movementType || "Intimação"}
-                </div>
-              </div>
-            </div>
-
-            {/* Advogados */}
-            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
-              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block mb-0.5">Advogados</span>
-              <div className="text-xs font-semibold text-slate-700 truncate" title={controladoriaActiveItem.advogados || "Não identificados"}>
-                {controladoriaActiveItem.advogados || "Não identificados"}
-              </div>
-            </div>
-
-            {/* Resumo da Movimentação */}
-            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-1">
-              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Resumo do E-mail / Publicação</span>
-              <p className="text-xs text-slate-600 leading-relaxed font-sans max-h-32 overflow-y-auto pr-1">
-                {controladoriaActiveItem.snippet || controladoriaActiveItem.subject || "Sem resumo disponível."}
-              </p>
-            </div>
-
-            {/* Links Úteis Row */}
-            <div className="pt-2">
-              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">Ações & Links Úteis</span>
-              <div className="flex flex-wrap gap-1.5">
-                <button
-                  onClick={handleOpenGmail}
-                  className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-[9px] uppercase tracking-wider py-1.5 px-3 rounded-lg transition flex items-center gap-1 border border-indigo-200"
-                >
-                  <ExternalLink className="h-3 w-3" />
-                  Gmail
-                </button>
-
-                <button
-                  onClick={handleOpenProcesso}
-                  className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-[9px] uppercase tracking-wider py-1.5 px-3 rounded-lg transition flex items-center gap-1 border border-indigo-200"
-                >
-                  <ExternalLink className="h-3 w-3" />
-                  TRT (Painel)
-                </button>
-
-                <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(`${controladoriaActiveItem.processNumber || ''} - ${controladoriaActiveItem.autor || ''} x ${controladoriaActiveItem.reu || ''}`);
-                    addSystemLog("success", "Dados consolidados copiados!");
-                  }}
-                  className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-[9px] uppercase tracking-wider py-1.5 px-3 rounded-lg transition flex items-center gap-1 border border-emerald-200"
-                >
-                  <Copy className="h-3 w-3" />
-                  Copiar Ficha
-                </button>
-              </div>
+            {/* Quick Info / Current State */}
+            <div className="flex items-center gap-2.5 text-[11px] font-semibold text-slate-600 bg-slate-50 border border-slate-150 p-3 rounded-xl">
+              <div className={`h-2.5 w-2.5 rounded-full ${todoistLinkedTask ? "bg-emerald-500 animate-pulse" : "bg-amber-500"}`}></div>
+              <span>
+                {todoistLinkedTask 
+                  ? `Tarefa vinculada com sucesso: "${todoistLinkedTask.content}"` 
+                  : "Nenhuma tarefa vinculada para esta publicação. Utilize o buscador acima ou crie uma tarefa no espelho abaixo."}
+              </span>
             </div>
           </div>
 
-          {/* Panel: AGENDAR REVISÃO inside Column 2 */}
-          {isRevisaoOpen && (
-            <div className="bg-gradient-to-br from-blue-50/70 to-white border border-blue-200 rounded-xl p-4 space-y-3 shadow-sm animate-fade-in">
-              <div className="flex justify-between items-center border-b border-blue-100 pb-2">
-                <span className="text-xs font-bold text-blue-800 flex items-center gap-1">
-                  <Clock className="h-4 w-4" /> Programar Revisão Processual
-                </span>
-                <button onClick={() => setIsRevisaoOpen(false)} className="text-slate-400 hover:text-slate-600 text-xs">Fechar</button>
-              </div>
-              <p className="text-[10px] text-slate-500 leading-relaxed">
-                Adicione gatilhos de conferência ou revisão futura como subtarefas do Todoist:
-              </p>
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <button 
-                  onClick={async () => {
-                    const subText = `Revisar publicação em 15 dias: Processo ${cleanCnjStr}`;
-                    if (todoistLinkedTask?.id) {
-                      setTodoistLoadingLocal(true);
-                      try {
-                        const res = await fetch(`/api/todoist/tasks`, {
-                          method: "POST",
-                          headers: {
-                            'x-todoist-token': todoistToken,
-                            'Content-Type': 'application/json'
-                          },
-                          body: JSON.stringify({
-                            content: subText,
-                            parent_id: todoistLinkedTask.id,
-                            project_id: todoistLinkedTask.project_id
-                          })
-                        });
-                        if (res.ok) {
-                          addSystemLog('success', 'Gatilho de revisão em 15 dias adicionado ao Todoist!');
-                          fetchRealTimeSubtasks();
-                        }
-                      } catch (e) { console.error(e); }
-                      finally { setTodoistLoadingLocal(false); }
-                    } else {
-                      setTodoistTaskSubtasks([...todoistTaskSubtasks, subText]);
-                      addSystemLog('success', 'Gatilho de revisão em 15 dias planejado!');
-                    }
-                    setIsRevisaoOpen(false);
-                  }}
-                  className="p-2 bg-white hover:bg-blue-50 border border-slate-200 rounded-lg text-left font-medium text-slate-700 hover:text-blue-700 transition text-[11px]"
-                >
-                  Revisar em 15 dias
-                </button>
-                <button 
-                  onClick={async () => {
-                    const subText = `Revisar publicação em 30 dias: Processo ${cleanCnjStr}`;
-                    if (todoistLinkedTask?.id) {
-                      setTodoistLoadingLocal(true);
-                      try {
-                        const res = await fetch(`/api/todoist/tasks`, {
-                          method: "POST",
-                          headers: {
-                            'x-todoist-token': todoistToken,
-                            'Content-Type': 'application/json'
-                          },
-                          body: JSON.stringify({
-                            content: subText,
-                            parent_id: todoistLinkedTask.id,
-                            project_id: todoistLinkedTask.project_id
-                          })
-                        });
-                        if (res.ok) {
-                          addSystemLog('success', 'Gatilho de revisão em 30 dias adicionado ao Todoist!');
-                          fetchRealTimeSubtasks();
-                        }
-                      } catch (e) { console.error(e); }
-                      finally { setTodoistLoadingLocal(false); }
-                    } else {
-                      setTodoistTaskSubtasks([...todoistTaskSubtasks, subText]);
-                      addSystemLog('success', 'Gatilho de revisão em 30 dias planejado!');
-                    }
-                    setIsRevisaoOpen(false);
-                  }}
-                  className="p-2 bg-white hover:bg-blue-50 border border-slate-200 rounded-lg text-left font-medium text-slate-700 hover:text-blue-700 transition text-[11px]"
-                >
-                  Revisar em 30 dias
-                </button>
-                <button 
-                  onClick={async () => {
-                    const subText = `Revisar após julgamento de embargos: Processo ${cleanCnjStr}`;
-                    if (todoistLinkedTask?.id) {
-                      setTodoistLoadingLocal(true);
-                      try {
-                        const res = await fetch(`/api/todoist/tasks`, {
-                          method: "POST",
-                          headers: {
-                            'x-todoist-token': todoistToken,
-                            'Content-Type': 'application/json'
-                          },
-                          body: JSON.stringify({
-                            content: subText,
-                            parent_id: todoistLinkedTask.id,
-                            project_id: todoistLinkedTask.project_id
-                          })
-                        });
-                        if (res.ok) {
-                          addSystemLog('success', 'Gatilho pós-julgamento de embargos adicionado ao Todoist!');
-                          fetchRealTimeSubtasks();
-                        }
-                      } catch (e) { console.error(e); }
-                      finally { setTodoistLoadingLocal(false); }
-                    } else {
-                      setTodoistTaskSubtasks([...todoistTaskSubtasks, subText]);
-                      addSystemLog('success', 'Gatilho pós-julgamento planejado!');
-                    }
-                    setIsRevisaoOpen(false);
-                  }}
-                  className="p-2 bg-white hover:bg-blue-50 border border-slate-200 rounded-lg text-left font-medium text-slate-700 hover:text-blue-700 transition text-[11px]"
-                >
-                  Pós Julgamento
-                </button>
-                <button 
-                  onClick={async () => {
-                    const subText = `Conferir decurso e trânsito em julgado: Processo ${cleanCnjStr}`;
-                    if (todoistLinkedTask?.id) {
-                      setTodoistLoadingLocal(true);
-                      try {
-                        const res = await fetch(`/api/todoist/tasks`, {
-                          method: "POST",
-                          headers: {
-                            'x-todoist-token': todoistToken,
-                            'Content-Type': 'application/json'
-                          },
-                          body: JSON.stringify({
-                            content: subText,
-                            parent_id: todoistLinkedTask.id,
-                            project_id: todoistLinkedTask.project_id
-                          })
-                        });
-                        if (res.ok) {
-                          addSystemLog('success', 'Gatilho de decurso e trânsito adicionado ao Todoist!');
-                          fetchRealTimeSubtasks();
-                        }
-                      } catch (e) { console.error(e); }
-                      finally { setTodoistLoadingLocal(false); }
-                    } else {
-                      setTodoistTaskSubtasks([...todoistTaskSubtasks, subText]);
-                      addSystemLog('success', 'Gatilho pós prazo fatal planejado!');
-                    }
-                    setIsRevisaoOpen(false);
-                  }}
-                  className="p-2 bg-white hover:bg-blue-50 border border-slate-200 rounded-lg text-left font-medium text-slate-700 hover:text-blue-700 transition text-[11px]"
-                >
-                  Pós Prazo Fatal
-                </button>
-              </div>
+          {/* ESPELHO DA TAREFA */}
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col space-y-5 relative min-h-[500px]">
+            
+            {/* Header of Mirror View */}
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3 shrink-0">
+              <span className="text-xs font-black text-slate-900 flex items-center gap-1.5">
+                <img src="https://assets.todoist.com/assets/images/dc619f7b1548651a249ccb0c79213197.svg" alt="Todoist" className="h-4 w-4" />
+                ESPELHO DA TAREFA (Mirror View)
+              </span>
+              <span className="inline-flex items-center gap-1 bg-red-50 text-red-700 text-[9px] px-2 py-0.5 rounded-full font-black border border-red-100 uppercase tracking-wide animate-pulse">
+                ● Acoplamento Oficial
+              </span>
             </div>
-          )}
-
-          {/* Panel: HISTÓRICO inside Column 2 */}
-          {isHistoricoOpen && (
-            <div className="bg-gradient-to-br from-purple-50/70 to-white border border-purple-200 rounded-xl p-4 space-y-3 shadow-sm max-h-80 overflow-y-auto animate-fade-in">
-              <div className="flex justify-between items-center border-b border-purple-100 pb-2">
-                <span className="text-xs font-bold text-purple-800 flex items-center gap-1">
-                  <Database className="h-4 w-4" /> Histórico Operacional
-                </span>
-                <button onClick={() => setIsHistoricoOpen(false)} className="text-slate-400 hover:text-slate-600 text-xs">Fechar</button>
-              </div>
-              <div className="space-y-2">
-                {systemLogs
-                  .filter(log => log.message.includes(cleanCnjStr))
-                  .map(log => (
-                    <div key={log.id} className="text-[11px] border-l-2 border-purple-400 pl-2 space-y-0.5">
-                      <div className="text-[9px] text-slate-400">{new Date(log.timestamp).toLocaleString('pt-BR')}</div>
-                      <p className="text-slate-600 leading-relaxed">{log.message}</p>
-                    </div>
-                  ))}
-                {systemLogs.filter(log => log.message.includes(cleanCnjStr)).length === 0 && (
-                  <div className="text-center py-4 text-[10px] text-slate-400">
-                    Nenhum histórico anterior para este processo.
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* COLUMN 3: RIGHT PANEL (TODOIST TASK MIRROR VIEW) (5 Cols) */}
-        <div className="lg:col-span-5 bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col space-y-5 relative min-h-[500px]">
-          
-          {/* Header of Mirror View */}
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3 shrink-0">
-            <span className="text-xs font-black text-slate-900 flex items-center gap-1.5">
-              <img src="https://assets.todoist.com/assets/images/dc619f7b1548651a249ccb0c79213197.svg" alt="Todoist" className="h-4 w-4" />
-              ESPELHO DA TAREFA (Mirror View)
-            </span>
-            <span className="inline-flex items-center gap-1 bg-red-50 text-red-700 text-[9px] px-2 py-0.5 rounded-full font-black border border-red-100 uppercase tracking-wide animate-pulse">
-              ● Acoplamento Oficial
-            </span>
-          </div>
 
           {/* Loading state indicator */}
           {todoistLoading ? (
@@ -2032,6 +1945,8 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
         </div>
 
       </div>
+
+    </div>
 
 
 

@@ -1113,6 +1113,7 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
           setTodoistNotFoundForCnj={setTodoistNotFoundForCnj}
           handleSelectTask={handleSelectTaskInApp}
           cachedToken={cachedToken}
+          searchTodoistTasks={searchTodoistTasks}
         />
       </div>
     );
