@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { 
   Scale, Mail, Calendar, Database, Clock, Search, Filter, 
   PlusCircle, FileText, CheckCircle, AlertTriangle, RefreshCw, 
@@ -9,9 +9,16 @@ import {
 import { onAuthStateChanged, signInWithPopup, signOut, GoogleAuthProvider, User } from 'firebase/auth';
 import { collection, query, where, getDocs, addDoc, updateDoc, doc, deleteDoc, writeBatch } from 'firebase/firestore';
 import { auth, db, googleProvider } from './firebase';
-import { Publication, ApiToken, SystemLog } from './types';
+import { Publication, ApiToken, SystemLog, EmailRule } from './types';
 import { initialPublications, calculateBusinessDaysDate } from './mockData';
 import { ControladoriaWorkspaceComponent } from './components/ControladoriaWorkspaceComponent';
+import { LegalOpsBIDashboard } from './components/LegalOpsBIDashboard';
+import { defaultEmailRules } from './defaultEmailRules';
+import { DashboardPrincipalView } from './components/DashboardPrincipalView';
+import { CentralGlobalEmailsView } from './components/CentralGlobalEmailsView';
+import { IntensivoGmailZeroView } from './components/IntensivoGmailZeroView';
+import { PainelDjenNacionalView } from './components/PainelDjenNacionalView';
+
 
 export default function App() {
   // Auth state
@@ -25,14 +32,28 @@ export default function App() {
   const [publications, setPublications] = useState<Publication[]>([]);
   const [apiTokens, setApiTokens] = useState<ApiToken[]>([]);
   const [systemLogs, setSystemLogs] = useState<SystemLog[]>([]);
+  const [systemEvents, setSystemEvents] = useState<any[]>([]);
 
   // App control states
-  const [activeTab, setActiveTab] = useState<'login' | 'dashboard' | 'publications' | 'deadlines' | 'gmail' | 'api' | 'new-pub' | 'pushes' | 'consulta.prius' | 'consulta.recorte-digital' | 'configuracoes.gmail'>('login');
+  const [activeTab, setActiveTab] = useState<'login' | 'dashboard' | 'bi-dashboard' | 'publications' | 'deadlines' | 'gmail' | 'api' | 'new-pub' | 'pushes' | 'consulta.prius' | 'consulta.recorte-digital' | 'configuracoes.gmail' | 'dashboard-principal' | 'central-emails' | 'intensivo-gmail' | 'consulta.djen'>('login');
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [copiedTokenId, setCopiedTokenId] = useState<string | null>(null);
   const [selectedPub, setSelectedPub] = useState<Publication | null>(null);
+  const lastActivePushSourceIdRef = useRef<string | null>(null);
+
+  // Email Rules & Global Stats state
+  const [emailRules, setEmailRules] = useState<EmailRule[]>([]);
+  const [globalEmailStats, setGlobalEmailStats] = useState({
+    emailAddress: "direito.rgr@gmail.com",
+    messagesTotal: 15480,
+    inboxCount: 847,
+    unreadCount: 120,
+    archivedToday: 0,
+    deletedToday: 0
+  });
+  const [isEmailStatsLoading, setIsEmailStatsLoading] = useState(false);
 
   // Secure Auth & Auto-update states
   const [loginError, setLoginError] = useState<string | null>(null);
@@ -76,6 +97,45 @@ export default function App() {
     'ceara': { status: 'desconectado', lastUpdated: null, totalCount: 0, unreadCount: 0, newestSubject: "Não consultado", newestDate: null, error: null, isLoading: false },
     'sao-paulo': { status: 'desconectado', lastUpdated: null, totalCount: 0, unreadCount: 0, newestSubject: "Não consultado", newestDate: null, error: null, isLoading: false },
   });
+
+  // --- Prius & Recorte Digital Conferidor Sessions ---
+  const [priusSession, setPriusSession] = useState<{
+    emailSubject: string;
+    gmailMessageId: string;
+    publications: any[];
+    lastSync: string | null;
+  } | null>(() => {
+    const saved = localStorage.getItem('prius_conferidor_session_v2');
+    return saved ? JSON.parse(saved) : null;
+  });
+  const [priusSelectedIdx, setPriusSelectedIdx] = useState<number | null>(null);
+  const [priusSyncing, setPriusSyncing] = useState(false);
+
+  const [recorteSessions, setRecorteSessions] = useState<Record<string, {
+    emailSubject: string;
+    gmailMessageId: string;
+    publications: any[];
+    lastSync: string | null;
+  }>>(() => {
+    const saved = localStorage.getItem('recorte_conferidor_sessions_v2');
+    return saved ? JSON.parse(saved) : {};
+  });
+  const [activeRecorteServiceId, setActiveRecorteServiceId] = useState<string>('oab-mg');
+  const [recorteSelectedIdx, setRecorteSelectedIdx] = useState<number | null>(null);
+  const [recorteSyncing, setRecorteSyncing] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    if (priusSession) {
+      localStorage.setItem('prius_conferidor_session_v2', JSON.stringify(priusSession));
+    } else {
+      localStorage.removeItem('prius_conferidor_session_v2');
+    }
+  }, [priusSession]);
+
+  useEffect(() => {
+    localStorage.setItem('recorte_conferidor_sessions_v2', JSON.stringify(recorteSessions));
+  }, [recorteSessions]);
+  // --- End Prius & Recorte Digital Conferidor Sessions ---
 
   // Helper to determine if a publication was recently checked (same day or yesterday)
   const checkRecentlyConferred = (pub: Publication, allPubs: Publication[]) => {
@@ -147,18 +207,28 @@ export default function App() {
       }
 
       if (path === 'login' || path === '') {
-        setActiveTab('dashboard');
+        setActiveTab('dashboard-principal');
         try {
-          window.history.replaceState(null, '', '/dashboard');
+          window.history.replaceState(null, '', '/dashboard-principal');
         } catch (e) {
           console.warn('History API block warning:', e);
         }
+      } else if (path === 'dashboard-principal') {
+        setActiveTab('dashboard-principal');
+      } else if (path === 'central-emails') {
+        setActiveTab('central-emails');
+      } else if (path === 'intensivo-gmail') {
+        setActiveTab('intensivo-gmail');
+      } else if (path === 'dashboard') {
+        setActiveTab('dashboard');
       } else if (path === 'configuracoes.gmail') {
         setActiveTab('configuracoes.gmail');
       } else if (path === 'consulta.prius') {
         setActiveTab('consulta.prius');
       } else if (path === 'consulta.recorte-digital') {
         setActiveTab('consulta.recorte-digital');
+      } else if (path === 'consulta.djen') {
+        setActiveTab('consulta.djen');
       } else if (path === 'pushes') {
         setActiveTab('pushes');
       } else if (path.startsWith('pushes/push-')) {
@@ -174,9 +244,9 @@ export default function App() {
       } else if (path === 'new-pub') {
         setActiveTab('new-pub');
       } else {
-        setActiveTab('dashboard');
+        setActiveTab('dashboard-principal');
         try {
-          window.history.replaceState(null, '', '/dashboard');
+          window.history.replaceState(null, '', '/dashboard-principal');
         } catch (e) {
           console.warn('History API block warning:', e);
         }
@@ -365,6 +435,9 @@ export default function App() {
   const [todoistLoading, setTodoistLoading] = useState(false);
   const [todoistSyncing, setTodoistSyncing] = useState(false);
   const [todoistLinkedTask, setTodoistLinkedTask] = useState<any | null>(null);
+  const [todoistMultipleTasksFound, setTodoistMultipleTasksFound] = useState<any[]>([]);
+  const [isTodoistSelectionModalOpen, setIsTodoistSelectionModalOpen] = useState(false);
+  const [todoistNotFoundForCnj, setTodoistNotFoundForCnj] = useState(false);
   const [isDelegarPanelOpen, setIsDelegarPanelOpen] = useState(false);
   const [isRevisaoPanelOpen, setIsRevisaoPanelOpen] = useState(false);
   const [selectedRevisionOption, setSelectedRevisionOption] = useState('');
@@ -573,15 +646,49 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
   const searchTodoistTasks = async (item: any, tokenToUse: string) => {
     if (!item || !tokenToUse) return;
     setTodoistLoading(true);
+    setTodoistNotFoundForCnj(false);
+    setIsTodoistSelectionModalOpen(false);
+    setTodoistMultipleTasksFound([]);
     try {
       const cleanCnj = (item.processNumber || '').replace(/\s+/g, '');
-      if (!cleanCnj || cleanCnj === 'Nãoidentificado') {
+      if (!cleanCnj || cleanCnj === 'Nãoidentificado' || cleanCnj === 'Não identificado') {
         setTodoistLoading(false);
         return;
       }
 
-      // Call Todoist API search proxy
-      const response = await fetch(`/api/todoist/tasks?filter=${encodeURIComponent(`search:${cleanCnj}`)}`, {
+      // Check if there is a saved link for this CNJ
+      const savedLinksRaw = localStorage.getItem('boss_cnj_todoist_links');
+      const savedLinks = savedLinksRaw ? JSON.parse(savedLinksRaw) : {};
+      const savedTaskId = savedLinks[cleanCnj];
+
+      if (savedTaskId) {
+        // Fetch specific task
+        const taskRes = await fetch(`/api/todoist/tasks/${savedTaskId}`, {
+          headers: { 'x-todoist-token': tokenToUse }
+        });
+        if (taskRes.ok) {
+          const task = await taskRes.json();
+          if (task && !task.error) {
+            setTodoistLinkedTask(task);
+            setTodoistTaskTitle(task.content);
+            setTodoistTaskDescription(task.description || '');
+            setTodoistTaskPriority(task.priority || 1);
+            if (task.due) {
+              setTodoistTaskDate(task.due.date || '');
+            }
+            setTodoistTaskLabels(task.labels || []);
+            setTodoistMultipleTasksFound([]);
+            setIsTodoistSelectionModalOpen(false);
+            setTodoistNotFoundForCnj(false);
+            addSystemLog('info', `Tarefa vinculada carregada do histórico para o CNJ ${cleanCnj}.`, 'gmail_sync');
+            setTodoistLoading(false);
+            return;
+          }
+        }
+      }
+
+      // If no saved link or loading fails, call the consolidated search-all endpoint
+      const response = await fetch(`/api/todoist/search-all?cnj=${encodeURIComponent(cleanCnj)}`, {
         headers: {
           'x-todoist-token': tokenToUse
         }
@@ -590,44 +697,35 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
       if (response.ok) {
         const tasks = await response.json();
         if (Array.isArray(tasks) && tasks.length > 0) {
-          // Linked task found!
-          const linked = tasks[0];
-          setTodoistLinkedTask(linked);
-          setTodoistTaskTitle(linked.content);
-          setTodoistTaskDescription(linked.description || '');
-          setTodoistTaskPriority(linked.priority || 1);
-          if (linked.due) {
-            setTodoistTaskDate(linked.due.date || '');
+          if (tasks.length === 1) {
+            // Exactly one task found
+            const linked = tasks[0];
+            setTodoistLinkedTask(linked);
+            setTodoistTaskTitle(linked.content);
+            setTodoistTaskDescription(linked.description || '');
+            setTodoistTaskPriority(linked.priority || 1);
+            if (linked.due) {
+              setTodoistTaskDate(linked.due.date || '');
+            }
+            setTodoistTaskLabels(linked.labels || []);
+            setTodoistMultipleTasksFound([]);
+            setIsTodoistSelectionModalOpen(false);
+            setTodoistNotFoundForCnj(false);
+            addSystemLog('info', `Tarefa relacionada encontrada no Todoist: "${linked.content}". Carregando para edição.`, 'gmail_sync');
+          } else {
+            // Multiple tasks found
+            setTodoistMultipleTasksFound(tasks);
+            setIsTodoistSelectionModalOpen(true);
+            setTodoistLinkedTask(null);
+            setTodoistNotFoundForCnj(false);
+            addSystemLog('info', `Encontramos ${tasks.length} tarefas possíveis para este CNJ. Seleção obrigatória pendente.`, 'gmail_sync');
           }
-          setTodoistTaskLabels(linked.labels || []);
-          addSystemLog('info', `Tarefa relacionada encontrada no Todoist: "${linked.content}". Carregando para edição.`, 'gmail_sync');
         } else {
           setTodoistLinkedTask(null);
-          // If not found by CNJ, try searching by party name
-          let partyName = '';
-          if (item.autor && item.autor !== 'Não identificado') partyName = item.autor;
-          else if (item.reu && item.reu !== 'Não identificado') partyName = item.reu;
-
-          if (partyName && partyName.length > 3) {
-            const nameRes = await fetch(`/api/todoist/tasks?filter=${encodeURIComponent(`search:${partyName}`)}`, {
-              headers: { 'x-todoist-token': tokenToUse }
-            });
-            if (nameRes.ok) {
-              const nameTasks = await nameRes.json();
-              if (Array.isArray(nameTasks) && nameTasks.length > 0) {
-                const linkedByName = nameTasks[0];
-                setTodoistLinkedTask(linkedByName);
-                setTodoistTaskTitle(linkedByName.content);
-                setTodoistTaskDescription(linkedByName.description || '');
-                setTodoistTaskPriority(linkedByName.priority || 1);
-                if (linkedByName.due) {
-                  setTodoistTaskDate(linkedByName.due.date || '');
-                }
-                setTodoistTaskLabels(linkedByName.labels || []);
-                addSystemLog('info', `Tarefa por nome da parte encontrada no Todoist: "${linkedByName.content}". Carregando para edição.`, 'gmail_sync');
-              }
-            }
-          }
+          setTodoistMultipleTasksFound([]);
+          setIsTodoistSelectionModalOpen(false);
+          setTodoistNotFoundForCnj(true);
+          addSystemLog('warning', `Nenhuma tarefa Todoist encontrada para este CNJ: ${cleanCnj}`, 'gmail_sync');
         }
       }
     } catch (err) {
@@ -825,7 +923,14 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
               messageIds: [msg.id]
             })
           });
-          if (response.ok) {
+          if (!response.ok) {
+            const errJson = await response.json();
+            if (response.status === 401 || errJson.error === "UNAUTHENTICATED") {
+              setCachedToken(null);
+              localStorage.removeItem('boss_gmail_token');
+              addSystemLog('warning', 'Sessão Google expirada ou inválida. Por favor, conecte sua conta Google novamente.', 'gmail_sync');
+            }
+          } else {
             const data = await response.json();
             if (data.messages && data.messages.length > 0 && data.messages[0].success) {
               const detailed = data.messages[0];
@@ -878,6 +983,29 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
     }
   };
 
+  const handleSelectTaskInApp = (task: any) => {
+    const cleanCnj = (controladoriaActiveItem?.processNumber || '').replace(/\s+/g, '');
+    if (!cleanCnj) return;
+    const savedLinksRaw = localStorage.getItem('boss_cnj_todoist_links');
+    const savedLinks = savedLinksRaw ? JSON.parse(savedLinksRaw) : {};
+    savedLinks[cleanCnj] = task.id;
+    localStorage.setItem('boss_cnj_todoist_links', JSON.stringify(savedLinks));
+
+    setTodoistLinkedTask(task);
+    setTodoistTaskTitle(task.content);
+    setTodoistTaskDescription(task.description || '');
+    setTodoistTaskPriority(task.priority || 1);
+    if (task.due) {
+      setTodoistTaskDate(task.due.date || '');
+    }
+    setTodoistTaskLabels(task.labels || []);
+    setIsTodoistSelectionModalOpen(false);
+    setTodoistMultipleTasksFound([]);
+    setTodoistNotFoundForCnj(false);
+
+    addSystemLog('success', `Tarefa vinculada com sucesso ao CNJ ${cleanCnj}!`, 'gmail_sync');
+  };
+
   const renderControladoriaWorkspace = (source: any, theme: any) => {
     if (!controladoriaActiveItem) {
       return (
@@ -918,6 +1046,7 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
         todoistTaskLabels={todoistTaskLabels}
         setTodoistTaskLabels={setTodoistTaskLabels}
         todoistLinkedTask={todoistLinkedTask}
+        setTodoistLinkedTask={setTodoistLinkedTask}
         todoistLoading={todoistLoading}
         todoistSyncing={todoistSyncing}
         handleSaveTodoistTask={handleSaveTodoistTask}
@@ -929,6 +1058,14 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
         addSystemLog={addSystemLog}
         setActiveTab={setActiveTab}
         source={source}
+        todoistMultipleTasksFound={todoistMultipleTasksFound}
+        setTodoistMultipleTasksFound={setTodoistMultipleTasksFound}
+        isTodoistSelectionModalOpen={isTodoistSelectionModalOpen}
+        setIsTodoistSelectionModalOpen={setIsTodoistSelectionModalOpen}
+        todoistNotFoundForCnj={todoistNotFoundForCnj}
+        setTodoistNotFoundForCnj={setTodoistNotFoundForCnj}
+        handleSelectTask={handleSelectTaskInApp}
+        cachedToken={cachedToken}
       />
     );
   };
@@ -986,6 +1123,11 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
 
       if (!response.ok) {
         const errJson = await response.json();
+        if (response.status === 401 || errJson.error === "UNAUTHENTICATED") {
+          setCachedToken(null);
+          localStorage.removeItem('boss_gmail_token');
+          addSystemLog('warning', 'Sessão Google expirada ou inválida. Por favor, conecte sua conta Google novamente.', 'gmail_sync');
+        }
         throw new Error(errJson.error || "Erro ao obter lista de e-mails do Gmail.");
       }
 
@@ -1018,6 +1160,11 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
 
       if (!response.ok) {
         const errJson = await response.json();
+        if (response.status === 401 || errJson.error === "UNAUTHENTICATED") {
+          setCachedToken(null);
+          localStorage.removeItem('boss_gmail_token');
+          addSystemLog('warning', 'Sessão Google expirada ou inválida. Por favor, conecte sua conta Google novamente.', 'gmail_sync');
+        }
         throw new Error(errJson.error || "Erro ao carregar detalhes dos e-mails.");
       }
 
@@ -1098,6 +1245,11 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
 
       if (!response.ok) {
         const errJson = await response.json();
+        if (response.status === 401 || errJson.error === "UNAUTHENTICATED") {
+          setCachedToken(null);
+          localStorage.removeItem('boss_gmail_token');
+          addSystemLog('warning', 'Sessão Google expirada ou inválida. Por favor, conecte sua conta Google novamente.', 'gmail_sync');
+        }
         throw new Error(errJson.error || "Erro ao recarregar e-mail.");
       }
 
@@ -1288,14 +1440,15 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
         setLoginError(null);
         // Load data from firestore in the background
         loadUserPublications(currentUser.uid);
+        loadUserEmailRules(currentUser.uid);
         addSystemLog('info', `Usuário ${currentUser.email} autenticado com sucesso.`);
 
-        // Redirect to dashboard if currently on /login or default path
+        // Redirect to dashboard-principal if currently on /login or default path
         const path = window.location.pathname.replace(/^\//, '');
         if (path === 'login' || path === '') {
-          setActiveTab('dashboard');
+          setActiveTab('dashboard-principal');
           try {
-            window.history.replaceState(null, '', '/dashboard');
+            window.history.replaceState(null, '', '/dashboard-principal');
           } catch (e) {
             console.warn('History API block warning:', e);
           }
@@ -1391,6 +1544,87 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
     }
   };
 
+  const loadUserEmailRules = async (uid: string) => {
+    try {
+      const q = query(collection(db, "email_rules"), where("userId", "==", uid));
+      const querySnapshot = await getDocs(q);
+      const fetched: EmailRule[] = [];
+      querySnapshot.forEach((docSnap) => {
+        fetched.push({ id: docSnap.id, ...docSnap.data() } as EmailRule);
+      });
+
+      if (fetched.length > 0) {
+        setEmailRules(fetched);
+      } else {
+        // Seed first-time logged in user with 50+ mock rules
+        const batch = writeBatch(db);
+        const seeded: EmailRule[] = defaultEmailRules.map((r, idx) => ({
+          ...r,
+          id: `seed-${idx}-${Math.random().toString(36).substring(2, 9)}`,
+          userId: uid,
+          createdAt: new Date().toISOString(),
+          lastChecked: null
+        }));
+        
+        for (const item of seeded) {
+          const docRef = doc(collection(db, "email_rules"));
+          // Assign the custom id so it matches firestore id
+          const seedWithId = { ...item, id: docRef.id };
+          batch.set(docRef, seedWithId);
+        }
+        await batch.commit();
+        
+        // Fetch them back to get Firestore IDs
+        const reQuerySnapshot = await getDocs(q);
+        const reFetched: EmailRule[] = [];
+        reQuerySnapshot.forEach((docSnap) => {
+          reFetched.push({ id: docSnap.id, ...docSnap.data() } as EmailRule);
+        });
+        setEmailRules(reFetched);
+        addSystemLog('success', 'Árvore global com 50+ regras de arquivamento inteligente semeada no seu Firestore.');
+      }
+    } catch (err: any) {
+      console.error("Erro ao carregar regras do Firestore:", err);
+      // Fallback to offline default rules if firestore connection fails
+      setEmailRules(defaultEmailRules.map((r, i) => ({ ...r, id: `rule-${i}` }) as EmailRule));
+    }
+  };
+
+  const syncGlobalGmailStats = async (token = cachedToken, forceRefetch = false) => {
+    if (!token) return;
+    setIsEmailStatsLoading(true);
+    try {
+      const res = await fetch("/api/gmail-global-stats", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accessToken: token, forceRefetch })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          setGlobalEmailStats(prev => ({
+            ...prev,
+            emailAddress: data.emailAddress || prev.emailAddress,
+            messagesTotal: data.messagesTotal,
+            inboxCount: data.inboxCount,
+            unreadCount: data.unreadCount
+          }));
+        }
+      } else {
+        const errData = await res.json();
+        if (res.status === 401 || errData.error === "UNAUTHENTICATED") {
+          setCachedToken(null);
+          localStorage.removeItem('boss_gmail_token');
+          addSystemLog('warning', 'Sessão Google expirada ou inválida. Por favor, conecte sua conta Google novamente.', 'gmail_sync');
+        }
+      }
+    } catch (err) {
+      console.error("Erro ao carregar estatísticas do Gmail:", err);
+    } finally {
+      setIsEmailStatsLoading(false);
+    }
+  };
+
   const addSystemLog = (status: 'success' | 'warning' | 'error' | 'info', message: string, type: 'gmail_sync' | 'api_received' | 'manual_add' | 'status_change' = 'manual_add') => {
     const randomSuffix = Math.random().toString(36).substring(2, 9);
     const newLog: SystemLog = {
@@ -1402,6 +1636,57 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
       status
     };
     setSystemLogs(prev => [newLog, ...prev.slice(0, 49)]);
+
+    // Automatically parse message to append to systemEvents in real time
+    let eventType: any = null;
+    let source: any = 'Outros';
+    
+    // Determine source from current context or active sub routes if possible
+    if (message.includes('TRT3') || message.includes('TRT-MG')) source = 'TRT3';
+    else if (message.includes('TJMG') && !message.includes('eproc')) source = 'TJMG';
+    else if (message.includes('Eproc TJMG') || message.includes('eproc_tjmg') || message.includes('Eproc – Push TRF6') || message.includes('pje@tjmg.jus.br')) {
+      source = message.includes('trf6') || message.includes('TRF6') ? 'TRF6' : 'Eproc';
+    } else if (message.includes('TRF6') || message.includes('eproc@trf6')) source = 'TRF6';
+    else if (message.includes('Recorte')) source = 'RecorteDigital';
+    else if (message.includes('Prius')) source = 'Prius';
+
+    if (message.toLowerCase().includes('conferido') || message.toLowerCase().includes('conferência') || message.toLowerCase().includes('sucesso')) {
+      eventType = 'pub_checked';
+    } else if (message.toLowerCase().includes('ignora') || message.toLowerCase().includes('não é publicação')) {
+      eventType = 'pub_ignored';
+    } else if (message.toLowerCase().includes('duplicad')) {
+      eventType = 'pub_duplicate';
+    } else if (message.toLowerCase().includes('subtarefa')) {
+      eventType = 'subtask_created';
+    } else if (message.toLowerCase().includes('comentário')) {
+      eventType = 'comment_created';
+    } else if (message.toLowerCase().includes('revisar') || message.toLowerCase().includes('revisão')) {
+      eventType = 'revision_created';
+    } else if (message.toLowerCase().includes('todoist')) {
+      eventType = message.toLowerCase().includes('criad') ? 'task_created' : 'task_updated';
+    } else if (message.toLowerCase().includes('deletar') || message.toLowerCase().includes('removida')) {
+      eventType = 'pub_deleted';
+    } else if (message.toLowerCase().includes('gmail') && message.toLowerCase().includes('lido')) {
+      eventType = 'email_read';
+    } else if (message.toLowerCase().includes('copiad') || message.toLowerCase().includes('download')) {
+      eventType = 'download_attachment';
+    } else if (message.toLowerCase().includes('upload')) {
+      eventType = 'upload_document';
+    } else if (message.toLowerCase().includes('controladoria')) {
+      eventType = 'controladoria_update';
+    }
+
+    if (eventType) {
+      const newEvent = {
+        id: `live-event-${Date.now()}-${randomSuffix}`,
+        timestamp: new Date().toISOString(),
+        type: eventType,
+        source: source,
+        timeSpent: Math.floor(45 + Math.random() * 90), // random duration
+        details: message
+      };
+      setSystemEvents(prev => [newEvent, ...prev]);
+    }
   };
 
   // Google Sign In & Get Gmail Token
@@ -1491,11 +1776,16 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
       const res = await fetch("/api/prius/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accessToken: cachedToken })
+        body: JSON.stringify({ accessToken: token })
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || "Erro de conexão com o servidor Prius.");
+        if (res.status === 401 || data.error === "UNAUTHENTICATED") {
+          setCachedToken(null);
+          localStorage.removeItem('boss_gmail_token');
+          addSystemLog('warning', 'Sessão Google expirada ou inválida. Por favor, conecte sua conta Google novamente.', 'gmail_sync');
+        }
+        throw new Error(data.message || data.error || "Erro de conexão com o servidor Prius.");
       }
       setPriusState({
         status: 'conectado',
@@ -1545,11 +1835,16 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
       const res = await fetch("/api/recorte-digital/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accessToken: cachedToken, serviceId })
+        body: JSON.stringify({ accessToken: token, serviceId })
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || "Erro de conexão.");
+        if (res.status === 401 || data.error === "UNAUTHENTICATED") {
+          setCachedToken(null);
+          localStorage.removeItem('boss_gmail_token');
+          addSystemLog('warning', 'Sessão Google expirada ou inválida. Por favor, conecte sua conta Google novamente.', 'gmail_sync');
+        }
+        throw new Error(data.message || data.error || "Erro de conexão.");
       }
       setRecorteStates(prev => ({
         ...prev,
@@ -1578,6 +1873,393 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
       addSystemLog('error', `Falha de integração ${serviceName}: ${err.message}`, 'gmail_sync');
     }
   };
+
+  // --- Prius & Recorte Digital Conferidor Frontend Actions ---
+  const handleSyncPriusConferidor = async () => {
+    let token = cachedToken || localStorage.getItem('boss_gmail_token');
+    if (!token) {
+      addSystemLog('warning', 'Sessão Google expirada ou inválida. Por favor, conecte com o Google novamente.', 'gmail_sync');
+      return;
+    }
+    setPriusSyncing(true);
+    addSystemLog('info', 'Processando e-mail Prius e desmembrando em publicações...', 'gmail_sync');
+    try {
+      const res = await fetch("/api/prius/conferidor/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accessToken: token })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        if (res.status === 401 || data.error === "UNAUTHENTICATED") {
+          setCachedToken(null);
+          localStorage.removeItem('boss_gmail_token');
+          addSystemLog('warning', 'Sessão Google expirada ou inválida.', 'gmail_sync');
+        }
+        throw new Error(data.message || data.error || "Erro ao processar e-mail Prius.");
+      }
+      
+      setPriusSession({
+        emailSubject: data.emailSubject,
+        gmailMessageId: data.gmailMessageId,
+        publications: data.publications,
+        lastSync: new Date().toLocaleString('pt-BR')
+      });
+      setPriusSelectedIdx(data.publications && data.publications.length > 0 ? 0 : null);
+      addSystemLog('success', `Varredura concluída! ${data.publications?.length || 0} publicações desmembradas para o Prius.`, 'gmail_sync');
+    } catch (err: any) {
+      addSystemLog('error', `Erro na conferência Prius: ${err.message}`, 'gmail_sync');
+    } finally {
+      setPriusSyncing(false);
+    }
+  };
+
+  const handleSyncRecorteConferidor = async (serviceId: string, serviceName: string) => {
+    let token = cachedToken || localStorage.getItem('boss_gmail_token');
+    if (!token) {
+      addSystemLog('warning', 'Sessão Google expirada ou inválida. Por favor, conecte com o Google novamente.', 'gmail_sync');
+      return;
+    }
+    setRecorteSyncing(prev => ({ ...prev, [serviceId]: true }));
+    addSystemLog('info', `Processando e-mail do ${serviceName} e desmembrando em publicações...`, 'gmail_sync');
+    try {
+      const res = await fetch("/api/recorte-digital/conferidor/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accessToken: token, serviceId })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        if (res.status === 401 || data.error === "UNAUTHENTICATED") {
+          setCachedToken(null);
+          localStorage.removeItem('boss_gmail_token');
+          addSystemLog('warning', 'Sessão Google expirada ou inválida.', 'gmail_sync');
+        }
+        throw new Error(data.message || data.error || `Erro ao processar e-mail ${serviceName}.`);
+      }
+
+      setRecorteSessions(prev => ({
+        ...prev,
+        [serviceId]: {
+          emailSubject: data.emailSubject,
+          gmailMessageId: data.gmailMessageId,
+          publications: data.publications,
+          lastSync: new Date().toLocaleString('pt-BR')
+        }
+      }));
+      setRecorteSelectedIdx(data.publications && data.publications.length > 0 ? 0 : null);
+      addSystemLog('success', `Varredura concluída! ${data.publications?.length || 0} publicações desmembradas para o ${serviceName}.`, 'gmail_sync');
+    } catch (err: any) {
+      addSystemLog('error', `Erro na conferência ${serviceName}: ${err.message}`, 'gmail_sync');
+    } finally {
+      setRecorteSyncing(prev => ({ ...prev, [serviceId]: false }));
+    }
+  };
+
+  const handleModifyEmailStatus = async (gmailMessageId: string, removeLabelIds: string[], actionName: string) => {
+    let token = cachedToken || localStorage.getItem('boss_gmail_token');
+    if (!token) {
+      addSystemLog('warning', 'Sessão Google inválida para modificar e-mail.', 'gmail_sync');
+      return;
+    }
+    if (!gmailMessageId) {
+      addSystemLog('warning', 'Nenhum e-mail carregado para realizar esta ação.', 'gmail_sync');
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/gmail-messages/batch-modify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accessToken: token,
+          messageIds: [gmailMessageId],
+          removeLabelIds
+        })
+      });
+      if (res.ok) {
+        addSystemLog('success', `E-mail original: ${actionName} com sucesso no Gmail!`, 'gmail_sync');
+      } else {
+        const err = await res.json();
+        throw new Error(err.error || "Erro desconhecido ao modificar.");
+      }
+    } catch (err: any) {
+      addSystemLog('error', `Falha ao ${actionName.toLowerCase()} e-mail: ${err.message}`, 'gmail_sync');
+    }
+  };
+
+  const handleGenerateConferidorReport = (publications: any[], sourceTitle: string) => {
+    if (!publications || publications.length === 0) {
+      addSystemLog('warning', 'Nenhuma publicação carregada para gerar relatório.', 'gmail_sync');
+      return;
+    }
+
+    const total = publications.length;
+    const pending = publications.filter(p => p.status === 'Pendente').length;
+    const conferred = publications.filter(p => p.status === 'Conferida').length;
+    const delegated = publications.filter(p => p.status === 'Delegada').length;
+    const ignored = publications.filter(p => p.status === 'Ignorada').length;
+    const duplicates = publications.filter(p => p.status === 'Duplicada').length;
+
+    const reportContent = `
+========================================
+RELATÓRIO DE CONFERÊNCIA - ${sourceTitle.toUpperCase()}
+Gerado em: ${new Date().toLocaleString('pt-BR')}
+========================================
+
+ESTATÍSTICAS GERAIS:
+- Total de Publicações: ${total}
+- Conferidas sem Prazo: ${conferred}
+- Delegadas (com Prazo no Todoist): ${delegated}
+- Ignoradas / Sem Ação: ${ignored}
+- Duplicadas Identificadas: ${duplicates}
+- Pendentes de Análise: ${pending}
+
+DETALHAMENTO DE ITENS CONFERIDOS E DELEGADOS:
+${publications.map((p, idx) => {
+  return `\n[${idx + 1}/${total}] Processo CNJ: ${p.cnj || 'Não identificado'}
+- Tribunal/Órgão: ${p.tribunal || 'N/A'} - ${p.orgao || 'N/A'}
+- Cliente: ${p.cliente || 'Não informado'}
+- Status: ${p.status}
+- Data Divulgação/Publicação: ${p.dataDivulgacao || p.dataPublicacao || 'N/A'}
+${p.todoistTaskId ? `- ID Tarefa Todoist: ${p.todoistTaskId}\n- Link Todoist: https://todoist.com/showTask?id=${p.todoistTaskId}` : ''}
+`;
+}).join('')}
+========================================
+BOSS JUDICIAL - CONTROLADORIA INTELIGENTE
+`;
+
+    // Download file
+    const element = document.createElement("a");
+    const file = new Blob([reportContent], { type: 'text/plain;charset=utf-8' });
+    element.href = URL.createObjectURL(file);
+    element.download = `relatorio-conferencia-${sourceTitle.toLowerCase().replace(/\s+/g, '-')}-${new Date().toISOString().split('T')[0]}.txt`;
+    document.body.appendChild(element);
+    element.click();
+    document.body.removeChild(element);
+    addSystemLog('success', 'Relatório de conferência exportado com sucesso!', 'gmail_sync');
+  };
+
+  const [delegationTitle, setDelegationTitle] = useState('');
+  const [delegationDesc, setDelegationDesc] = useState('');
+  const [delegationDate, setDelegationDate] = useState('');
+  const [delegationPriority, setDelegationPriority] = useState(2);
+  const [delegationLabels, setDelegationLabels] = useState<string[]>([]);
+  const [delegationSubtasks, setDelegationSubtasks] = useState<string[]>([
+    "Protocolar no prazo de segurança",
+    "Atualizar sistema interno",
+    "Notificar o cliente principal"
+  ]);
+  const [delegationComment, setDelegationComment] = useState('');
+
+  const prefillDelegationForm = (pub: any) => {
+    if (!pub) return;
+    setDelegationTitle(`PRAZO: ${pub.cnj || 'Sem CNJ'} - ${pub.cliente || 'Sem cliente'} (${pub.tribunal || 'Tribunal'})`);
+    setDelegationDesc(`Publicado em: ${pub.dataPublicacao || pub.dataDivulgacao}\nTribunal: ${pub.tribunal}\nÓrgão: ${pub.orgao}\nCliente: ${pub.cliente}`);
+    setDelegationDate('');
+    setDelegationComment(`Segue teor integral da publicação para conferência:\n\n${pub.textClean}`);
+    
+    // Auto-search in Todoist
+    if (todoistToken && pub.cnj) {
+      searchTodoistTasks({ processNumber: pub.cnj }, todoistToken);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'consulta.prius' && priusSession && priusSelectedIdx !== null) {
+      const pub = priusSession.publications[priusSelectedIdx];
+      if (pub) prefillDelegationForm(pub);
+    }
+  }, [priusSelectedIdx, activeTab]);
+
+  useEffect(() => {
+    if (activeTab === 'consulta.recorte-digital' && activeRecorteServiceId) {
+      const session = recorteSessions[activeRecorteServiceId];
+      if (session && recorteSelectedIdx !== null) {
+        const pub = session.publications[recorteSelectedIdx];
+        if (pub) prefillDelegationForm(pub);
+      }
+    }
+  }, [recorteSelectedIdx, activeRecorteServiceId, activeTab]);
+
+  const handleConfirmDelegation = async (source: 'prius' | 'recorte') => {
+    if (!todoistToken) {
+      addSystemLog('warning', 'Token de API do Todoist não configurado.');
+      return;
+    }
+
+    const session = source === 'prius' ? priusSession : recorteSessions[activeRecorteServiceId];
+    const idx = source === 'prius' ? priusSelectedIdx : recorteSelectedIdx;
+    if (!session || idx === null) return;
+    
+    const pub = session.publications[idx];
+    if (!pub) return;
+
+    setTodoistSyncing(true);
+    try {
+      // 1. Create primary task
+      const taskPayload: any = {
+        content: delegationTitle,
+        description: delegationDesc,
+        priority: delegationPriority,
+        labels: [...delegationLabels, 'prazo-judicial', source],
+      };
+      if (todoistTaskProject) taskPayload.project_id = todoistTaskProject;
+      if (todoistTaskSection) taskPayload.section_id = todoistTaskSection;
+      if (delegationDate) taskPayload.due_date = delegationDate;
+
+      const createRes = await fetch("/api/todoist/tasks", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-todoist-token": todoistToken
+        },
+        body: JSON.stringify(taskPayload)
+      });
+
+      if (!createRes.ok) {
+        throw new Error(`Erro ao criar tarefa: ${await createRes.text()}`);
+      }
+
+      const createdTask = await createRes.json();
+      const taskId = createdTask.id;
+      const taskUrl = createdTask.url || `https://todoist.com/showTask?id=${taskId}`;
+
+      // 2. Add description / content comment
+      if (delegationComment) {
+        await fetch("/api/todoist/comments", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-todoist-token": todoistToken
+          },
+          body: JSON.stringify({
+            task_id: taskId,
+            content: delegationComment
+          })
+        });
+      }
+
+      // 3. Create subtasks
+      for (const sub of delegationSubtasks) {
+        if (!sub.trim()) continue;
+        await fetch("/api/todoist/tasks", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-todoist-token": todoistToken
+          },
+          body: JSON.stringify({
+            content: sub,
+            parent_id: taskId,
+            project_id: todoistTaskProject
+          })
+        });
+      }
+
+      // 4. Save link in boss_cnj_todoist_links
+      const cleanCnj = (pub.cnj || '').replace(/\s+/g, '');
+      if (cleanCnj) {
+        const savedLinksRaw = localStorage.getItem('boss_cnj_todoist_links');
+        const savedLinks = savedLinksRaw ? JSON.parse(savedLinksRaw) : {};
+        savedLinks[cleanCnj] = taskId;
+        localStorage.setItem('boss_cnj_todoist_links', JSON.stringify(savedLinks));
+      }
+
+      // 5. Update publication status in state
+      const updatedPubs = [...session.publications];
+      updatedPubs[idx] = {
+        ...pub,
+        status: 'Delegada',
+        todoistTaskId: taskId,
+        todoistTaskUrl: taskUrl
+      };
+
+      if (source === 'prius') {
+        setPriusSession({ ...session, publications: updatedPubs });
+        addSystemLog('success', `Prazo delegado com sucesso! Tarefa vinculada criada no Todoist.`, 'gmail_sync');
+        // Advance to next pending item
+        const nextPending = updatedPubs.findIndex((p, i) => i > idx && p.status === 'Pendente');
+        if (nextPending !== -1) {
+          setPriusSelectedIdx(nextPending);
+        } else {
+          const firstPending = updatedPubs.findIndex(p => p.status === 'Pendente');
+          if (firstPending !== -1) setPriusSelectedIdx(firstPending);
+        }
+      } else {
+        setRecorteSessions(prev => ({
+          ...prev,
+          [activeRecorteServiceId]: {
+            ...session,
+            publications: updatedPubs
+          }
+        }));
+        addSystemLog('success', `Prazo delegado com sucesso! Tarefa vinculada criada no Todoist.`, 'gmail_sync');
+        // Advance to next pending item
+        const nextPending = updatedPubs.findIndex((p, i) => i > idx && p.status === 'Pendente');
+        if (nextPending !== -1) {
+          setRecorteSelectedIdx(nextPending);
+        } else {
+          const firstPending = updatedPubs.findIndex(p => p.status === 'Pendente');
+          if (firstPending !== -1) setRecorteSelectedIdx(firstPending);
+        }
+      }
+
+    } catch (err: any) {
+      addSystemLog('error', `Falha ao delegar prazo: ${err.message}`, 'gmail_sync');
+    } finally {
+      setTodoistSyncing(false);
+    }
+  };
+
+  const handleActionNoDeadline = (source: 'prius' | 'recorte', status: 'Conferida' | 'Ignorada' | 'Duplicada' | 'Revisar depois' | 'Delegada') => {
+    const session = source === 'prius' ? priusSession : recorteSessions[activeRecorteServiceId];
+    const idx = source === 'prius' ? priusSelectedIdx : recorteSelectedIdx;
+    if (!session || idx === null) return;
+
+    const pub = session.publications[idx];
+    if (!pub) return;
+
+    const updatedPubs = [...session.publications];
+    updatedPubs[idx] = {
+      ...pub,
+      status: status
+    };
+
+    if (source === 'prius') {
+      setPriusSession({ ...session, publications: updatedPubs });
+      addSystemLog('success', `Publicação marcada como "${status}" com sucesso.`, 'gmail_sync');
+      
+      // Auto-advance
+      const nextPending = updatedPubs.findIndex((p, i) => i > idx && p.status === 'Pendente');
+      if (nextPending !== -1) {
+        setPriusSelectedIdx(nextPending);
+      } else {
+        const firstPending = updatedPubs.findIndex(p => p.status === 'Pendente');
+        if (firstPending !== -1) setPriusSelectedIdx(firstPending);
+      }
+    } else {
+      setRecorteSessions(prev => ({
+        ...prev,
+        [activeRecorteServiceId]: {
+          ...session,
+          publications: updatedPubs
+        }
+      }));
+      addSystemLog('success', `Publicação marcada como "${status}" com sucesso.`, 'gmail_sync');
+      
+      // Auto-advance
+      const nextPending = updatedPubs.findIndex((p, i) => i > idx && p.status === 'Pendente');
+      if (nextPending !== -1) {
+        setRecorteSelectedIdx(nextPending);
+      } else {
+        const firstPending = updatedPubs.findIndex(p => p.status === 'Pendente');
+        if (firstPending !== -1) setRecorteSelectedIdx(firstPending);
+      }
+    }
+  };
+
+  // --- End Prius & Recorte Digital Conferidor Frontend Actions ---
 
   // General Sincronização Automática - Background & Progressive & Parallelized
   const triggerGeneralUpdate = async () => {
@@ -1624,27 +2306,42 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
     }
   }, [user, cachedToken, hasAutoUpdated]);
 
+  // Synchronize global email stats on token mount/change
+  useEffect(() => {
+    if (cachedToken) {
+      syncGlobalGmailStats(cachedToken);
+    }
+  }, [cachedToken]);
+
   // Trigger loading of grouped pushes when entering a specific push sub-dashboard
   useEffect(() => {
     if (activeTab.startsWith('pushes/push-')) {
-      const subRouteId = activeTab.replace('pushes/push-', '');
+      const isControladoriaWorkspace = activeTab.endsWith('/atualizar-controladoria');
+      const subRouteId = isControladoriaWorkspace 
+        ? activeTab.replace('pushes/push-', '').replace('/atualizar-controladoria', '') 
+        : activeTab.replace('pushes/push-', '');
       const source = PUSH_SOURCES.find(s => s.id === subRouteId);
       if (source) {
-        setGroupedPushes(null);
-        setGroupedPushesSearch('');
-        setGroupedPushesPage(1);
-        setExpandedGroupCNJ(null);
-        fetchGroupedPushes(source.sender, 1, '');
+        if (lastActivePushSourceIdRef.current !== source.id) {
+          lastActivePushSourceIdRef.current = source.id;
+          setGroupedPushes(null);
+          setGroupedPushesSearch('');
+          setGroupedPushesPage(1);
+          setExpandedGroupCNJ(null);
+          fetchGroupedPushes(source.sender, 1, '');
+        }
       }
+    } else {
+      lastActivePushSourceIdRef.current = null;
     }
   }, [activeTab, cachedToken]);
 
   // Trigger loading of Prius on-demand when entering its tab
   useEffect(() => {
-    if (activeTab === 'consulta.prius' && cachedToken && priusState.status === 'desconectado') {
+    if (activeTab === 'consulta.prius' && cachedToken && priusState.status === 'desconectado' && !priusState.isLoading) {
       syncPrius();
     }
-  }, [activeTab, cachedToken, priusState.status]);
+  }, [activeTab, cachedToken, priusState.status, priusState.isLoading]);
 
   // Trigger loading of Recorte Digital services on-demand when entering its tab
   useEffect(() => {
@@ -1657,7 +2354,7 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
       ];
       services.forEach(service => {
         const sState = recorteStates[service.id];
-        if (!sState || sState.status === 'desconectado') {
+        if (!sState || (sState.status === 'desconectado' && !sState.isLoading)) {
           syncRecorteService(service.id, service.name);
         }
       });
@@ -1687,7 +2384,7 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
       const res = await fetch("/api/gmail-sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accessToken: cachedToken })
+        body: JSON.stringify({ accessToken: token })
       });
 
       if (!res.ok) {
@@ -2149,11 +2846,26 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
                 <div className="flex items-center gap-2">
                   <div className="hidden lg:block text-right">
                     <span className="block text-xs font-semibold text-slate-900">{user.email}</span>
-                    <span className="text-[10px] text-emerald-600 font-mono">FIRESTORE SYNC ATIVO</span>
+                    {cachedToken ? (
+                      <span className="text-[10px] text-emerald-600 font-mono">FIRESTORE & GMAIL ATIVOS</span>
+                    ) : (
+                      <span className="text-[10px] text-amber-600 font-mono">GMAIL DESCONECTADO</span>
+                    )}
                   </div>
                   <div className="h-9 w-9 bg-blue-100 border border-blue-200 rounded-full flex items-center justify-center font-bold text-sm text-blue-700">
                     {user.email?.[0].toUpperCase() || "A"}
                   </div>
+                  {!cachedToken && (
+                    <button
+                      id="btn-auth-reconnect"
+                      onClick={handleGoogleLogin}
+                      className="bg-amber-500 hover:bg-amber-600 text-white font-bold text-[11px] px-3 py-1.5 rounded-lg transition flex items-center gap-1.5 shadow-sm"
+                      title="Reconectar sua Conta Google para sincronizar o Gmail"
+                    >
+                      <RefreshCw className="h-3 w-3 animate-pulse" />
+                      Conectar Gmail
+                    </button>
+                  )}
                   <button 
                     id="btn-auth-logout"
                     onClick={handleSignOut}
@@ -2219,7 +2931,50 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
         <nav className="hidden md:flex w-60 bg-white border-r border-slate-200 flex-col p-4 shrink-0 justify-between">
           <div className="space-y-6">
             <div className="space-y-1">
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 px-3">Principal</p>
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 px-3">Centro de Comando</p>
+              
+              <button 
+                id="btn-nav-sidebar-dashboard-principal"
+                onClick={() => handleTabChange('dashboard-principal')}
+                className={`w-full flex items-center gap-3 px-3 py-2 text-xs font-semibold rounded-md transition ${
+                  activeTab === 'dashboard-principal' 
+                    ? 'bg-blue-50 text-blue-700 font-bold' 
+                    : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full transition-all ${activeTab === 'dashboard-principal' ? 'bg-blue-600 scale-100' : 'bg-transparent scale-0'}`}></span>
+                Dashboard Principal
+              </button>
+
+              <button 
+                id="btn-nav-sidebar-central-emails"
+                onClick={() => handleTabChange('central-emails')}
+                className={`w-full flex items-center gap-3 px-3 py-2 text-xs font-semibold rounded-md transition ${
+                  activeTab === 'central-emails' 
+                    ? 'bg-blue-50 text-blue-700 font-bold' 
+                    : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full transition-all ${activeTab === 'central-emails' ? 'bg-blue-600 scale-100' : 'bg-transparent scale-0'}`}></span>
+                Central Global de Emails
+              </button>
+
+              <button 
+                id="btn-nav-sidebar-intensivo-gmail"
+                onClick={() => handleTabChange('intensivo-gmail')}
+                className={`w-full flex items-center gap-3 px-3 py-2 text-xs font-semibold rounded-md transition ${
+                  activeTab === 'intensivo-gmail' 
+                    ? 'bg-blue-50 text-amber-700 font-bold' 
+                    : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full transition-all ${activeTab === 'intensivo-gmail' ? 'bg-amber-600 scale-100' : 'bg-transparent scale-0'}`}></span>
+                Intensivo Gmail Zero (30m)
+              </button>
+            </div>
+
+            <div className="space-y-1">
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 px-3">Controladoria & BI</p>
               
               <button 
                 id="btn-nav-sidebar-dashboard"
@@ -2231,7 +2986,20 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
                 }`}
               >
                 <span className={`w-1.5 h-1.5 rounded-full transition-all ${activeTab === 'dashboard' ? 'bg-blue-600 scale-100' : 'bg-transparent scale-0'}`}></span>
-                Dashboard
+                Dashboard de Publicações
+              </button>
+
+              <button 
+                id="btn-nav-sidebar-bi"
+                onClick={() => handleTabChange('bi-dashboard')}
+                className={`w-full flex items-center gap-3 px-3 py-2 text-xs font-semibold rounded-md transition ${
+                  activeTab === 'bi-dashboard' 
+                    ? 'bg-blue-50 text-indigo-700 font-bold border-l-2 border-l-indigo-600 pl-2' 
+                    : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full transition-all ${activeTab === 'bi-dashboard' ? 'bg-indigo-600 scale-100' : 'bg-transparent scale-0'}`}></span>
+                Legal Operations BI
               </button>
 
               <button 
@@ -2304,6 +3072,19 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
               </button>
 
               <button 
+                id="btn-nav-sidebar-djen"
+                onClick={() => handleTabChange('consulta.djen')}
+                className={`w-full flex items-center gap-3 px-3 py-2 text-xs font-semibold rounded-md transition ${
+                  activeTab === 'consulta.djen' 
+                    ? 'bg-blue-50 text-blue-700 font-bold' 
+                    : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full transition-all ${activeTab === 'consulta.djen' ? 'bg-blue-600 scale-100' : 'bg-transparent scale-0'}`}></span>
+                Painel DJEN Nacional
+              </button>
+
+              <button 
                 id="btn-nav-sidebar-configuracoes"
                 onClick={() => handleTabChange('configuracoes.gmail')}
                 className={`w-full flex items-center gap-3 px-3 py-2 text-xs font-semibold rounded-md transition ${
@@ -2363,6 +3144,72 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
               Ativar Nuvem & Gmail
             </button>
           </div>
+        )}
+
+        {/* Legal Operations BI Dashboard Tab */}
+        {activeTab === 'bi-dashboard' && (
+          <div className="animate-fade-in space-y-6">
+            <LegalOpsBIDashboard
+              publications={publications}
+              systemLogs={systemLogs}
+              pushesData={pushesData}
+              addSystemLog={addSystemLog}
+              externalEvents={systemEvents}
+              onAddExternalEvent={(ev) => setSystemEvents(prev => [
+                { id: `live-event-${Date.now()}-${Math.floor(Math.random() * 1000)}`, timestamp: new Date().toISOString(), ...ev },
+                ...prev
+              ])}
+            />
+          </div>
+        )}
+
+        {/* 0.1 TAB: DASHBOARD PRINCIPAL */}
+        {activeTab === 'dashboard-principal' && (
+          <DashboardPrincipalView 
+            emailRules={emailRules}
+            globalStats={globalEmailStats}
+            publications={publications}
+            onTabChange={handleTabChange}
+            cachedToken={cachedToken}
+            onTriggerSync={triggerGeneralUpdate}
+            syncLoading={isGeneralUpdating}
+            onForceSyncStats={() => syncGlobalGmailStats(cachedToken, true)}
+            statsLoading={isEmailStatsLoading}
+          />
+        )}
+
+        {/* 0.2 TAB: CENTRAL GLOBAL DE EMAILS */}
+        {activeTab === 'central-emails' && (
+          <CentralGlobalEmailsView 
+            cachedToken={cachedToken}
+            emailRules={emailRules}
+            onRulesUpdated={setEmailRules}
+            userId={user ? user.uid : "demo-user"}
+            onAddSystemLog={(status, message, type) => addSystemLog(status, message, type || 'manual_add')}
+            onIncrementStats={(archived, deleted) => setGlobalEmailStats(prev => ({
+              ...prev,
+              archivedToday: prev.archivedToday + archived,
+              deletedToday: prev.deletedToday + deleted,
+              inboxCount: Math.max(0, prev.inboxCount - (archived + deleted))
+            }))}
+          />
+        )}
+
+        {/* 0.3 TAB: INTENSIVO GMAIL ZERO */}
+        {activeTab === 'intensivo-gmail' && (
+          <IntensivoGmailZeroView 
+            cachedToken={cachedToken}
+            emailRules={emailRules}
+            onRulesUpdated={setEmailRules}
+            onAddSystemLog={(status, message, type) => addSystemLog(status, message, type || 'manual_add')}
+            onIncrementStats={(archived, deleted) => setGlobalEmailStats(prev => ({
+              ...prev,
+              archivedToday: prev.archivedToday + archived,
+              deletedToday: prev.deletedToday + deleted,
+              inboxCount: Math.max(0, prev.inboxCount - (archived + deleted))
+            }))}
+            onTabChange={handleTabChange}
+          />
         )}
 
         {/* 1. TAB: DASHBOARD */}
@@ -3028,24 +3875,26 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
                 <p className="text-xs text-red-100">Varredura e classificação inteligente de e-mails jurídicos utilizando Inteligência Artificial em tempo real.</p>
               </div>
 
-              <button
-                id="btn-sync-inbox-main"
-                onClick={syncGmailInbox}
-                disabled={isSyncingGmail}
-                className="bg-white hover:bg-red-50 text-red-700 font-bold text-xs py-3 px-5 rounded-xl flex items-center justify-center gap-2 transition shadow-lg shrink-0 disabled:opacity-75"
-              >
-                {isSyncingGmail ? (
-                  <>
-                    <RefreshCw className="h-4 w-4 animate-spin" />
-                    Sintonizando & Varrendo...
-                  </>
-                ) : (
-                  <>
-                    <RefreshCw className="h-4 w-4" />
-                    Varrer Caixa Gmail Agora
-                  </>
-                )}
-              </button>
+              {user && cachedToken && (
+                <button
+                  id="btn-sync-inbox-main"
+                  onClick={syncGmailInbox}
+                  disabled={isSyncingGmail}
+                  className="bg-white hover:bg-red-50 text-red-700 font-bold text-xs py-3 px-5 rounded-xl flex items-center justify-center gap-2 transition shadow-lg shrink-0 disabled:opacity-75"
+                >
+                  {isSyncingGmail ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 animate-spin" />
+                      Sintonizando & Varrendo...
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="h-4 w-4" />
+                      Varrer Caixa Gmail Agora
+                    </>
+                  )}
+                </button>
+              )}
             </div>
 
             {/* Error or auth missing helper */}
@@ -3060,77 +3909,97 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
               </div>
             )}
 
-            {/* Results workspace */}
-            <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-6">
-              <div className="flex justify-between items-center flex-wrap gap-2">
-                <div>
-                  <h3 className="font-bold text-slate-800 text-sm">E-mails Jurídicos Identificados com IA</h3>
-                  <p className="text-slate-500 text-xs">Exibindo os e-mails classificados pela IA como intimação judicial na caixa.</p>
+            {!user || !cachedToken ? (
+              <div className="bg-gradient-to-br from-red-50 to-white border border-red-200 rounded-2xl p-8 text-center space-y-4 max-w-lg mx-auto shadow-sm">
+                <Mail className="h-12 w-12 text-red-400 mx-auto" />
+                <h3 className="text-lg font-bold text-slate-800">
+                  {!user ? "Conexão do Gmail Necessária" : "Sessão do Gmail Expirada ou Ausente"}
+                </h3>
+                <p className="text-slate-600 text-xs leading-relaxed">
+                  {!user 
+                    ? "Para realizar a varredura inteligente e sincronização em tempo real de intimações da sua caixa de entrada, conecte sua conta Google."
+                    : "Sua sessão de conexão do Gmail expirou ou não está ativa. Re-conecte sua conta do Google para permitir que o Sincronizador de Intimações consulte sua caixa de entrada."}
+                </p>
+                <button
+                  onClick={handleGoogleLogin}
+                  className="bg-red-600 hover:bg-red-700 text-white font-bold text-xs py-3 px-6 rounded-xl transition shadow-lg shadow-red-600/15"
+                >
+                  {!user ? "Conectar Conta Google via Firebase" : "Reconectar Conta Google"}
+                </button>
+              </div>
+            ) : (
+              /* Results workspace */
+              <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-6">
+                <div className="flex justify-between items-center flex-wrap gap-2">
+                  <div>
+                    <h3 className="font-bold text-slate-800 text-sm">E-mails Jurídicos Identificados com IA</h3>
+                    <p className="text-slate-500 text-xs">Exibindo os e-mails classificados pela IA como intimação judicial na caixa.</p>
+                  </div>
+                  {gmailSyncResults.length > 0 && (
+                    <button
+                      onClick={importAllGmailPublications}
+                      className="bg-red-600 hover:bg-red-700 text-white font-bold text-xs py-2 px-4 rounded-xl shadow transition flex items-center gap-1.5"
+                    >
+                      <Download className="h-4 w-4" /> Importar {gmailSyncResults.length} Encontrados
+                    </button>
+                  )}
                 </div>
-                {gmailSyncResults.length > 0 && (
-                  <button
-                    onClick={importAllGmailPublications}
-                    className="bg-red-600 hover:bg-red-700 text-white font-bold text-xs py-2 px-4 rounded-xl shadow transition flex items-center gap-1.5"
-                  >
-                    <Download className="h-4 w-4" /> Importar {gmailSyncResults.length} Encontrados
-                  </button>
+
+                {isSyncingGmail ? (
+                  <div className="text-center py-16 space-y-4">
+                    <div className="h-10 w-10 animate-spin rounded-full border-4 border-slate-200 border-t-red-600 mx-auto" />
+                    <div>
+                      <h4 className="font-semibold text-slate-700 text-sm">Varrendo caixa postal e lendo e-mails...</h4>
+                      <p className="text-slate-500 text-xs">Nossa IA está lendo cada teor e filtrando números de processos e prazos reais.</p>
+                    </div>
+                  </div>
+                ) : gmailSyncResults.length === 0 ? (
+                  <div className="border-2 border-dashed border-slate-200 rounded-2xl p-12 text-center space-y-3">
+                    <Mail className="h-8 w-8 text-slate-300 mx-auto" />
+                    <h4 className="font-bold text-slate-700 text-sm">Sem dados de varredura ativa</h4>
+                    <p className="text-slate-500 text-xs">Clique no botão superior de varredura para buscar correspondências reais na caixa de entrada {user?.email || ""}.</p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-slate-100">
+                    {gmailSyncResults.map((pub) => (
+                      <div key={pub.id} className="py-5 flex flex-col md:flex-row justify-between gap-4 items-start first:pt-0 last:pb-0">
+                        <div className="space-y-2 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-mono text-[9px] font-bold text-red-700 bg-red-50 border border-red-100 px-2 py-0.5 rounded">
+                              {pub.processNumber}
+                            </span>
+                            <span className="text-[10px] text-slate-400 font-mono">
+                              Recebido em: {new Date(pub.subpoenaDate).toLocaleDateString('pt-BR')}
+                            </span>
+                            <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${
+                              pub.urgencyLevel === 'alta' ? 'bg-red-100 text-red-800' : 
+                              pub.urgencyLevel === 'media' ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-600'
+                            }`}>
+                              Urguência {pub.urgencyLevel}
+                            </span>
+                          </div>
+                          <h4 className="font-bold text-slate-800 text-sm">{pub.title}</h4>
+                          <p className="text-slate-600 text-xs line-clamp-2 leading-relaxed bg-slate-50 p-2.5 rounded-lg border border-slate-100">
+                            {pub.content}
+                          </p>
+                          <div className="text-[11px] text-amber-700 font-medium">
+                            <strong>🚨 Providência sugerida com IA:</strong> {pub.actionRequired}
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => importGmailPublication(pub)}
+                          className="bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs py-2 px-3 rounded-lg flex items-center gap-1 shrink-0 transition"
+                        >
+                          <PlusCircle className="h-3.5 w-3.5" />
+                          Importar para Painel
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
-
-              {isSyncingGmail ? (
-                <div className="text-center py-16 space-y-4">
-                  <div className="h-10 w-10 animate-spin rounded-full border-4 border-slate-200 border-t-red-600 mx-auto" />
-                  <div>
-                    <h4 className="font-semibold text-slate-700 text-sm">Varrendo caixa postal e lendo e-mails...</h4>
-                    <p className="text-slate-500 text-xs">Nossa IA está lendo cada teor e filtrando números de processos e prazos reais.</p>
-                  </div>
-                </div>
-              ) : gmailSyncResults.length === 0 ? (
-                <div className="border-2 border-dashed border-slate-200 rounded-2xl p-12 text-center space-y-3">
-                  <Mail className="h-8 w-8 text-slate-300 mx-auto" />
-                  <h4 className="font-bold text-slate-700 text-sm">Sem dados de varredura ativa</h4>
-                  <p className="text-slate-500 text-xs">Clique no botão superior de varredura para buscar correspondências reais na caixa de entrada {user?.email || ""}.</p>
-                </div>
-              ) : (
-                <div className="divide-y divide-slate-100">
-                  {gmailSyncResults.map((pub) => (
-                    <div key={pub.id} className="py-5 flex flex-col md:flex-row justify-between gap-4 items-start first:pt-0 last:pb-0">
-                      <div className="space-y-2 flex-1">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-mono text-[9px] font-bold text-red-700 bg-red-50 border border-red-100 px-2 py-0.5 rounded">
-                            {pub.processNumber}
-                          </span>
-                          <span className="text-[10px] text-slate-400 font-mono">
-                            Recebido em: {new Date(pub.subpoenaDate).toLocaleDateString('pt-BR')}
-                          </span>
-                          <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${
-                            pub.urgencyLevel === 'alta' ? 'bg-red-100 text-red-800' : 
-                            pub.urgencyLevel === 'media' ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-600'
-                          }`}>
-                            Urguência {pub.urgencyLevel}
-                          </span>
-                        </div>
-                        <h4 className="font-bold text-slate-800 text-sm">{pub.title}</h4>
-                        <p className="text-slate-600 text-xs line-clamp-2 leading-relaxed bg-slate-50 p-2.5 rounded-lg border border-slate-100">
-                          {pub.content}
-                        </p>
-                        <div className="text-[11px] text-amber-700 font-medium">
-                          <strong>🚨 Providência sugerida com IA:</strong> {pub.actionRequired}
-                        </div>
-                      </div>
-
-                      <button
-                        onClick={() => importGmailPublication(pub)}
-                        className="bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs py-2 px-3 rounded-lg flex items-center gap-1 shrink-0 transition"
-                      >
-                        <PlusCircle className="h-3.5 w-3.5" />
-                        Importar para Painel
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+            )}
           </div>
         )}
 
@@ -3430,18 +4299,22 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
                 </div>
 
                 {/* Authentication Guard */}
-                {!user ? (
+                {!user || !cachedToken ? (
                   <div className="bg-gradient-to-br from-purple-50 to-white border border-purple-200 rounded-2xl p-8 text-center space-y-4 max-w-lg mx-auto">
                     <Mail className="h-12 w-12 text-purple-400 mx-auto" />
-                    <h3 className="text-lg font-bold text-slate-800">Conexão do Gmail Necessária</h3>
+                    <h3 className="text-lg font-bold text-slate-800">
+                      {!user ? "Conexão do Gmail Necessária" : "Sessão do Gmail Expirada ou Ausente"}
+                    </h3>
                     <p className="text-slate-600 text-xs leading-relaxed">
-                      Para realizar a consulta real em tempo real dos PUSHes processuais na sua caixa de entrada, você precisa conectar sua conta Google. Isto permite que o Portal BOSS liste de forma segura apenas os remetentes dos tribunais.
+                      {!user 
+                        ? "Para realizar a consulta real em tempo real dos PUSHes processuais na sua caixa de entrada, você precisa conectar sua conta Google. Isto permite que o Portal BOSS liste de forma segura apenas os remetentes dos tribunais."
+                        : "Sua sessão de conexão com os servidores do Gmail expirou ou não foi localizada. Conecte sua conta Google novamente para reativar o monitoramento em tempo real."}
                     </p>
                     <button
                       onClick={handleGoogleLogin}
                       className="bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs py-3 px-6 rounded-xl transition shadow-lg shadow-purple-600/15"
                     >
-                      Conectar Conta Google via Firebase
+                      {!user ? "Conectar Conta Google via Firebase" : "Reconectar Conta Google"}
                     </button>
                   </div>
                 ) : (
@@ -4088,235 +4961,961 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
         {/* 9. TAB: CONSULTA PRIUS */}
         {activeTab === 'consulta.prius' && (
           <div className="space-y-6 animate-fade-in text-slate-800">
-            {/* Page Header */}
-            <div className="border-b border-slate-200 pb-5">
-              <h1 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
-                <Compass className="h-6 w-6 text-blue-600" />
-                Consulta Prius via Gmail
-              </h1>
-              <p className="text-slate-500 text-xs mt-1">
-                Leitura e monitoramento de e-mails recebidos do sistema Prius diretamente do seu Gmail de forma segura.
-              </p>
+            {/* Header */}
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-200 pb-5">
+              <div>
+                <h1 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
+                  <Compass className="h-6 w-6 text-blue-600" />
+                  Conferidor Inteligente PRIUS
+                </h1>
+                <p className="text-slate-500 text-xs mt-1">
+                  Varredura de e-mails Prius no Gmail com desmembramento inteligente automático em publicações individuais conferíveis.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleSyncPriusConferidor()}
+                  disabled={priusSyncing}
+                  className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold text-xs py-2.5 px-4 rounded-xl shadow-sm transition flex items-center gap-1.5"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${priusSyncing ? 'animate-spin' : ''}`} />
+                  {priusSyncing ? 'Sincronizando...' : 'Sincronizar PRIUS'}
+                </button>
+                {priusSession && (
+                  <button
+                    onClick={() => handleGenerateConferidorReport(priusSession.publications, 'Conferidor Prius')}
+                    className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs py-2 px-4 rounded-xl border border-slate-200 transition flex items-center gap-1.5"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Exportar Relatório
+                  </button>
+                )}
+              </div>
             </div>
 
-            {/* Prius Integration Status Banner */}
-            {priusState.status === 'erro' ? (
-              <div className="bg-red-50 border border-red-200 text-red-800 p-4 rounded-xl text-xs flex items-center gap-3 animate-fade-in">
-                <AlertTriangle className="h-5 w-5 shrink-0 text-red-600" />
-                <div>
-                  <p className="font-bold">Erro de varredura no Gmail para o Prius.</p>
-                  <p className="mt-0.5 opacity-90 font-medium font-mono leading-relaxed">{priusState.error}</p>
-                </div>
-              </div>
-            ) : priusState.status === 'conectado' ? (
-              <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 p-4 rounded-xl text-xs flex items-center gap-3 animate-fade-in">
-                <CheckCircle className="h-5 w-5 shrink-0 text-emerald-600" />
-                <div>
-                  <p className="font-bold">Varredura do Prius via Gmail ativa e operacional.</p>
-                  <p className="mt-0.5 opacity-90 font-medium">Os dados de contagem e visualização de e-mails estão sincronizados com sua conta Google.</p>
-                </div>
-              </div>
-            ) : (
-              <div className="bg-blue-50 border border-blue-200 text-blue-800 p-4 rounded-xl text-xs flex items-center gap-3">
-                <Inbox className="h-5 w-5 shrink-0 text-blue-600 animate-pulse" />
-                <div>
-                  <p className="font-bold">Aguardando primeira sincronização.</p>
-                  <p className="mt-0.5 opacity-90 font-medium">Clique em "Sincronizar com Gmail" abaixo para iniciar a varredura real das publicações do Prius.</p>
-                </div>
-              </div>
-            )}
-
-            {/* Prius Card */}
-            <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden max-w-4xl">
-              <div className="p-6 border-b border-slate-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-slate-50/50">
-                <div className="space-y-1">
-                  <h2 className="font-bold text-slate-900 text-base">Painel de Monitoramento Prius</h2>
-                  <div className="text-xs text-slate-500 flex items-center gap-2 font-mono bg-white px-2 py-1 rounded border border-slate-100 w-fit">
-                    <span className="font-bold text-blue-600">Busca Gmail:</span>
-                    <span>in:inbox (from:(prius) OR subject:(prius) OR "PRIUS")</span>
+            {/* If no session has been synchronized yet */}
+            {!priusSession ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8 bg-white border border-slate-200 rounded-2xl p-8 shadow-sm">
+                <div className="space-y-5">
+                  <div className="bg-blue-50 text-blue-700 h-12 w-12 rounded-2xl flex items-center justify-center font-bold text-xl">
+                    ⚖️
                   </div>
-                </div>
-                <button
-                  onClick={() => syncPrius()}
-                  disabled={priusState.isLoading}
-                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs py-2.5 px-5 rounded-xl transition flex items-center gap-2 disabled:opacity-50"
-                >
-                  <RefreshCw className={`h-3.5 w-3.5 ${priusState.isLoading ? 'animate-spin' : ''}`} />
-                  {priusState.isLoading ? 'Sincronizando...' : 'Sincronizar com Gmail'}
-                </button>
-              </div>
-
-              <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Stats */}
-                <div className="space-y-4">
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">Dados do Inbox</h3>
-                  
-                  <div className="grid grid-cols-2 gap-4">
-                    {/* Total count card */}
-                    <button
-                      onClick={() => openGmailExplorer({ name: "Prius – Todos", query: `in:inbox (from:(prius) OR subject:(prius) OR "PRIUS")` }, 'all')}
-                      className="bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl p-4 text-left transition group active:scale-[0.98]"
-                    >
-                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Total de e-mails</span>
-                      <span className="text-3xl font-black text-slate-800 font-mono group-hover:text-blue-600 block mt-1">
-                        {priusState.totalImported}
-                      </span>
-                      <span className="text-[10px] text-blue-600 font-semibold flex items-center gap-1 mt-2">
-                        Ver todos <ExternalLink className="h-3 w-3" />
-                      </span>
-                    </button>
-
-                    {/* Unread count card */}
-                    <button
-                      onClick={() => openGmailExplorer({ name: "Prius – Não Lidos", query: `in:inbox (from:(prius) OR subject:(prius) OR "PRIUS")` }, 'unread')}
-                      className="bg-blue-50/50 hover:bg-blue-50 border border-blue-100 rounded-xl p-4 text-left transition group active:scale-[0.98]"
-                    >
-                      <span className="text-[10px] font-bold text-blue-500 uppercase tracking-wider block">E-mails não lidos</span>
-                      <span className="text-3xl font-black text-blue-700 font-mono block mt-1">
-                        {priusState.unreadCount || 0}
-                      </span>
-                      <span className="text-[10px] text-blue-600 font-semibold flex items-center gap-1 mt-2">
-                        Ver não lidos <ExternalLink className="h-3 w-3" />
-                      </span>
-                    </button>
-                  </div>
-
-                  <div className="text-[11px] text-slate-500 font-medium">
-                    Última sincronização: <span className="font-mono font-bold text-slate-700">{priusState.lastUpdated || 'Nunca'}</span>
+                  <h2 className="text-lg font-bold text-slate-900">Como funciona o Conferidor Inteligente?</h2>
+                  <p className="text-slate-600 text-xs leading-relaxed">
+                    O sistema busca em sua caixa postal o e-mail unificado do PRIUS e o decodifica por completo. Cada publicação, processo e intimação presente no e-mail é automaticamente desmembrada em um card exclusivo de conferência.
+                  </p>
+                  <div className="space-y-3 pt-2">
+                    <div className="flex items-start gap-3">
+                      <div className="bg-emerald-100 text-emerald-800 text-xs font-bold rounded-full h-5 w-5 flex items-center justify-center shrink-0 mt-0.5">✓</div>
+                      <div>
+                        <p className="text-xs font-bold text-slate-800">Deduplicação Automática</p>
+                        <p className="text-[11px] text-slate-500">Identifica se a publicação já foi conferida por outros membros da equipe.</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <div className="bg-emerald-100 text-emerald-800 text-xs font-bold rounded-full h-5 w-5 flex items-center justify-center shrink-0 mt-0.5">✓</div>
+                      <div>
+                        <p className="text-xs font-bold text-slate-800">Vinculação de Tarefas no Todoist</p>
+                        <p className="text-[11px] text-slate-500">Verifica se já há tarefa para o CNJ correspondente no Todoist.</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <div className="bg-emerald-100 text-emerald-800 text-xs font-bold rounded-full h-5 w-5 flex items-center justify-center shrink-0 mt-0.5">✓</div>
+                      <div>
+                        <p className="text-xs font-bold text-slate-800">Integração Direta com Tribunais</p>
+                        <p className="text-[11px] text-slate-500">Links para abertura rápida do inteiro teor ou pesquisa no tribunal respectivo.</p>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
-                {/* Newest Email */}
-                <div className="border border-slate-100 rounded-xl p-5 bg-slate-50/30 flex flex-col justify-between">
-                  <div>
-                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">Mais Recente</h3>
-                    <div className="space-y-2">
-                      <p className="font-bold text-slate-800 text-xs line-clamp-2 leading-relaxed">
-                        {priusState.newestSubject || "Nenhum e-mail recente encontrado"}
+                <div className="bg-slate-50 border border-slate-200/60 rounded-xl p-6 flex flex-col justify-between">
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-2 text-xs font-mono text-slate-500 bg-white border border-slate-100 p-2 rounded-lg w-fit">
+                      <span className="font-bold text-blue-600">Busca Gmail:</span>
+                      <span>(from:prius OR subject:PRIUS)</span>
+                    </div>
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-bold text-slate-800">Instruções de Inicialização:</p>
+                      <p className="text-[11px] text-slate-500 leading-relaxed">
+                        Garanta que seu e-mail do Gmail esteja ativo. Caso sua sessão tenha expirado, clique no botão superior para reconectar. Ao carregar o e-mail, as publicações surgirão automaticamente nesta tela.
                       </p>
-                      {priusState.newestDate && (
-                        <p className="text-[10px] text-slate-500 font-medium">
-                          Data: <span className="font-mono">{new Date(priusState.newestDate).toLocaleString('pt-BR')}</span>
-                        </p>
-                      )}
                     </div>
                   </div>
 
-                  <div className="pt-4 flex gap-2">
+                  <div className="pt-6">
                     <button
-                      onClick={() => openGmailExplorer({ name: "Prius – Todos", query: `in:inbox (from:(prius) OR subject:(prius) OR "PRIUS")` }, 'all')}
-                      className="flex-1 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs py-2 px-3 rounded-lg text-center transition active:scale-[0.98]"
+                      onClick={() => handleSyncPriusConferidor()}
+                      disabled={priusSyncing}
+                      className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold text-xs py-3 px-6 rounded-xl transition flex items-center justify-center gap-2 shadow"
                     >
-                      Abrir Lista de Leituras
+                      <RefreshCw className={`h-4 w-4 ${priusSyncing ? 'animate-spin' : ''}`} />
+                      {priusSyncing ? 'Sincronizando caixa...' : 'Sincronizar e Iniciar Conferência'}
                     </button>
                   </div>
                 </div>
               </div>
+            ) : (
+              // Active Conference Session layout
+              <div className="space-y-6">
+                {/* Upper Metrics Grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-4">
+                  <div className="bg-white border border-slate-200 p-4 rounded-xl shadow-sm text-left">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Total Detectadas</span>
+                    <span className="text-2xl font-black text-slate-800 font-mono block mt-1">{priusSession.publications.length}</span>
+                    <span className="text-[9px] text-slate-400 block mt-1">{priusSession.publications.filter(p => !p.isDuplicate).length} únicas</span>
+                  </div>
+
+                  <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl shadow-sm text-left">
+                    <span className="text-[10px] font-bold text-amber-500 uppercase tracking-wider block">Pendentes</span>
+                    <span className="text-2xl font-black text-amber-700 font-mono block mt-1">
+                      {priusSession.publications.filter(p => p.status === 'Pendente').length}
+                    </span>
+                    <span className="text-[9px] text-amber-600 block mt-1">Aguardando conferência</span>
+                  </div>
+
+                  <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-xl shadow-sm text-left">
+                    <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-wider block">Conferidas</span>
+                    <span className="text-2xl font-black text-emerald-700 font-mono block mt-1">
+                      {priusSession.publications.filter(p => p.status === 'Conferida').length}
+                    </span>
+                    <span className="text-[9px] text-emerald-600 block mt-1">Sem prazo exigido</span>
+                  </div>
+
+                  <div className="bg-blue-50 border border-blue-200 p-4 rounded-xl shadow-sm text-left">
+                    <span className="text-[10px] font-bold text-blue-500 uppercase tracking-wider block">Delegadas</span>
+                    <span className="text-2xl font-black text-blue-700 font-mono block mt-1">
+                      {priusSession.publications.filter(p => p.status === 'Delegada').length}
+                    </span>
+                    <span className="text-[9px] text-blue-600 block mt-1">No Todoist</span>
+                  </div>
+
+                  <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl shadow-sm text-left">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Ignoradas / Duplicadas</span>
+                    <span className="text-2xl font-black text-slate-700 font-mono block mt-1">
+                      {priusSession.publications.filter(p => p.status === 'Ignorada' || p.status === 'Duplicada').length}
+                    </span>
+                    <span className="text-[9px] text-slate-500 block mt-1">Sem providências</span>
+                  </div>
+
+                  <div className="bg-indigo-50 border border-indigo-200 p-4 rounded-xl shadow-sm text-left">
+                    <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider block">Ações do E-mail</span>
+                    <div className="flex flex-col gap-1 mt-2">
+                      <button
+                        onClick={() => handleModifyEmailStatus(priusSession.gmailMessageId, ["UNREAD"], "Marcar como Lido")}
+                        className="text-[10px] font-semibold text-indigo-600 hover:underline flex items-center gap-1 text-left"
+                      >
+                        <Check className="h-3 w-3" /> Marcar como Lido
+                      </button>
+                      <button
+                        onClick={() => handleModifyEmailStatus(priusSession.gmailMessageId, ["INBOX"], "Arquivar")}
+                        className="text-[10px] font-semibold text-indigo-600 hover:underline flex items-center gap-1 text-left"
+                      >
+                        <Trash2 className="h-3 w-3" /> Arquivar no Gmail
+                      </button>
+                      <a
+                        href={`https://mail.google.com/mail/u/0/#inbox/${priusSession.gmailMessageId}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[10px] font-semibold text-indigo-600 hover:underline flex items-center gap-1 text-left"
+                      >
+                        <ExternalLink className="h-3 w-3" /> Abrir no Gmail ↗
+                      </a>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Sub-header info */}
+                <div className="bg-slate-50 border border-slate-200/50 p-3 rounded-xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 text-xs">
+                  <div className="flex items-center gap-1.5 text-slate-600">
+                    <span className="font-bold">E-mail:</span>
+                    <span className="font-mono text-slate-800 font-medium">{priusSession.emailSubject}</span>
+                  </div>
+                  <div className="text-slate-400 font-medium font-mono text-[11px]">
+                    Sincronizado: {priusSession.lastSync}
+                  </div>
+                </div>
+
+                {/* Main 12-column layout */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                  {/* Sidebar (4 Columns): Publication list */}
+                  <div className="lg:col-span-4 bg-white border border-slate-200 rounded-2xl shadow-sm flex flex-col h-[650px] overflow-hidden">
+                    <div className="p-4 border-b border-slate-100 bg-slate-50/50">
+                      <span className="text-[10px] uppercase font-bold text-slate-400 block mb-2">Lista de Publicações Desmembradas</span>
+                      <div className="text-[10px] text-slate-500 font-medium font-mono">
+                        Selecione para detalhar e conferir
+                      </div>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto divide-y divide-slate-100">
+                      {priusSession.publications.map((p, idx) => {
+                        const isSelected = priusSelectedIdx === idx;
+                        return (
+                          <button
+                            key={p.id}
+                            onClick={() => setPriusSelectedIdx(idx)}
+                            className={`w-full p-4 text-left transition flex gap-3 hover:bg-slate-50/50 ${isSelected ? 'bg-blue-50/40 border-l-4 border-blue-600' : ''}`}
+                          >
+                            <span className="bg-slate-100 text-slate-700 font-mono font-bold text-[10px] px-2 py-1 rounded h-fit shrink-0">
+                              {p.index}/{p.total}
+                            </span>
+                            <div className="space-y-1 min-w-0 flex-1">
+                              <p className="font-bold font-mono text-slate-800 text-[11px] truncate flex items-center gap-1.5">
+                                {p.cnj || 'CNJ não identificado'}
+                                {p.isDuplicate && (
+                                  <span className="bg-red-50 text-red-600 text-[9px] px-1 py-0.5 rounded font-bold">Dupl</span>
+                                )}
+                              </p>
+                              <p className="text-[10px] text-slate-500 font-medium truncate">
+                                Cliente: <span className="text-slate-700 font-bold">{p.cliente || 'Sem cliente'}</span>
+                              </p>
+                              <p className="text-[9px] text-slate-400 font-mono truncate">
+                                {p.tribunal} • {p.orgao}
+                              </p>
+                              
+                              <div className="flex items-center justify-between pt-1">
+                                <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
+                                  p.status === 'Pendente' ? 'bg-amber-50 text-amber-700 border border-amber-200' :
+                                  p.status === 'Conferida' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
+                                  p.status === 'Delegada' ? 'bg-blue-50 text-blue-700 border border-blue-200' :
+                                  'bg-slate-50 text-slate-500 border border-slate-200'
+                                }`}>
+                                  {p.status}
+                                </span>
+                                {p.todoistTaskId && (
+                                  <span className="text-[9px] text-blue-600 font-bold font-mono">Todoist conectado</span>
+                                )}
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Main Work Area (8 Columns) */}
+                  <div className="lg:col-span-8 flex flex-col h-[650px] gap-6">
+                    {priusSelectedIdx !== null && priusSession.publications[priusSelectedIdx] ?
+                      (() => {
+                        const pub = priusSession.publications[priusSelectedIdx];
+                        return (
+                          <div className="grid grid-cols-1 md:grid-cols-12 gap-6 h-full overflow-hidden">
+                            {/* Column A (7 Columns): Content & Text */}
+                            <div className="md:col-span-7 bg-white border border-slate-200 rounded-2xl shadow-sm flex flex-col overflow-hidden">
+                              <div className="p-4 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center shrink-0">
+                                <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">Teor da Publicação</span>
+                                <div className="flex gap-2">
+                                  <button
+                                    onClick={() => {
+                                      navigator.clipboard.writeText(pub.cnj || '');
+                                      addSystemLog('success', 'CNJ copiado!', 'gmail_sync');
+                                    }}
+                                    className="bg-white hover:bg-slate-50 border border-slate-200 p-1.5 rounded text-slate-600 font-bold text-[10px] flex items-center gap-1 transition"
+                                  >
+                                    <Copy className="h-3 w-3" /> CNJ
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      navigator.clipboard.writeText(pub.content || '');
+                                      addSystemLog('success', 'Conteúdo copiado!', 'gmail_sync');
+                                    }}
+                                    className="bg-white hover:bg-slate-50 border border-slate-200 p-1.5 rounded text-slate-600 font-bold text-[10px] flex items-center gap-1 transition"
+                                  >
+                                    <Copy className="h-3 w-3" /> Teor
+                                  </button>
+                                  {pub.linkInteiroTeor && (
+                                    <a
+                                      href={pub.linkInteiroTeor}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="bg-blue-50 hover:bg-blue-100 text-blue-700 p-1.5 rounded font-bold text-[10px] flex items-center gap-1 transition"
+                                    >
+                                      <ExternalLink className="h-3 w-3" /> Inteiro Teor
+                                    </a>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div className="p-5 overflow-y-auto flex-1 space-y-4">
+                                {/* Metadata grid */}
+                                <div className="grid grid-cols-2 gap-3 bg-slate-50 p-3 rounded-xl border border-slate-100 text-[10px] font-mono shrink-0">
+                                  <div>
+                                    <span className="text-slate-400 block font-sans font-bold">Processo CNJ</span>
+                                    <span className="text-slate-800 font-bold text-xs">{pub.cnj || 'N/A'}</span>
+                                  </div>
+                                  <div>
+                                    <span className="text-slate-400 block font-sans font-bold">Cliente / Interessado</span>
+                                    <span className="text-slate-800 font-bold">{pub.cliente || 'Não identificado'}</span>
+                                  </div>
+                                  <div>
+                                    <span className="text-slate-400 block font-sans font-bold">Tribunal</span>
+                                    <span className="text-slate-800 font-bold">{pub.tribunal || 'N/A'}</span>
+                                  </div>
+                                  <div>
+                                    <span className="text-slate-400 block font-sans font-bold">Órgão</span>
+                                    <span className="text-slate-800 font-bold truncate block">{pub.orgao || 'N/A'}</span>
+                                  </div>
+                                  <div>
+                                    <span className="text-slate-400 block font-sans font-bold">Diário Oficial</span>
+                                    <span className="text-slate-800 font-bold truncate block">{pub.diario || 'N/A'}</span>
+                                  </div>
+                                  <div>
+                                    <span className="text-slate-400 block font-sans font-bold">Data Divulgação / Pub</span>
+                                    <span className="text-slate-800 font-bold">{pub.dataDivulgacao || pub.dataPublicacao || 'N/A'}</span>
+                                  </div>
+                                </div>
+
+                                {/* Body text container */}
+                                <div className="text-[11px] font-sans leading-relaxed text-slate-700 whitespace-pre-wrap bg-slate-50/20 border border-slate-100 rounded-xl p-4 font-serif select-text">
+                                  {pub.content}
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Column B (5 Columns): Conference Controls & Todoist Panel */}
+                            <div className="md:col-span-5 flex flex-col gap-4 overflow-y-auto">
+                              {/* Action buttons card */}
+                              <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm space-y-3 shrink-0">
+                                <span className="text-[10px] uppercase font-bold text-slate-400 block">Decisões de Conferência</span>
+                                
+                                <button
+                                  onClick={() => handleActionNoDeadline('prius', 'Conferida')}
+                                  className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs py-2.5 px-4 rounded-xl shadow-sm transition flex items-center justify-center gap-1.5"
+                                >
+                                  <CheckCircle className="h-4 w-4" /> Conferir sem Prazo
+                                </button>
+
+                                <div className="grid grid-cols-2 gap-2">
+                                  <button
+                                    onClick={() => handleActionNoDeadline('prius', 'Ignorada')}
+                                    className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs py-2 px-3 rounded-lg border border-slate-200 transition"
+                                  >
+                                    Ignorar
+                                  </button>
+                                  <button
+                                    onClick={() => handleActionNoDeadline('prius', 'Duplicada')}
+                                    className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs py-2 px-3 rounded-lg border border-slate-200 transition"
+                                  >
+                                    Marcar Duplicada
+                                  </button>
+                                </div>
+                                <button
+                                  onClick={() => handleActionNoDeadline('prius', 'Revisar depois')}
+                                  className="w-full bg-amber-50 hover:bg-amber-100 text-amber-700 font-bold text-xs py-2 px-3 rounded-xl border border-amber-200 transition"
+                                >
+                                  Revisar Depois
+                                </button>
+                              </div>
+
+                              {/* Todoist Live Connector / Delegation Form */}
+                              <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex-1 flex flex-col justify-between space-y-4">
+                                <div className="space-y-4">
+                                  <div className="flex justify-between items-center border-b border-slate-100 pb-2">
+                                    <span className="text-[10px] uppercase font-bold text-slate-400 block">Conector Todoist</span>
+                                    {todoistLoading && <RefreshCw className="h-3 w-3 text-blue-600 animate-spin" />}
+                                  </div>
+
+                                  {todoistLinkedTask ? (
+                                    <div className="bg-blue-50 border border-blue-100 text-blue-800 p-3 rounded-xl text-xs space-y-2">
+                                      <p className="font-bold flex items-center gap-1">
+                                        <Check className="h-4 w-4 text-blue-600" /> Tarefa no Todoist Localizada!
+                                      </p>
+                                      <p className="font-semibold">{todoistLinkedTask.content}</p>
+                                      <div className="flex justify-between items-center pt-2">
+                                        <a
+                                          href={todoistLinkedTask.url || `https://todoist.com/showTask?id=${todoistLinkedTask.id}`}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="text-blue-600 font-bold hover:underline"
+                                        >
+                                          Abrir no Todoist ↗
+                                        </a>
+                                        <button
+                                          onClick={() => {
+                                            handleActionNoDeadline('prius', 'Delegada');
+                                          }}
+                                          className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-2 py-1 rounded text-[10px]"
+                                        >
+                                          Vincular Conferência
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div className="space-y-3">
+                                      <div className="bg-slate-50 border border-slate-100 p-2.5 rounded-xl text-[11px] text-slate-500">
+                                        Nenhuma tarefa localizada para este CNJ. Use o formulário abaixo para delegar um prazo.
+                                      </div>
+
+                                      <div className="space-y-2 text-xs">
+                                        <div>
+                                          <label className="text-[10px] font-bold text-slate-500 block mb-1">Título da Tarefa</label>
+                                          <input
+                                            type="text"
+                                            value={delegationTitle}
+                                            onChange={(e) => setDelegationTitle(e.target.value)}
+                                            className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 font-medium"
+                                          />
+                                        </div>
+
+                                        <div className="grid grid-cols-2 gap-2">
+                                          <div>
+                                            <label className="text-[10px] font-bold text-slate-500 block mb-1">Data de Vencimento</label>
+                                            <input
+                                              type="date"
+                                              value={delegationDate}
+                                              onChange={(e) => setDelegationDate(e.target.value)}
+                                              className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-xs text-slate-800"
+                                            />
+                                          </div>
+                                          <div>
+                                            <label className="text-[10px] font-bold text-slate-500 block mb-1">Prioridade</label>
+                                            <select
+                                              value={delegationPriority}
+                                              onChange={(e) => setDelegationPriority(Number(e.target.value))}
+                                              className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-xs text-slate-800"
+                                            >
+                                              <option value={1}>Baixa</option>
+                                              <option value={2}>Média</option>
+                                              <option value={3}>Alta</option>
+                                              <option value={4}>Muito Alta (Fatal)</option>
+                                            </select>
+                                          </div>
+                                        </div>
+
+                                        <div>
+                                          <label className="text-[10px] font-bold text-slate-500 block mb-1">Projeto Destino</label>
+                                          <select
+                                            value={todoistTaskProject}
+                                            onChange={(e) => setTodoistTaskProject(e.target.value)}
+                                            className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
+                                          >
+                                            <option value="">Selecione um projeto...</option>
+                                            {todoistProjects.map((p: any) => (
+                                              <option key={p.id} value={p.id}>{p.name}</option>
+                                            ))}
+                                          </select>
+                                        </div>
+
+                                        <div className="space-y-1">
+                                          <label className="text-[10px] font-bold text-slate-500 block">Subtarefas Automáticas</label>
+                                          <div className="space-y-1">
+                                            {delegationSubtasks.map((sub, sidx) => (
+                                              <div key={sidx} className="flex gap-1.5 items-center">
+                                                <input
+                                                  type="text"
+                                                  value={sub}
+                                                  onChange={(e) => {
+                                                    const copy = [...delegationSubtasks];
+                                                    copy[sidx] = e.target.value;
+                                                    setDelegationSubtasks(copy);
+                                                  }}
+                                                  className="bg-slate-50 border border-slate-200 rounded px-2 py-0.5 text-[10px] flex-1 text-slate-700"
+                                                />
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+
+                                {!todoistLinkedTask && (
+                                  <button
+                                    onClick={() => handleConfirmDelegation('prius')}
+                                    disabled={todoistSyncing || !todoistToken}
+                                    className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold text-xs py-2.5 px-4 rounded-xl shadow transition flex items-center justify-center gap-1.5"
+                                  >
+                                    {todoistSyncing ? (
+                                      <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                    ) : (
+                                      <PlusCircle className="h-3.5 w-3.5" />
+                                    )}
+                                    {todoistSyncing ? 'Delegando...' : 'Confirmar e Criar no Todoist'}
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                        })()
+                      :
+                        <div className="bg-white border border-slate-200 rounded-2xl h-full flex flex-col justify-center items-center text-center p-8">
+                          <Scale className="h-12 w-12 text-slate-300 animate-pulse mb-3" />
+                          <h3 className="font-bold text-slate-800 text-sm">Nenhuma publicação selecionada</h3>
+                          <p className="text-xs text-slate-400 mt-1 max-w-xs">
+                            Selecione um item na lista de publicações à esquerda para iniciar a conferência.
+                          </p>
+                        </div>
+                      }
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
-          </div>
-        )}
+          )}
 
         {/* 10. TAB: CONSULTA RECORTE DIGITAL */}
         {activeTab === 'consulta.recorte-digital' && (
           <div className="space-y-6 animate-fade-in text-slate-800">
-            {/* Page Header */}
-            <div className="border-b border-slate-200 pb-5">
-              <h1 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
-                <Layers className="h-6 w-6 text-indigo-600" />
-                Consulta Recorte Digital via Gmail
-              </h1>
-              <p className="text-slate-500 text-xs mt-1">
-                Leitura e monitoramento das publicações dos recortes digitais recebidos no Gmail de forma centralizada e sem dependências de chaves externas.
-              </p>
+            {/* Header */}
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-200 pb-5">
+              <div>
+                <h1 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
+                  <Layers className="h-6 w-6 text-indigo-600" />
+                  Conferidor Recorte Digital
+                </h1>
+                <p className="text-slate-500 text-xs mt-1">
+                  Varredura de e-mails das OABs e Tribunais estaduais no Gmail com desmembramento inteligente automático.
+                </p>
+              </div>
             </div>
 
-            {/* Recorte Digital Services Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Service selector bar */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 bg-slate-100 p-1.5 rounded-xl border border-slate-200 shrink-0">
               {[
-                { id: "oab-mg", name: "Recorte Digital OAB/MG", query: `in:inbox ("Recorte Digital" "OAB/MG")`, url: "https://www.oabmg.org.br" },
-                { id: "rj", name: "Recorte Digital RJ", query: `in:inbox ("Recorte Digital" "RJ")`, url: "https://www.tjrj.jus.br" },
-                { id: "ceara", name: "Recorte Digital Ceará", query: `in:inbox ("Recorte Digital" "Ceará")`, url: "https://www.tjce.jus.br" },
-                { id: "sao-paulo", name: "Recorte Digital São Paulo", query: `in:inbox ("Recorte Digital" "São Paulo")`, url: "https://www.tjsp.jus.br" }
-              ].map((service, index) => {
-                const sState = recorteStates[service.id] || { status: 'desconectado', lastUpdated: null, totalCount: 0, unreadCount: 0, newestSubject: "Não consultado", newestDate: null, error: null, isLoading: false };
+                { id: "oab-mg", name: "OAB/MG" },
+                { id: "rj", name: "TJRJ (Rio de Janeiro)" },
+                { id: "ceara", name: "TJCE (Ceará)" },
+                { id: "sao-paulo", name: "TJSP (São Paulo)" }
+              ].map((serv) => {
+                const isActive = activeRecorteServiceId === serv.id;
                 return (
-                  <div key={index} className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4 flex flex-col justify-between">
-                    <div className="space-y-3">
-                      <div className="flex justify-between items-start gap-2">
-                        <div>
-                          <h3 className="font-bold text-slate-900 text-sm tracking-tight">{service.name}</h3>
-                          <span className="text-[9px] text-slate-400 block font-mono">Busca: {service.query}</span>
-                        </div>
-                        <span className={`text-[9px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full border shrink-0 ${
-                          sState.status === 'conectado' ? 'bg-emerald-50 text-emerald-600 border-emerald-200' :
-                          sState.status === 'erro' ? 'bg-red-50 text-red-600 border-red-200 animate-pulse' :
-                          'bg-slate-100 text-slate-500 border-slate-200'
-                        }`}>
-                          {sState.status === 'conectado' ? 'Sincronizado' : sState.status === 'erro' ? 'Falha' : 'Inativo'}
-                        </span>
-                      </div>
-
-                      {/* Stats Table */}
-                      <div className="grid grid-cols-2 gap-4 bg-slate-50 p-3 rounded-xl border border-slate-100 text-xs">
-                        <button
-                          onClick={() => openGmailExplorer({ name: service.name, query: service.query }, 'all')}
-                          className="text-left hover:bg-slate-100/50 p-1.5 rounded transition group"
-                        >
-                          <span className="text-[9px] text-slate-400 uppercase font-bold block">Total de e-mails</span>
-                          <span className="font-mono font-bold text-lg text-slate-800 group-hover:text-blue-600 block">{sState.totalCount || 0}</span>
-                        </button>
-                        <button
-                          onClick={() => openGmailExplorer({ name: service.name, query: service.query }, 'unread')}
-                          className="text-left hover:bg-slate-100/50 p-1.5 rounded border-l border-slate-200 pl-4 transition group"
-                        >
-                          <span className="text-[9px] text-blue-500 uppercase font-bold block">E-mails não lidos</span>
-                          <span className="font-mono font-bold text-lg text-blue-700 block">{sState.unreadCount || 0}</span>
-                        </button>
-                        <div className="pt-2 border-t border-slate-100 col-span-2">
-                          <span className="text-[9px] text-slate-400 uppercase font-bold block">Mais Recente</span>
-                          <span className="font-medium text-[10px] text-slate-700 block truncate leading-relaxed" title={sState.newestSubject}>
-                            {sState.newestSubject || "Nenhum e-mail encontrado"}
-                          </span>
-                          {sState.newestDate && (
-                            <span className="text-[8px] text-slate-400 font-mono block">
-                              {new Date(sState.newestDate).toLocaleString('pt-BR')}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      {sState.error ? (
-                        <div className="bg-red-50 border border-red-100 text-red-800 text-[10px] p-2.5 rounded-lg text-left font-mono leading-relaxed max-h-16 overflow-y-auto">
-                          <strong>Erro:</strong> {sState.error}
-                        </div>
-                      ) : (
-                        <div className="bg-slate-50 border border-slate-100 text-slate-500 text-[10px] p-2 rounded-lg text-center font-medium font-mono">
-                          Atualizado: {sState.lastUpdated || 'Nunca'}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Actions */}
-                    <div className="pt-3 border-t border-slate-100 flex gap-2">
-                      <button 
-                        onClick={() => syncRecorteService(service.id, service.name)}
-                        disabled={sState.isLoading}
-                        className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs py-2.5 px-3 rounded-xl text-center transition active:scale-[0.98] disabled:opacity-50"
-                      >
-                        {sState.isLoading ? 'Consultando...' : 'Sincronizar'}
-                      </button>
-                      <button 
-                        onClick={() => openGmailExplorer({ name: service.name, query: service.query }, 'all')}
-                        className="bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 font-bold text-xs py-2.5 px-3 rounded-xl transition text-center flex items-center justify-center gap-1 shrink-0"
-                      >
-                        Visualizar
-                      </button>
-                    </div>
-                  </div>
+                  <button
+                    key={serv.id}
+                    onClick={() => {
+                      setActiveRecorteServiceId(serv.id);
+                      setRecorteSelectedIdx(0);
+                    }}
+                    className={`text-xs font-bold py-2.5 px-4 rounded-lg transition-all ${isActive ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600 hover:text-slate-800'}`}
+                  >
+                    {serv.name}
+                  </button>
                 );
               })}
             </div>
+
+            {/* Render selected service panel */}
+            {(() => {
+              const serviceId = activeRecorteServiceId;
+              const serviceName = serviceId === 'oab-mg' ? "OAB/MG" : serviceId === 'rj' ? "TJRJ" : serviceId === 'ceara' ? "TJCE" : "TJSP";
+              const session = recorteSessions[serviceId];
+              const isSyncing = recorteSyncing[serviceId] || false;
+
+              if (!session) {
+                return (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8 bg-white border border-slate-200 rounded-2xl p-8 shadow-sm">
+                    <div className="space-y-5">
+                      <div className="bg-indigo-50 text-indigo-700 h-12 w-12 rounded-2xl flex items-center justify-center font-bold text-xl">
+                        📬
+                      </div>
+                      <h2 className="text-lg font-bold text-slate-900">Como funciona o Conferidor {serviceName}?</h2>
+                      <p className="text-slate-600 text-xs leading-relaxed">
+                        O BOSS busca em sua caixa postal o e-mail unificado do Recorte Digital {serviceName} e o decodifica por completo. Cada publicação, processo e intimação presente no e-mail é automaticamente desmembrada em um card exclusivo para conferência individualizada.
+                      </p>
+                      <div className="space-y-3 pt-2">
+                        <div className="flex items-start gap-3">
+                          <div className="bg-indigo-100 text-indigo-800 text-xs font-bold rounded-full h-5 w-5 flex items-center justify-center shrink-0 mt-0.5">✓</div>
+                          <div>
+                            <p className="text-xs font-bold text-slate-800">Deduplicação Inteligente</p>
+                            <p className="text-[11px] text-slate-500">Compara os CNJs com outros cadastros do portal para evitar retrabalho.</p>
+                          </div>
+                        </div>
+                        <div className="flex items-start gap-3">
+                          <div className="bg-indigo-100 text-indigo-800 text-xs font-bold rounded-full h-5 w-5 flex items-center justify-center shrink-0 mt-0.5">✓</div>
+                          <div>
+                            <p className="text-xs font-bold text-slate-800">Sincronização Direta Todoist</p>
+                            <p className="text-[11px] text-slate-500">Se houver correspondência, a tarefa se vincula automaticamente para delegação rápida.</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-50 border border-slate-200/60 rounded-xl p-6 flex flex-col justify-between">
+                      <div className="space-y-4">
+                        <div className="flex items-center gap-2 text-xs font-mono text-slate-500 bg-white border border-slate-100 p-2 rounded-lg w-fit">
+                          <span className="font-bold text-indigo-600">Busca Gmail:</span>
+                          <span>"Recorte Digital" "{serviceName === 'OAB/MG' ? 'OAB/MG' : serviceName === 'TJRJ' ? 'RJ' : serviceName === 'TJCE' ? 'Ceará' : 'São Paulo'}"</span>
+                        </div>
+                        <p className="text-[11px] text-slate-500 leading-relaxed">
+                          Sincronize com o Gmail para buscar o último recorte diário oficial recebido e iniciar o desmembramento das publicações.
+                        </p>
+                      </div>
+
+                      <div className="pt-6">
+                        <button
+                          onClick={() => handleSyncRecorteConferidor(serviceId, serviceName)}
+                          disabled={isSyncing}
+                          className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-xs py-3 px-6 rounded-xl transition flex items-center justify-center gap-2 shadow"
+                        >
+                          <RefreshCw className={`h-4 w-4 ${isSyncing ? 'animate-spin' : ''}`} />
+                          {isSyncing ? 'Sincronizando caixa...' : `Sincronizar Recorte ${serviceName}`}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
+
+              // Active Recorte Digital Session view
+              return (
+                <div className="space-y-6">
+                  {/* Upper Metrics Grid */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-4">
+                    <div className="bg-white border border-slate-200 p-4 rounded-xl shadow-sm text-left">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Total Detectadas</span>
+                      <span className="text-2xl font-black text-slate-800 font-mono block mt-1">{session.publications.length}</span>
+                      <span className="text-[9px] text-slate-400 block mt-1">{session.publications.filter(p => !p.isDuplicate).length} únicas</span>
+                    </div>
+
+                    <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl shadow-sm text-left">
+                      <span className="text-[10px] font-bold text-amber-500 uppercase tracking-wider block">Pendentes</span>
+                      <span className="text-2xl font-black text-amber-700 font-mono block mt-1">
+                        {session.publications.filter(p => p.status === 'Pendente').length}
+                      </span>
+                    </div>
+
+                    <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-xl shadow-sm text-left">
+                      <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-wider block">Conferidas</span>
+                      <span className="text-2xl font-black text-emerald-700 font-mono block mt-1">
+                        {session.publications.filter(p => p.status === 'Conferida').length}
+                      </span>
+                    </div>
+
+                    <div className="bg-blue-50 border border-blue-200 p-4 rounded-xl shadow-sm text-left">
+                      <span className="text-[10px] font-bold text-blue-500 uppercase tracking-wider block">Delegadas</span>
+                      <span className="text-2xl font-black text-blue-700 font-mono block mt-1">
+                        {session.publications.filter(p => p.status === 'Delegada').length}
+                      </span>
+                    </div>
+
+                    <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl shadow-sm text-left">
+                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Ignoradas / Duplicadas</span>
+                      <span className="text-2xl font-black text-slate-700 font-mono block mt-1">
+                        {session.publications.filter(p => p.status === 'Ignorada' || p.status === 'Duplicada').length}
+                      </span>
+                    </div>
+
+                    <div className="bg-indigo-50 border border-indigo-200 p-4 rounded-xl shadow-sm text-left">
+                      <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider block">Ações do E-mail</span>
+                      <div className="flex flex-col gap-1 mt-2">
+                        <button
+                          onClick={() => handleModifyEmailStatus(session.gmailMessageId, ["UNREAD"], "Marcar como Lido")}
+                          className="text-[10px] font-semibold text-indigo-600 hover:underline flex items-center gap-1 text-left"
+                        >
+                          <Check className="h-3 w-3" /> Marcar Lido
+                        </button>
+                        <button
+                          onClick={() => handleModifyEmailStatus(session.gmailMessageId, ["INBOX"], "Arquivar")}
+                          className="text-[10px] font-semibold text-indigo-600 hover:underline flex items-center gap-1 text-left"
+                        >
+                          <Trash2 className="h-3 w-3" /> Arquivar
+                        </button>
+                        <a
+                          href={`https://mail.google.com/mail/u/0/#inbox/${session.gmailMessageId}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[10px] font-semibold text-indigo-600 hover:underline flex items-center gap-1 text-left"
+                        >
+                          <ExternalLink className="h-3 w-3" /> Abrir e-mail original
+                        </a>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Sync info bar */}
+                  <div className="bg-slate-50 border border-slate-200/50 p-3 rounded-xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 text-xs">
+                    <div className="flex items-center gap-1.5 text-slate-600">
+                      <span className="font-bold">E-mail:</span>
+                      <span className="font-mono text-slate-800 font-medium">{session.emailSubject}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handleSyncRecorteConferidor(serviceId, serviceName)}
+                        disabled={isSyncing}
+                        className="text-xs text-indigo-600 hover:underline font-bold flex items-center gap-1"
+                      >
+                        <RefreshCw className={`h-3 w-3 ${isSyncing ? 'animate-spin' : ''}`} /> Sincronizar Novamente
+                      </button>
+                      <span className="text-slate-300">|</span>
+                      <button
+                        onClick={() => handleGenerateConferidorReport(session.publications, `Conferidor ${serviceName}`)}
+                        className="text-xs text-indigo-600 hover:underline font-bold flex items-center gap-1"
+                      >
+                        <Download className="h-3 w-3" /> Exportar Relatório
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 12-Column Grid */}
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                    {/* Left Sidebar list */}
+                    <div className="lg:col-span-4 bg-white border border-slate-200 rounded-2xl shadow-sm flex flex-col h-[650px] overflow-hidden">
+                      <div className="p-4 border-b border-slate-100 bg-slate-50/50">
+                        <span className="text-[10px] uppercase font-bold text-slate-400 block mb-2">Lista de Publicações Desmembradas</span>
+                        <div className="text-[10px] text-slate-500 font-medium font-mono">
+                          Selecione para detalhar e conferir
+                        </div>
+                      </div>
+
+                      <div className="flex-1 overflow-y-auto divide-y divide-slate-100">
+                        {session.publications.map((p, idx) => {
+                          const isSelected = recorteSelectedIdx === idx;
+                          return (
+                            <button
+                              key={p.id}
+                              onClick={() => setRecorteSelectedIdx(idx)}
+                              className={`w-full p-4 text-left transition flex gap-3 hover:bg-slate-50/50 ${isSelected ? 'bg-indigo-50/40 border-l-4 border-indigo-600' : ''}`}
+                            >
+                              <span className="bg-slate-100 text-slate-700 font-mono font-bold text-[10px] px-2 py-1 rounded h-fit shrink-0">
+                                {p.index}/{p.total}
+                              </span>
+                              <div className="space-y-1 min-w-0 flex-1">
+                                <p className="font-bold font-mono text-slate-800 text-[11px] truncate flex items-center gap-1.5">
+                                  {p.cnj || 'CNJ não identificado'}
+                                  {p.isDuplicate && (
+                                    <span className="bg-red-50 text-red-600 text-[9px] px-1 py-0.5 rounded font-bold">Dupl</span>
+                                  )}
+                                </p>
+                                <p className="text-[10px] text-slate-500 font-medium truncate">
+                                  Cliente: <span className="text-slate-700 font-bold">{p.cliente || 'Sem cliente'}</span>
+                                </p>
+                                <p className="text-[9px] text-slate-400 font-mono truncate">
+                                  {p.tribunal} • {p.orgao}
+                                </p>
+                                
+                                <div className="flex items-center justify-between pt-1">
+                                  <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
+                                    p.status === 'Pendente' ? 'bg-amber-50 text-amber-700 border border-amber-200' :
+                                    p.status === 'Conferida' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
+                                    p.status === 'Delegada' ? 'bg-blue-50 text-blue-700 border border-blue-200' :
+                                    'bg-slate-50 text-slate-500 border border-slate-200'
+                                  }`}>
+                                    {p.status}
+                                  </span>
+                                  {p.todoistTaskId && (
+                                    <span className="text-[9px] text-blue-600 font-bold font-mono">Todoist conectado</span>
+                                  )}
+                                </div>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Right detail layout */}
+                    <div className="lg:col-span-8 flex flex-col h-[650px] gap-6">
+                      {recorteSelectedIdx !== null && session.publications[recorteSelectedIdx] ?
+                        (() => {
+                          const pub = session.publications[recorteSelectedIdx];
+                          return (
+                            <div className="grid grid-cols-1 md:grid-cols-12 gap-6 h-full overflow-hidden">
+                              {/* Left Text Detail */}
+                              <div className="md:col-span-7 bg-white border border-slate-200 rounded-2xl shadow-sm flex flex-col overflow-hidden">
+                                <div className="p-4 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center shrink-0">
+                                  <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">Teor da Publicação</span>
+                                  <div className="flex gap-2">
+                                    <button
+                                      onClick={() => {
+                                        navigator.clipboard.writeText(pub.cnj || '');
+                                        addSystemLog('success', 'CNJ copiado!', 'gmail_sync');
+                                      }}
+                                      className="bg-white hover:bg-slate-50 border border-slate-200 p-1.5 rounded text-slate-600 font-bold text-[10px] flex items-center gap-1 transition"
+                                    >
+                                      <Copy className="h-3 w-3" /> CNJ
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        navigator.clipboard.writeText(pub.content || '');
+                                        addSystemLog('success', 'Teor copiado!', 'gmail_sync');
+                                      }}
+                                      className="bg-white hover:bg-slate-50 border border-slate-200 p-1.5 rounded text-slate-600 font-bold text-[10px] flex items-center gap-1 transition"
+                                    >
+                                      <Copy className="h-3 w-3" /> Teor
+                                    </button>
+                                  </div>
+                                </div>
+
+                                <div className="p-5 overflow-y-auto flex-1 space-y-4">
+                                  {/* Metadata grid */}
+                                  <div className="grid grid-cols-2 gap-3 bg-slate-50 p-3 rounded-xl border border-slate-100 text-[10px] font-mono shrink-0">
+                                    <div>
+                                      <span className="text-slate-400 block font-sans font-bold">Processo CNJ</span>
+                                      <span className="text-slate-800 font-bold text-xs">{pub.cnj || 'N/A'}</span>
+                                    </div>
+                                    <div>
+                                      <span className="text-slate-400 block font-sans font-bold">Cliente / Interessado</span>
+                                      <span className="text-slate-800 font-bold">{pub.cliente || 'Não informado'}</span>
+                                    </div>
+                                    <div>
+                                      <span className="text-slate-400 block font-sans font-bold">Tribunal</span>
+                                      <span className="text-slate-800 font-bold">{pub.tribunal || 'N/A'}</span>
+                                    </div>
+                                    <div>
+                                      <span className="text-slate-400 block font-sans font-bold">Órgão</span>
+                                      <span className="text-slate-800 font-bold truncate block">{pub.orgao || 'N/A'}</span>
+                                    </div>
+                                    <div>
+                                      <span className="text-slate-400 block font-sans font-bold">Data Publicação / Div</span>
+                                      <span className="text-slate-800 font-bold">{pub.dataDivulgacao || pub.dataPublicacao || 'N/A'}</span>
+                                    </div>
+                                  </div>
+
+                                  {/* Content */}
+                                  <div className="text-[11px] font-sans leading-relaxed text-slate-700 whitespace-pre-wrap bg-slate-50/20 border border-slate-100 rounded-xl p-4 font-serif select-text">
+                                    {pub.content}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Right Action panel */}
+                              <div className="md:col-span-5 flex flex-col gap-4 overflow-y-auto">
+                                <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm space-y-3 shrink-0">
+                                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Ações do Conferidor</span>
+                                  
+                                  <button
+                                    onClick={() => handleActionNoDeadline('recorte', 'Conferida')}
+                                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs py-2.5 px-4 rounded-xl shadow-sm transition flex items-center justify-center gap-1.5"
+                                  >
+                                    <CheckCircle className="h-4 w-4" /> Conferir sem Prazo
+                                  </button>
+
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <button
+                                      onClick={() => handleActionNoDeadline('recorte', 'Ignorada')}
+                                      className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs py-2 px-3 rounded-lg border border-slate-200 transition"
+                                    >
+                                      Ignorar
+                                    </button>
+                                    <button
+                                      onClick={() => handleActionNoDeadline('recorte', 'Duplicada')}
+                                      className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs py-2 px-3 rounded-lg border border-slate-200 transition"
+                                    >
+                                      Duplicada
+                                    </button>
+                                  </div>
+                                </div>
+
+                                {/* Todoist Link Form */}
+                                <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex-1 flex flex-col justify-between space-y-4">
+                                  <div className="space-y-4">
+                                    <span className="text-[10px] uppercase font-bold text-slate-400 block border-b border-slate-100 pb-2">Prazo e Todoist</span>
+                                    
+                                    {todoistLinkedTask ? (
+                                      <div className="bg-indigo-50 border border-indigo-100 text-indigo-800 p-3 rounded-xl text-xs space-y-2">
+                                        <p className="font-bold flex items-center gap-1">
+                                          <Check className="h-4 w-4 text-indigo-600" /> Tarefa Vinculada no Todoist!
+                                        </p>
+                                        <p className="font-semibold">{todoistLinkedTask.content}</p>
+                                        <div className="flex justify-between items-center pt-2">
+                                          <a
+                                            href={todoistLinkedTask.url || `https://todoist.com/showTask?id={todoistLinkedTask.id}`}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="text-indigo-600 font-bold hover:underline"
+                                          >
+                                            Abrir no Todoist ↗
+                                          </a>
+                                          <button
+                                            onClick={() => {
+                                              handleActionNoDeadline('recorte', 'Delegada');
+                                            }}
+                                            className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-2 py-1 rounded text-[10px]"
+                                          >
+                                            Vincular Conferência
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div className="space-y-3 text-xs">
+                                        <div>
+                                          <label className="text-[10px] font-bold text-slate-500 block mb-1">Título do Prazo</label>
+                                          <input
+                                            type="text"
+                                            value={delegationTitle}
+                                            onChange={(e) => setDelegationTitle(e.target.value)}
+                                            className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 font-medium"
+                                          />
+                                        </div>
+
+                                        <div className="grid grid-cols-2 gap-2">
+                                          <div>
+                                            <label className="text-[10px] font-bold text-slate-500 block mb-1">Vencimento</label>
+                                            <input
+                                              type="date"
+                                              value={delegationDate}
+                                              onChange={(e) => setDelegationDate(e.target.value)}
+                                              className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-xs text-slate-800"
+                                            />
+                                          </div>
+                                          <div>
+                                            <label className="text-[10px] font-bold text-slate-500 block mb-1">Prioridade</label>
+                                            <select
+                                              value={delegationPriority}
+                                              onChange={(e) => setDelegationPriority(Number(e.target.value))}
+                                              className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-xs text-slate-800"
+                                            >
+                                              <option value={1}>Baixa</option>
+                                              <option value={2}>Média</option>
+                                              <option value={3}>Alta</option>
+                                              <option value={4}>Fatal</option>
+                                            </select>
+                                          </div>
+                                        </div>
+
+                                        <div>
+                                          <label className="text-[10px] font-bold text-slate-500 block mb-1">Projeto Todoist</label>
+                                          <select
+                                            value={todoistTaskProject}
+                                            onChange={(e) => setTodoistTaskProject(e.target.value)}
+                                            className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
+                                          >
+                                            <option value="">Selecione...</option>
+                                            {todoistProjects.map((p: any) => (
+                                              <option key={p.id} value={p.id}>{p.name}</option>
+                                            ))}
+                                          </select>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  {!todoistLinkedTask && (
+                                    <button
+                                      onClick={() => handleConfirmDelegation('recorte')}
+                                      disabled={todoistSyncing || !todoistToken}
+                                      className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-xs py-2.5 px-4 rounded-xl shadow transition flex items-center justify-center gap-1.5"
+                                    >
+                                      <PlusCircle className="h-3.5 w-3.5" />
+                                      {todoistSyncing ? 'Delegando...' : 'Confirmar e Criar no Todoist'}
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })()
+                      :
+                        <div className="bg-white border border-slate-200 rounded-2xl h-full flex flex-col justify-center items-center text-center p-8">
+                          <Layers className="h-12 w-12 text-slate-300 animate-pulse mb-3" />
+                          <h3 className="font-bold text-slate-800 text-sm">Selecione uma publicação</h3>
+                          <p className="text-xs text-slate-400 mt-1 max-w-xs">
+                            Selecione um item na lista de publicações à esquerda para iniciar a conferência.
+                          </p>
+                        </div>
+                      }
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
+        )}
+
+        {/* 11. TAB: PAINEL DJEN NACIONAL */}
+        {activeTab === 'consulta.djen' && (
+          <PainelDjenNacionalView user={user} />
         )}
 
         {/* Gmail Explorer Modal */}

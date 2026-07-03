@@ -31,3 +31,18 @@ export interface SystemLog {
   userId: string;
   status: 'success' | 'warning' | 'error' | 'info';
 }
+
+export interface EmailRule {
+  id: string;
+  name: string;
+  query: string;
+  category: string;
+  risk: 'alto' | 'medio' | 'baixo';
+  actionRecommended: string;
+  createdAt: string;
+  lastChecked: string | null;
+  userId: string;
+  totalCount?: number;
+  unreadCount?: number;
+  inboxCount?: number;
+}

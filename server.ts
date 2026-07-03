@@ -173,6 +173,9 @@ app.post("/api/gmail-sync", async (req, res) => {
 
     if (!listResponse.ok) {
       const errorText = await listResponse.text();
+      if (listResponse.status === 400 || listResponse.status === 401 || listResponse.status === 403 || errorText.includes("invalid_grant") || errorText.includes("authError") || errorText.includes("Invalid Credentials") || errorText.includes("invalid_token") || errorText.includes("expired")) {
+        return res.status(401).json({ error: "UNAUTHENTICATED", message: "Sessão do Google expirada ou inválida. Por favor, conecte com o Google novamente." });
+      }
       return res.status(listResponse.status).json({ error: `Erro ao listar mensagens do Gmail: ${errorText}` });
     }
 
@@ -280,6 +283,9 @@ app.post("/api/gmail-sync", async (req, res) => {
     return res.json({ publications: fetchedPublications, count: fetchedPublications.length });
 
   } catch (error: any) {
+    if (error.status === 400 || error.status === 401 || error.status === 403 || error.message?.includes("UNAUTHENTICATED") || error.message?.includes("Invalid Credentials") || error.message?.includes("Sessão Google") || error.message?.includes("consultar o Gmail")) {
+      return res.status(401).json({ error: "UNAUTHENTICATED", message: "Sessão do Google expirada ou inválida. Por favor, conecte com o Google novamente." });
+    }
     console.error("Erro ao sincronizar Gmail:", error);
     return res.status(500).json({ error: "Falha na sincronização do Gmail: " + error.message });
   }
@@ -302,12 +308,17 @@ async function fetchGmailPushStats(accessToken: string, sender: string) {
       });
       
       if (!res.ok) {
-        if (res.status === 401) {
+        if (res.status === 400 || res.status === 401 || res.status === 403) {
           const authErr = new Error("UNAUTHENTICATED");
-          (authErr as any).status = 401;
+          (authErr as any).status = res.status;
           throw authErr;
         }
         const errText = await res.text();
+        if (errText.includes("invalid_grant") || errText.includes("authError") || errText.includes("Invalid Credentials") || errText.includes("invalid_token") || errText.includes("expired")) {
+          const authErr = new Error("UNAUTHENTICATED");
+          (authErr as any).status = res.status;
+          throw authErr;
+        }
         console.error(`[Gmail Technical Log] URL chamada: ${url} | Status HTTP: ${res.status} | Mensagem do erro: ${errText} | Remetente consultado: ${sender}`);
         throw new Error("Não foi possível consultar o Gmail. Verifique se a sessão Google está ativa e tente atualizar novamente.");
       }
@@ -334,12 +345,17 @@ async function fetchGmailPushStats(accessToken: string, sender: string) {
       });
       
       if (!res.ok) {
-        if (res.status === 401) {
+        if (res.status === 400 || res.status === 401 || res.status === 403) {
           const authErr = new Error("UNAUTHENTICATED");
-          (authErr as any).status = 401;
+          (authErr as any).status = res.status;
           throw authErr;
         }
         const errText = await res.text();
+        if (errText.includes("invalid_grant") || errText.includes("authError") || errText.includes("Invalid Credentials") || errText.includes("invalid_token") || errText.includes("expired")) {
+          const authErr = new Error("UNAUTHENTICATED");
+          (authErr as any).status = res.status;
+          throw authErr;
+        }
         console.error(`[Gmail Technical Log] URL chamada: ${url} | Status HTTP: ${res.status} | Mensagem do erro: ${errText} | Remetente consultado: ${sender}`);
         throw new Error("Não foi possível consultar o Gmail. Verifique se a sessão Google está ativa e tente atualizar novamente.");
       }
@@ -380,7 +396,7 @@ async function fetchGmailPushStats(accessToken: string, sender: string) {
     };
 
   } catch (error: any) {
-    if (error.status === 401 || error.message === "UNAUTHENTICATED") {
+    if (error.status === 400 || error.status === 401 || error.status === 403 || error.message === "UNAUTHENTICATED" || error.message?.includes("UNAUTHENTICATED") || error.message?.includes("Sessão Google") || error.message?.includes("consultar o Gmail")) {
       console.warn(`[Gmail] Token inválido ou expirado para consulta: ${sender}`);
       return {
         sender,
@@ -438,7 +454,7 @@ app.post("/api/gmail-pushes", async (req, res) => {
       return res.json({ stats: results });
     }
   } catch (error: any) {
-    if (error.status === 401 || error.message === "UNAUTHENTICATED") {
+    if (error.status === 401 || error.status === 403 || error.message === "UNAUTHENTICATED") {
       return res.status(401).json({ error: "UNAUTHENTICATED", message: "Sessão do Google expirada ou inválida. Por favor, conecte com o Google novamente." });
     }
     console.error("Erro no endpoint /api/gmail-pushes:", error);
@@ -472,12 +488,17 @@ app.post("/api/gmail-pushes/grouped-by-cnj", async (req, res) => {
         headers: { Authorization: `Bearer ${accessToken}` }
       });
       if (!apiRes.ok) {
-        if (apiRes.status === 401) {
+        if (apiRes.status === 400 || apiRes.status === 401 || apiRes.status === 403) {
           const authErr = new Error("UNAUTHENTICATED");
-          (authErr as any).status = 401;
+          (authErr as any).status = apiRes.status;
           throw authErr;
         }
         const errText = await apiRes.text();
+        if (errText.includes("invalid_grant") || errText.includes("authError") || errText.includes("Invalid Credentials") || errText.includes("invalid_token") || errText.includes("expired")) {
+          const authErr = new Error("UNAUTHENTICATED");
+          (authErr as any).status = apiRes.status;
+          throw authErr;
+        }
         throw new Error(`Erro ao listar mensagens do Gmail: ${errText}`);
       }
       const data = await apiRes.json() as any;
@@ -700,7 +721,7 @@ app.post("/api/gmail-pushes/grouped-by-cnj", async (req, res) => {
     });
 
   } catch (error: any) {
-    if (error.status === 401 || error.message?.includes("UNAUTHENTICATED") || error.message?.includes("Invalid Credentials")) {
+    if (error.status === 400 || error.status === 401 || error.status === 403 || error.message?.includes("UNAUTHENTICATED") || error.message?.includes("Invalid Credentials") || error.message?.includes("Sessão Google") || error.message?.includes("consultar o Gmail")) {
       return res.status(401).json({ error: "UNAUTHENTICATED", message: "Sessão do Google expirada ou inválida. Por favor, conecte com o Google novamente." });
     }
     console.error("Erro no endpoint /api/gmail-pushes/grouped-by-cnj:", error);
@@ -742,6 +763,154 @@ app.post("/api/gmail-pushes/mark-as-read", async (req, res) => {
   } catch (error: any) {
     console.error("Erro no endpoint /api/gmail-pushes/mark-as-read:", error);
     return res.status(500).json({ error: "Falha ao marcar PUSHes como lidos: " + error.message });
+  }
+});
+
+// 2.8 API: Batch modify labels (e.g. archive, mark unread/read)
+app.post("/api/gmail-messages/batch-modify", async (req, res) => {
+  const { accessToken, messageIds, addLabelIds = [], removeLabelIds = [] } = req.body;
+
+  if (!accessToken) {
+    return res.status(400).json({ error: "Access token do Gmail não fornecido." });
+  }
+  if (!messageIds || !Array.isArray(messageIds) || messageIds.length === 0) {
+    return res.status(400).json({ error: "Lista de messageIds é obrigatória." });
+  }
+
+  try {
+    const url = "https://gmail.googleapis.com/gmail/v1/users/me/messages/batchModify";
+    const apiRes = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        ids: messageIds,
+        addLabelIds,
+        removeLabelIds
+      })
+    });
+
+    if (!apiRes.ok) {
+      const errText = await apiRes.text();
+      throw new Error(`Erro ao modificar mensagens: ${errText}`);
+    }
+
+    return res.json({ success: true, count: messageIds.length });
+  } catch (error: any) {
+    console.error("Erro no endpoint /api/gmail-messages/batch-modify:", error);
+    return res.status(500).json({ error: "Falha ao modificar e-mails: " + error.message });
+  }
+});
+
+// 2.9 API: Batch trash/delete emails
+app.post("/api/gmail-messages/batch-trash", async (req, res) => {
+  const { accessToken, messageIds } = req.body;
+
+  if (!accessToken) {
+    return res.status(400).json({ error: "Access token do Gmail não fornecido." });
+  }
+  if (!messageIds || !Array.isArray(messageIds) || messageIds.length === 0) {
+    return res.status(400).json({ error: "Lista de messageIds é obrigatória." });
+  }
+
+  try {
+    const url = "https://gmail.googleapis.com/gmail/v1/users/me/messages/batchTrash";
+    const apiRes = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        ids: messageIds
+      })
+    });
+
+    if (!apiRes.ok) {
+      const errText = await apiRes.text();
+      throw new Error(`Erro ao mover mensagens para lixeira: ${errText}`);
+    }
+
+    return res.json({ success: true, count: messageIds.length });
+  } catch (error: any) {
+    console.error("Erro no endpoint /api/gmail-messages/batch-trash:", error);
+    return res.status(500).json({ error: "Falha ao lixar e-mails: " + error.message });
+  }
+});
+
+// 2.10 API: Fetch global inbox and count stats
+app.post("/api/gmail-global-stats", async (req, res) => {
+  const { accessToken, forceRefetch } = req.body;
+  if (!accessToken) {
+    return res.status(400).json({ error: "Access token do Gmail não fornecido." });
+  }
+
+  try {
+    const cb = forceRefetch ? `?_cb=${Date.now()}` : "";
+    const headers: Record<string, string> = { 
+      Authorization: `Bearer ${accessToken}`
+    };
+    if (forceRefetch) {
+      headers["Cache-Control"] = "no-cache, no-store, must-revalidate";
+      headers["Pragma"] = "no-cache";
+      console.log(`[Gmail Stats] Forçando refetch com limpeza de cache. Timestamp: ${Date.now()}`);
+    }
+
+    // 1. Get profile stats (messagesTotal)
+    const profileUrl = `https://gmail.googleapis.com/gmail/v1/users/me/profile${cb}`;
+    const profileRes = await fetch(profileUrl, { headers });
+    let messagesTotal = 15000;
+    let emailAddress = "";
+    if (profileRes.ok) {
+      const profileData = await profileRes.json() as any;
+      messagesTotal = profileData.messagesTotal || 15000;
+      emailAddress = profileData.emailAddress || "";
+    } else {
+      const errorText = await profileRes.text();
+      if (profileRes.status === 400 || profileRes.status === 401 || profileRes.status === 403 || errorText.includes("invalid_grant") || errorText.includes("authError") || errorText.includes("Invalid Credentials") || errorText.includes("invalid_token") || errorText.includes("expired")) {
+        return res.status(401).json({ error: "UNAUTHENTICATED", message: "Sessão do Google expirada ou inválida. Por favor, conecte com o Google novamente." });
+      }
+    }
+
+    // 2. Get inbox count & unread count via label lookup (fast & accurate)
+    const labelInboxUrl = `https://gmail.googleapis.com/gmail/v1/users/me/labels/INBOX${cb}`;
+    const labelInboxRes = await fetch(labelInboxUrl, { headers });
+    
+    let inboxCount = 0;
+    let unreadCount = 0;
+    if (labelInboxRes.ok) {
+      const labelData = await labelInboxRes.json() as any;
+      // Prefer threads counts (conversations) to match standard Gmail Inbox/Unread UI
+      inboxCount = typeof labelData.threadsTotal === 'number' ? labelData.threadsTotal : (labelData.messagesTotal || 0);
+      unreadCount = typeof labelData.threadsUnread === 'number' ? labelData.threadsUnread : (labelData.messagesUnread || 0);
+    } else {
+      // Fallback using threads list endpoint for accurate conversation/thread estimation
+      const inboxListUrl = `https://gmail.googleapis.com/gmail/v1/users/me/threads${cb}${forceRefetch ? "&" : "?"}q=in:inbox&maxResults=1`;
+      const listRes = await fetch(inboxListUrl, { headers });
+      if (listRes.ok) {
+        const listData = await listRes.json() as any;
+        inboxCount = listData.resultSizeEstimate || 0;
+      }
+      const unreadListUrl = `https://gmail.googleapis.com/gmail/v1/users/me/threads${cb}${forceRefetch ? "&" : "?"}q=in:inbox is:unread&maxResults=1`;
+      const unreadListRes = await fetch(unreadListUrl, { headers });
+      if (unreadListRes.ok) {
+        const listData = await unreadListRes.json() as any;
+        unreadCount = listData.resultSizeEstimate || 0;
+      }
+    }
+
+    return res.json({
+      success: true,
+      emailAddress,
+      messagesTotal,
+      inboxCount,
+      unreadCount
+    });
+  } catch (error: any) {
+    console.error("Erro no endpoint /api/gmail-global-stats:", error);
+    return res.status(500).json({ error: "Falha ao obter estatísticas globais: " + error.message });
   }
 });
 
@@ -854,7 +1023,17 @@ async function fetchGmailStatsForQuery(accessToken: string, queryStr: string) {
       });
       
       if (!res.ok) {
+        if (res.status === 400 || res.status === 401 || res.status === 403) {
+          const authErr = new Error("UNAUTHENTICATED");
+          (authErr as any).status = res.status;
+          throw authErr;
+        }
         const errText = await res.text();
+        if (errText.includes("invalid_grant") || errText.includes("authError") || errText.includes("Invalid Credentials") || errText.includes("invalid_token") || errText.includes("expired")) {
+          const authErr = new Error("UNAUTHENTICATED");
+          (authErr as any).status = res.status;
+          throw authErr;
+        }
         console.error(`[Gmail Technical Log] URL chamada: ${url} | Status HTTP: ${res.status} | Mensagem do erro: ${errText} | Consulta realizada: ${queryStr}`);
         throw new Error("Não foi possível consultar o Gmail. Verifique se a sessão Google está ativa e tente atualizar novamente.");
       }
@@ -884,7 +1063,17 @@ async function fetchGmailStatsForQuery(accessToken: string, queryStr: string) {
       });
       
       if (!res.ok) {
+        if (res.status === 400 || res.status === 401 || res.status === 403) {
+          const authErr = new Error("UNAUTHENTICATED");
+          (authErr as any).status = res.status;
+          throw authErr;
+        }
         const errText = await res.text();
+        if (errText.includes("invalid_grant") || errText.includes("authError") || errText.includes("Invalid Credentials") || errText.includes("invalid_token") || errText.includes("expired")) {
+          const authErr = new Error("UNAUTHENTICATED");
+          (authErr as any).status = res.status;
+          throw authErr;
+        }
         console.error(`[Gmail Technical Log] URL chamada: ${url} | Status HTTP: ${res.status} | Mensagem do erro: ${errText} | Consulta realizada: ${unreadQuery}`);
         throw new Error("Não foi possível consultar o Gmail. Verifique se a sessão Google está ativa e tente atualizar novamente.");
       }
@@ -923,6 +1112,19 @@ async function fetchGmailStatsForQuery(accessToken: string, queryStr: string) {
       success: true
     };
   } catch (error: any) {
+    if (error.status === 400 || error.status === 401 || error.status === 403 || error.message === "UNAUTHENTICATED" || error.message?.includes("Invalid Credentials") || error.message?.includes("UNAUTHENTICATED") || error.message?.includes("Sessão Google") || error.message?.includes("consultar o Gmail")) {
+      console.warn(`[Gmail] Token inválido ou expirado para consulta: ${queryStr}`);
+      return {
+        query: queryStr,
+        totalCount: 0,
+        unreadCount: 0,
+        newestSubject: "Sessão expirada",
+        newestDate: null,
+        success: false,
+        unauthenticated: true,
+        error: "Sessão do Google expirada ou inválida. Por favor, conecte com o Google novamente."
+      };
+    }
     console.error(`Erro ao buscar estatísticas do Gmail para query (${queryStr}):`, error);
     return {
       query: queryStr,
@@ -936,6 +1138,474 @@ async function fetchGmailStatsForQuery(accessToken: string, queryStr: string) {
   }
 }
 
+// Helper to recursively traverse email parts and extract text/plain and text/html
+function getEmailBody(payload: any): { text: string; html: string } {
+  let text = '';
+  let html = '';
+
+  function traverse(part: any) {
+    if (!part) return;
+    if (part.mimeType === 'text/plain' && part.body?.data) {
+      text += Buffer.from(part.body.data, 'base64').toString('utf-8');
+    } else if (part.mimeType === 'text/html' && part.body?.data) {
+      html += Buffer.from(part.body.data, 'base64').toString('utf-8');
+    }
+    if (part.parts) {
+      for (const subPart of part.parts) {
+        traverse(subPart);
+      }
+    }
+  }
+
+  traverse(payload);
+  return { text, html };
+}
+
+// Helper to convert HTML to standard plain text, preserving structure
+function htmlToPlainText(html: string): string {
+  if (!html) return '';
+  let text = html
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<\/div>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/tr>/gi, '\n')
+    .replace(/<\/li>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&middot;/gi, '•')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&aacute;/gi, 'á').replace(/&eacute;/gi, 'é').replace(/&iacute;/gi, 'í').replace(/&oacute;/gi, 'ó').replace(/&uacute;/gi, 'ú')
+    .replace(/&atilde;/gi, 'ã').replace(/&otilde;/gi, 'õ').replace(/&ccedil;/gi, 'ç').replace(/&acirc;/gi, 'â').replace(/&ecirc;/gi, 'ê')
+    .replace(/&ocirc;/gi, 'ô')
+    .replace(/&Agrave;/gi, 'À').replace(/&Aacute;/gi, 'Á').replace(/&Eacute;/gi, 'É').replace(/&Iacute;/gi, 'Í').replace(/&Oacute;/gi, 'Ó').replace(/&Uacute;/gi, 'Ú')
+    .replace(/&Atilde;/gi, 'Ã').replace(/&Otilde;/gi, 'Õ').replace(/&Ccedil;/gi, 'Ç');
+  
+  return text.split('\n').map(line => line.trim()).filter(line => line.length > 0).join('\n');
+}
+
+// Extract a valid CJN Brazilian case format
+function extractCNJ(text: string): string | null {
+  const regex = /\b\d{7}[-.\s]?\d{2}[-.\s]?\d{4}[-.\s]?\d[-.\s]?\d{2}[-.\s]?\d{4}\b/;
+  const match = text.match(regex);
+  if (match) {
+    let raw = match[0].replace(/[-.\s]/g, '');
+    if (raw.length === 20) {
+      return `${raw.slice(0, 7)}-${raw.slice(7, 9)}.${raw.slice(9, 13)}.${raw.slice(13, 14)}.${raw.slice(14, 16)}.${raw.slice(16, 20)}`;
+    }
+    return match[0];
+  }
+  return null;
+}
+
+// Split email body into individual publication blocks
+function splitEmailIntoPublications(plainText: string): string[] {
+  // Pattern 1: Prius explicit indices "Processo X de Y" or "Processo X/Y" or "Recorte Eletrônico Processo X de Y"
+  const priusRegex = /(?:PRIUS\s+Informador\s+Jurídico\s+-\s+)?(?:Recorte\s+Eletrônico\s+)?Processo\s+(\d+)\s+de\s+(\d+)/gi;
+  const priusMatches: number[] = [];
+  let m;
+  while ((m = priusRegex.exec(plainText)) !== null) {
+    priusMatches.push(m.index);
+  }
+
+  if (priusMatches.length > 1) {
+    const blocks: string[] = [];
+    for (let i = 0; i < priusMatches.length; i++) {
+      const start = priusMatches[i];
+      const end = (i + 1 < priusMatches.length) ? priusMatches[i + 1] : plainText.length;
+      blocks.push(plainText.slice(start, end).trim());
+    }
+    return blocks;
+  }
+
+  // Pattern 2: Split by CNJs if there are multiple CNJs found
+  const cnjRegex = /\b\d{7}[-.\s]?\d{2}[-.\s]?\d{4}[-.\s]?\d[-.\s]?\d{2}[-.\s]?\d{4}\b/g;
+  const cnjMatches: { index: number; cnj: string }[] = [];
+  let cMatch;
+  while ((cMatch = cnjRegex.exec(plainText)) !== null) {
+    cnjMatches.push({ index: cMatch.index, cnj: cMatch[0] });
+  }
+
+  if (cnjMatches.length > 1) {
+    const blocks: string[] = [];
+    for (let i = 0; i < cnjMatches.length; i++) {
+      const prevEnd = i > 0 ? cnjMatches[i - 1].index : 0;
+      let start = cnjMatches[i].index;
+      let walk = start;
+      const walkLimit = Math.max(prevEnd, start - 200);
+      while (walk > walkLimit) {
+        if (plainText[walk] === '\n' && (walk === start - 1 || plainText[walk - 1] === '\n')) {
+          start = walk + 1;
+          break;
+        }
+        walk--;
+      }
+      if (walk === walkLimit) {
+        start = walkLimit;
+      }
+
+      const nextStart = (i + 1 < cnjMatches.length) ? cnjMatches[i + 1].index : plainText.length;
+      let end = nextStart;
+      let nextWalk = nextStart;
+      const nextWalkLimit = Math.max(start, nextStart - 200);
+      while (nextWalk > nextWalkLimit) {
+        if (plainText[nextWalk] === '\n' && (nextWalk === nextStart - 1 || plainText[nextWalk - 1] === '\n')) {
+          end = nextWalk;
+          break;
+        }
+        nextWalk--;
+      }
+
+      blocks.push(plainText.slice(start, end).trim());
+    }
+    return blocks;
+  }
+
+  // Fallback: whole text
+  return [plainText];
+}
+
+// Parse metadata elements from single publication block
+function parseMetadataFromBlock(blockText: string) {
+  const getField = (regex: RegExp) => {
+    const match = blockText.match(regex);
+    return match ? match[1].trim() : "";
+  };
+
+  const cnj = extractCNJ(blockText);
+  const tribunal = getField(/(?:Tribunal|TJ|TRT|TRF|Corte):\s*([^\n]+)/i) || 
+                   getField(/\b(TJ[A-Z]{2}|TRT\d{1,2}|TRF\d|STF|STJ)\b/i) || "Tribunal não identificado";
+  
+  const diario = getField(/(?:Diário|DJO|DJE|DEJT|Diário Eletrônico):\s*([^\n]+)/i);
+  const orgao = getField(/(?:Órgão|Secretaria|Vara|Juízo|Órgão Julgador|Juizado):\s*([^\n]+)/i);
+  const dataPublicacao = getField(/(?:Data\s+da\s+)?Publicação:\s*(\d{2}\/\d{2}\/\d{4})/i) || getField(/Publicado\s+em\s*(\d{2}\/\d{2}\/\d{4})/i);
+  const dataDivulgacao = getField(/(?:Data\s+da\s+)?Divulgação:\s*(\d{2}\/\d{2}\/\d{4})/i) || getField(/Divulgado\s+em\s*(\d{2}\/\d{2}\/\d{4})/i);
+  const cliente = getField(/(?:Cliente|Interessado|Assistido):\s*([^\n]+)/i);
+  const variacao = getField(/(?:Variação|Termo\s+de\s+pesquisa|Termo\s+localizado|Termo):\s*([^\n]+)/i);
+  const classe = getField(/(?:Classe|Procedimento):\s*([^\n]+)/i);
+  const tipoComunicacao = getField(/(?:Tipo\s+de\s+comunicação|Tipo\s+comunicação|Tipo):\s*([^\n]+)/i);
+  const meio = getField(/(?:Meio):\s*([^\n]+)/i);
+  const comunicacaoId = getField(/(?:Comunicação\s*ID|ID\s+da\s+comunicação|ID):\s*([^\n]+)/i);
+  
+  const linkMatch = blockText.match(/(https?:\/\/[^\s"'>]+)/);
+  const linkInteiroTeor = linkMatch ? linkMatch[1] : "";
+
+  let partes = "";
+  const partesMatch = blockText.match(/(?:Partes|Pólo\s+Ativo|Pólo\s+Passivo|Autor\/Réu|Advogado\(s\)|Advogados):\s*([\s\S]*?)(?=\n\n|\n[A-Z][a-z]+:|$)/i);
+  if (partesMatch) {
+    partes = partesMatch[1].trim();
+  }
+
+  return {
+    cnj,
+    tribunal,
+    diario,
+    orgao,
+    dataPublicacao,
+    dataDivulgacao,
+    cliente,
+    variacao,
+    classe,
+    tipoComunicacao,
+    meio,
+    comunicacaoId,
+    linkInteiroTeor,
+    partes
+  };
+}
+
+// Real Prius Conferidor Sync Endpoint
+app.post("/api/prius/conferidor/sync", async (req, res) => {
+  const { accessToken } = req.body;
+  if (!accessToken) {
+    return res.status(400).json({ error: "Access token do Google/Gmail não fornecido." });
+  }
+
+  try {
+    // Search for Prius emails in the inbox
+    const queryStr = `(from:(prius@recortediario.com.br) OR from:(prius@prius.adv.br) OR subject:("PRIUS - Publicações") OR "PRIUS")`;
+    const listUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(queryStr)}&maxResults=5`;
+    const listRes = await fetch(listUrl, {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    });
+
+    if (!listRes.ok) {
+      if (listRes.status === 401 || listRes.status === 403) {
+        return res.status(401).json({ error: "UNAUTHENTICATED", message: "Sessão do Google expirada ou inválida. Por favor, conecte com o Google novamente." });
+      }
+      const errText = await listRes.text();
+      throw new Error(`Erro ao buscar e-mails Prius: ${errText}`);
+    }
+
+    const listData = await listRes.json() as any;
+    if (!listData.messages || listData.messages.length === 0) {
+      return res.json({
+        source: "prius",
+        emailSubject: "Nenhum e-mail recente localizado",
+        gmailMessageId: "",
+        totalDetected: 0,
+        totalUnique: 0,
+        totalDuplicated: 0,
+        publications: []
+      });
+    }
+
+    // Fetch details of the newest message
+    const newestMsgId = listData.messages[0].id;
+    const detailUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${newestMsgId}?format=full`;
+    const detailRes = await fetch(detailUrl, {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    });
+
+    if (!detailRes.ok) {
+      throw new Error(`Erro ao detalhar e-mail Prius: ${await detailRes.text()}`);
+    }
+
+    const msgDetail = await detailRes.json() as any;
+    const headers = msgDetail.payload?.headers || [];
+    const subject = headers.find((h: any) => h.name.toLowerCase() === "subject")?.value || "PRIUS - Publicações";
+    const from = headers.find((h: any) => h.name.toLowerCase() === "from")?.value || "prius@recortediario.com.br";
+    const dateHeader = headers.find((h: any) => h.name.toLowerCase() === "date")?.value || "";
+    const emailDate = dateHeader ? new Date(dateHeader).toISOString() : new Date().toISOString();
+
+    const bodyContent = getEmailBody(msgDetail.payload);
+    let plainText = bodyContent.text;
+    if (!plainText && bodyContent.html) {
+      plainText = htmlToPlainText(bodyContent.html);
+    }
+    if (!plainText) {
+      plainText = msgDetail.snippet || "";
+    }
+
+    const rawBlocks = splitEmailIntoPublications(plainText);
+    const parsedPubs: any[] = [];
+    
+    rawBlocks.forEach((block, idx) => {
+      if (!block || block.trim().length < 15) return;
+      const meta = parseMetadataFromBlock(block);
+      
+      parsedPubs.push({
+        id: `prius-${newestMsgId}-${idx}`,
+        index: idx + 1,
+        total: rawBlocks.length,
+        dataPublicacao: meta.dataPublicacao || new Date(emailDate).toLocaleDateString('pt-BR'),
+        dataDivulgacao: meta.dataDivulgacao || new Date(emailDate).toLocaleDateString('pt-BR'),
+        tribunal: meta.tribunal || "Tribunal não identificado",
+        cnj: meta.cnj || "CNJ não identificado",
+        cliente: meta.cliente || "Cliente não informado",
+        variacao: meta.variacao || "",
+        diario: meta.diario || "",
+        orgao: meta.orgao || "",
+        content: block,
+        linkInteiroTeor: meta.linkInteiroTeor || "",
+        partes: meta.partes || "",
+        classe: meta.classe || "",
+        tipoComunicacao: meta.tipoComunicacao || "",
+        meio: meta.meio || "",
+        comunicacaoId: meta.comunicacaoId || "",
+        textClean: block.replace(/\r\n/g, '\n').replace(/\n+/g, '\n').trim(),
+        emailSource: from,
+        gmailMessageId: newestMsgId,
+        status: "Pendente"
+      });
+    });
+
+    const uniquePubs: any[] = [];
+    const seenKeys = new Set<string>();
+    let totalDuplicated = 0;
+
+    for (const pub of parsedPubs) {
+      let dupKey = "";
+      if (pub.comunicacaoId) {
+        dupKey = `id-${pub.comunicacaoId}`;
+      } else {
+        const normCnj = (pub.cnj || "").replace(/\D/g, "");
+        const normContent = (pub.content || "").toLowerCase().replace(/\s+/g, "").slice(0, 200);
+        dupKey = `cnj-${normCnj}-${pub.dataPublicacao}-${normContent}`;
+      }
+
+      if (seenKeys.has(dupKey)) {
+        pub.status = "Duplicada";
+        pub.isDuplicate = true;
+        totalDuplicated++;
+      } else {
+        seenKeys.add(dupKey);
+        pub.isDuplicate = false;
+      }
+      uniquePubs.push(pub);
+    }
+
+    return res.json({
+      source: "prius",
+      emailSubject: subject,
+      gmailMessageId: newestMsgId,
+      totalDetected: parsedPubs.length,
+      totalUnique: parsedPubs.length - totalDuplicated,
+      totalDuplicated,
+      publications: uniquePubs
+    });
+
+  } catch (error: any) {
+    console.error("Erro no conferidor Prius sync:", error);
+    return res.status(500).json({ error: "Falha ao processar o Conferidor Prius: " + error.message });
+  }
+});
+
+// Real Recorte Digital Conferidor Sync Endpoint
+app.post("/api/recorte-digital/conferidor/sync", async (req, res) => {
+  const { accessToken, serviceId } = req.body;
+  if (!accessToken) {
+    return res.status(400).json({ error: "Access token do Google/Gmail não fornecido." });
+  }
+  if (!serviceId) {
+    return res.status(400).json({ error: "Service ID do Recorte Digital não fornecido." });
+  }
+
+  try {
+    let queryStr = "";
+    if (serviceId === 'oab-mg') {
+      queryStr = `in:inbox ("Recorte Digital" "OAB/MG")`;
+    } else if (serviceId === 'rj') {
+      queryStr = `in:inbox ("Recorte Digital" "RJ")`;
+    } else if (serviceId === 'ceara') {
+      queryStr = `in:inbox ("Recorte Digital" "Ceará")`;
+    } else if (serviceId === 'sao-paulo') {
+      queryStr = `in:inbox ("Recorte Digital" "São Paulo")`;
+    } else {
+      queryStr = `in:inbox ("Recorte Digital" "${serviceId}")`;
+    }
+
+    const listUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(queryStr)}&maxResults=5`;
+    const listRes = await fetch(listUrl, {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    });
+
+    if (!listRes.ok) {
+      if (listRes.status === 401 || listRes.status === 403) {
+        return res.status(401).json({ error: "UNAUTHENTICATED", message: "Sessão do Google expirada ou inválida. Por favor, conecte com o Google novamente." });
+      }
+      const errText = await listRes.text();
+      throw new Error(`Erro ao buscar e-mails do Recorte Digital: ${errText}`);
+    }
+
+    const listData = await listRes.json() as any;
+    if (!listData.messages || listData.messages.length === 0) {
+      return res.json({
+        source: "recorte-digital",
+        emailSubject: "Nenhum e-mail recente localizado",
+        gmailMessageId: "",
+        totalDetected: 0,
+        totalUnique: 0,
+        totalDuplicated: 0,
+        publications: []
+      });
+    }
+
+    const newestMsgId = listData.messages[0].id;
+    const detailUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${newestMsgId}?format=full`;
+    const detailRes = await fetch(detailUrl, {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    });
+
+    if (!detailRes.ok) {
+      throw new Error(`Erro ao detalhar e-mail Recorte Digital: ${await detailRes.text()}`);
+    }
+
+    const msgDetail = await detailRes.json() as any;
+    const headers = msgDetail.payload?.headers || [];
+    const subject = headers.find((h: any) => h.name.toLowerCase() === "subject")?.value || `Recorte Digital - ${serviceId}`;
+    const from = headers.find((h: any) => h.name.toLowerCase() === "from")?.value || "recortedigital@tjrj.jus.br";
+    const dateHeader = headers.find((h: any) => h.name.toLowerCase() === "date")?.value || "";
+    const emailDate = dateHeader ? new Date(dateHeader).toISOString() : new Date().toISOString();
+
+    const bodyContent = getEmailBody(msgDetail.payload);
+    let plainText = bodyContent.text;
+    if (!plainText && bodyContent.html) {
+      plainText = htmlToPlainText(bodyContent.html);
+    }
+    if (!plainText) {
+      plainText = msgDetail.snippet || "";
+    }
+
+    const rawBlocks = splitEmailIntoPublications(plainText);
+    const parsedPubs: any[] = [];
+    
+    rawBlocks.forEach((block, idx) => {
+      if (!block || block.trim().length < 15) return;
+      const meta = parseMetadataFromBlock(block);
+      
+      parsedPubs.push({
+        id: `recorte-${serviceId}-${newestMsgId}-${idx}`,
+        index: idx + 1,
+        total: rawBlocks.length,
+        dataPublicacao: meta.dataPublicacao || new Date(emailDate).toLocaleDateString('pt-BR'),
+        dataDivulgacao: meta.dataDivulgacao || new Date(emailDate).toLocaleDateString('pt-BR'),
+        tribunal: meta.tribunal || (serviceId === 'rj' ? "TJRJ" : serviceId === 'ceara' ? "TJCE" : serviceId === 'sao-paulo' ? "TJSP" : serviceId === 'oab-mg' ? "TJMG" : "Tribunal não identificado"),
+        cnj: meta.cnj || "CNJ não identificado",
+        cliente: meta.cliente || "Cliente não informado",
+        variacao: meta.variacao || "",
+        diario: meta.diario || "",
+        orgao: meta.orgao || "",
+        content: block,
+        linkInteiroTeor: meta.linkInteiroTeor || "",
+        partes: meta.partes || "",
+        classe: meta.classe || "",
+        tipoComunicacao: meta.tipoComunicacao || "",
+        meio: meta.meio || "",
+        comunicacaoId: meta.comunicacaoId || "",
+        textClean: block.replace(/\r\n/g, '\n').replace(/\n+/g, '\n').trim(),
+        emailSource: from,
+        gmailMessageId: newestMsgId,
+        status: "Pendente"
+      });
+    });
+
+    const uniquePubs: any[] = [];
+    const seenKeys = new Set<string>();
+    let totalDuplicated = 0;
+
+    for (const pub of parsedPubs) {
+      let dupKey = "";
+      if (pub.comunicacaoId) {
+        dupKey = `id-${pub.comunicacaoId}`;
+      } else {
+        const normCnj = (pub.cnj || "").replace(/\D/g, "");
+        const normContent = (pub.content || "").toLowerCase().replace(/\s+/g, "").slice(0, 200);
+        dupKey = `cnj-${normCnj}-${pub.dataPublicacao}-${normContent}`;
+      }
+
+      if (seenKeys.has(dupKey)) {
+        pub.status = "Duplicada";
+        pub.isDuplicate = true;
+        totalDuplicated++;
+      } else {
+        seenKeys.add(dupKey);
+        pub.isDuplicate = false;
+      }
+      uniquePubs.push(pub);
+    }
+
+    return res.json({
+      source: "recorte-digital",
+      emailSubject: subject,
+      gmailMessageId: newestMsgId,
+      totalDetected: parsedPubs.length,
+      totalUnique: parsedPubs.length - totalDuplicated,
+      totalDuplicated,
+      publications: uniquePubs
+    });
+
+  } catch (error: any) {
+    console.error("Erro no conferidor Recorte Digital sync:", error);
+    return res.status(500).json({ error: "Falha ao processar o Conferidor Recorte Digital: " + error.message });
+  }
+});
+
 // Prius Integration Real-check Endpoint
 app.post("/api/prius/sync", async (req, res) => {
   const { accessToken } = req.body;
@@ -947,13 +1617,21 @@ app.post("/api/prius/sync", async (req, res) => {
     const queryStr = `in:inbox (from:(prius) OR subject:(prius) OR "PRIUS")`;
     const stats = await fetchGmailStatsForQuery(accessToken, queryStr);
     
+    if (stats.unauthenticated) {
+      return res.status(401).json({ error: "UNAUTHENTICATED", message: "Sessão do Google expirada ou inválida. Por favor, conecte com o Google novamente." });
+    }
+    
+    if (!stats.success) {
+      return res.status(500).json({ error: stats.error || "Não foi possível consultar o Gmail." });
+    }
+
     return res.json({ 
-      success: stats.success, 
+      success: true, 
       count: stats.totalCount, 
       unreadCount: stats.unreadCount,
       newestSubject: stats.newestSubject,
       newestDate: stats.newestDate,
-      error: stats.error || null,
+      error: null,
       publications: [] 
     });
   } catch (error: any) {
@@ -990,18 +1668,249 @@ app.post("/api/recorte-digital/sync", async (req, res) => {
 
     const stats = await fetchGmailStatsForQuery(accessToken, queryStr);
     
+    if (stats.unauthenticated) {
+      return res.status(401).json({ error: "UNAUTHENTICATED", message: "Sessão do Google expirada ou inválida. Por favor, conecte com o Google novamente." });
+    }
+    
+    if (!stats.success) {
+      return res.status(500).json({ error: stats.error || "Não foi possível consultar o Gmail." });
+    }
+
     return res.json({ 
-      success: stats.success, 
+      success: true, 
       count: stats.totalCount, 
       unreadCount: stats.unreadCount,
       newestSubject: stats.newestSubject,
       newestDate: stats.newestDate,
-      error: stats.error || null,
+      error: null,
       publications: [] 
     });
   } catch (error: any) {
     console.error(`Erro no sync Recorte Digital (${serviceId}):`, error);
     return res.status(500).json({ error: "Falha na varredura do Recorte Digital via Gmail: " + error.message });
+  }
+});
+
+// 12. API: DJEN National search
+app.post("/api/djen/search", async (req, res) => {
+  const { nome, oab, uf, periodo, dataInicio, dataFim } = req.body;
+
+  if (!nome || !oab || !uf) {
+    return res.status(400).json({ error: "Nome, OAB e UF são obrigatórios." });
+  }
+
+  // Define date range
+  const today = new Date();
+  let start = new Date();
+  let end = new Date();
+
+  const periodoLower = (periodo || "").toLowerCase();
+  if (periodoLower === 'hoje') {
+    start = today;
+    end = today;
+  } else if (periodoLower === 'ontem') {
+    const yesterday = new Date();
+    yesterday.setDate(today.getDate() - 1);
+    start = yesterday;
+    end = yesterday;
+  } else if (['5', '7', '10', '15', '20', '30'].includes(periodoLower)) {
+    const days = parseInt(periodoLower);
+    const startDate = new Date();
+    startDate.setDate(today.getDate() - days);
+    start = startDate;
+    end = today;
+  } else if (periodoLower === 'personalizado') {
+    if (!dataInicio || !dataFim) {
+      return res.status(400).json({ error: "Período personalizado exige data de início e fim." });
+    }
+    start = new Date(dataInicio);
+    end = new Date(dataFim);
+  } else {
+    start = today;
+    end = today;
+  }
+
+  function formatDate(date: Date): string {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
+  const dataInicioStr = formatDate(start);
+  const dataFimStr = formatDate(end);
+
+  try {
+    const djenUrl = "https://djen.cnj.jus.br/api/v1/diario/pesquisar";
+    
+    const oabVariants = [
+      `${uf}${oab}`,
+      `${oab}/${uf}`,
+      oab
+    ];
+
+    const fetchPromises = [
+      fetch(djenUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "Accept": "application/json"
+        },
+        body: JSON.stringify({
+          nomeOab: nome,
+          dataInicio: dataInicioStr,
+          dataFim: dataFimStr,
+          pagina: 1,
+          tamanhoPagina: 100
+        })
+      })
+    ];
+
+    oabVariants.forEach(variant => {
+      fetchPromises.push(
+        fetch(djenUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json"
+          },
+          body: JSON.stringify({
+            nomeOab: variant,
+            dataInicio: dataInicioStr,
+            dataFim: dataFimStr,
+            pagina: 1,
+            tamanhoPagina: 100
+          })
+        })
+      );
+    });
+
+    const responses = await Promise.all(fetchPromises);
+    
+    for (const response of responses) {
+      if (response.status === 403 || response.status === 503 || response.status === 429) {
+        throw new Error("CAPTCHA_OR_BLOCK");
+      }
+      if (!response.ok) {
+        const text = await response.text();
+        if (text.includes("cloudflare") || text.includes("captcha") || text.includes("challenge") || text.includes("blocked")) {
+          throw new Error("CAPTCHA_OR_BLOCK");
+        }
+      }
+    }
+
+    const allResults: any[] = [];
+    for (const response of responses) {
+      if (response.ok) {
+        const data: any = await response.json();
+        const records = data.registros || data.content || data.diarios || data.publicacoes || [];
+        allResults.push(...records);
+      }
+    }
+
+    const normalizedList: any[] = [];
+    const seenHashes = new Set<string>();
+
+    for (const rec of allResults) {
+      const processNumberList = extractCNJsFromText(rec.conteudo || "");
+      const processo = rec.processo || rec.numeroProcesso || (processNumberList.length > 0 ? processNumberList[0] : "Sem número");
+      const tribunal = rec.tribunal || rec.nomeTribunal || "DJEN Nacional";
+      const orgao = rec.orgao || rec.orgaoJulgador || "Juízo do DJEN";
+      const dataDisponibilizacao = rec.dataDisponibilizacao || rec.dataPublicacao || dataInicioStr;
+      
+      const availDateObj = new Date(dataDisponibilizacao);
+      const dataPublicacao = calculateBusinessDaysDate(availDateObj, 1).split('T')[0];
+
+      const conteudo = rec.conteudo || rec.texto || "";
+      const classe = rec.classe || "Não informada";
+      const partes = rec.partes || "Não identificadas";
+
+      const deadlineRegex = /prazo\s+de\s+(\d+)\s+dia/gi;
+      let apparentDeadlineDays = 0;
+      const match = deadlineRegex.exec(conteudo);
+      if (match) {
+        apparentDeadlineDays = parseInt(match[1]);
+      }
+
+      const informativePhrases = ["meramente informativo", "ciência", "registro", "arquivamento", "ciência da decisão"];
+      const hasInformativePhrase = informativePhrases.some(phrase => conteudo.toLowerCase().includes(phrase));
+      const informativeOnly = apparentDeadlineDays === 0 || hasInformativePhrase;
+
+      const cleanConteudo = conteudo
+        .replace(/<[^>]*>/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+
+      const contentExcerpt = cleanConteudo.substring(0, 100).toLowerCase().replace(/[^a-z0-9]/g, "");
+      const hashInput = `${processo}_${dataDisponibilizacao}_${tribunal}_${orgao}_${contentExcerpt}`;
+      const hashDuplicidade = Buffer.from(hashInput).toString("base64");
+
+      const normalizedRec = {
+        id: rec.id?.toString() || `djen-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+        fonte: 'djen',
+        dataDisponibilizacao,
+        dataPublicacao,
+        tribunal,
+        orgao,
+        processo,
+        classe,
+        partes,
+        advogadoEncontrado: nome,
+        oabEncontrada: oab,
+        conteudo,
+        conteudoLimpo: cleanConteudo,
+        linkOriginal: rec.linkOriginal || `https://djen.cnj.jus.br/diario/${rec.id || ''}`,
+        hashDuplicidade,
+        status: 'pendente',
+        apparentDeadlineDays,
+        informativeOnly,
+        isDuplicate: false,
+        primaryPubId: null as string | null
+      };
+
+      if (!seenHashes.has(hashDuplicidade)) {
+        seenHashes.add(hashDuplicidade);
+        normalizedList.push(normalizedRec);
+      } else {
+        normalizedRec.isDuplicate = true;
+        normalizedRec.status = 'duplicada';
+        const primary = normalizedList.find(p => p.hashDuplicidade === hashDuplicidade);
+        if (primary) {
+          normalizedRec.primaryPubId = primary.id;
+        }
+        normalizedList.push(normalizedRec);
+      }
+    }
+
+    return res.json({
+      success: true,
+      publications: normalizedList
+    });
+
+  } catch (err: any) {
+    console.error("Erro ao consultar o DJEN:", err);
+    let errMsg = "Não foi possível consultar o DJEN automaticamente. O site do cnj.jus.br pode estar instável.";
+    if (err.message === "CAPTCHA_OR_BLOCK") {
+      errMsg = "O servidor do DJEN (CNJ) está bloqueando requisições automatizadas temporariamente (Proteção Cloudflare/CAPTCHA). Por favor, utilize a 'Importação Manual de Texto' abaixo.";
+    } else if (
+      err.code === "ENOTFOUND" || 
+      err.message?.includes("getaddrinfo") || 
+      err.message?.includes("fetch failed") || 
+      err.cause?.message?.includes("getaddrinfo") ||
+      err.cause?.message?.includes("ENOTFOUND")
+    ) {
+      errMsg = "O servidor oficial do DJEN Nacional (djen.cnj.jus.br) está temporariamente inacessível ou offline (Erro de Conexão/DNS). O CNJ costuma restringir acessos automatizados. Por favor, utilize a 'Importação Manual de Texto' abaixo para processar publicações diretamente.";
+    } else if (err.message) {
+      errMsg = `Erro ao acessar o DJEN: ${err.message}. Por favor, utilize a 'Importação Manual de Texto' abaixo para prosseguir.`;
+    }
+
+    return res.status(503).json({
+      success: false,
+      blocked: true,
+      error: errMsg
+    });
   }
 });
 
@@ -1012,8 +1921,26 @@ function decodeBase64(data: string): string {
 }
 
 // Helper to recursively parse message body parts
-function parseBodyAndAttachments(payload: any): { bodyText: string; hasAttachments: boolean; attachments: any[] } {
+function cleanHtmlToText(html: string): string {
+  // Remove style blocks
+  let clean = html.replace(/<style[^>]*>([\s\S]*?)<\/style>/gi, "");
+  // Remove script blocks
+  clean = clean.replace(/<script[^>]*>([\s\S]*?)<\/script>/gi, "");
+  // Remove HTML tags
+  clean = clean.replace(/<[^>]*>/g, " ");
+  // Decode common HTML entities
+  clean = clean
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"');
+  return clean;
+}
+
+function parseBodyAndAttachments(payload: any): { bodyText: string; htmlBody: string; hasAttachments: boolean; attachments: any[] } {
   let bodyText = "";
+  let htmlBody = "";
   let hasAttachments = false;
   const attachments: any[] = [];
 
@@ -1031,9 +1958,8 @@ function parseBodyAndAttachments(payload: any): { bodyText: string; hasAttachmen
       
       if (part.mimeType === "text/plain" && part.body?.data) {
         bodyText += decodeBase64(part.body.data);
-      } else if (part.mimeType === "text/html" && part.body?.data && !bodyText) {
-        const html = decodeBase64(part.body.data);
-        bodyText += html.replace(/<[^>]*>/g, " "); // simple HTML tag strip
+      } else if (part.mimeType === "text/html" && part.body?.data) {
+        htmlBody += decodeBase64(part.body.data);
       }
 
       if (part.parts) {
@@ -1048,12 +1974,19 @@ function parseBodyAndAttachments(payload: any): { bodyText: string; hasAttachmen
     if (payload.mimeType === "text/plain") {
       bodyText = decodeBase64(payload.body.data);
     } else if (payload.mimeType === "text/html") {
-      const html = decodeBase64(payload.body.data);
-      bodyText = html.replace(/<[^>]*>/g, " ");
+      htmlBody = decodeBase64(payload.body.data);
     }
   }
 
-  return { bodyText: bodyText.trim(), hasAttachments, attachments };
+  // If we have HTML but no plain text, generate plain text by cleanly removing styles/scripts/tags
+  if (htmlBody && !bodyText) {
+    bodyText = cleanHtmlToText(htmlBody);
+  } else if (bodyText) {
+    // If we have plain text, clean up any style blocks or CSS garbage that might be inside
+    bodyText = cleanHtmlToText(bodyText);
+  }
+
+  return { bodyText: bodyText.trim(), htmlBody: htmlBody.trim(), hasAttachments, attachments };
 }
 
 // Extract judicial metadata using smart rules
@@ -1268,7 +2201,7 @@ app.post("/api/gmail-messages-details", async (req, res) => {
         const labelIds = detailData.labelIds || [];
         const isUnread = labelIds.includes("UNREAD");
 
-        const { bodyText, hasAttachments, attachments } = parseBodyAndAttachments(detailData.payload || {});
+        const { bodyText, htmlBody, hasAttachments, attachments } = parseBodyAndAttachments(detailData.payload || {});
         
         const judicialInfo = extractJudicialInfo(subject, bodyText, snippet);
 
@@ -1284,6 +2217,7 @@ app.post("/api/gmail-messages-details", async (req, res) => {
           hasAttachments,
           attachments,
           bodyText,
+          htmlBody,
           ...judicialInfo
         };
       } catch (err: any) {
@@ -1334,6 +2268,114 @@ app.get("/api/todoist/sections", async (req: any, res) => {
     const data = await apiRes.json();
     res.json(data);
   } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/todoist/labels", async (req: any, res) => {
+  try {
+    const apiRes = await fetch("https://api.todoist.com/rest/v2/labels", {
+      headers: { Authorization: `Bearer ${req.todoistToken}` }
+    });
+    if (!apiRes.ok) throw new Error(`Todoist API error: ${apiRes.status}`);
+    const data = await apiRes.json();
+    res.json(data);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/todoist/search-all", async (req: any, res) => {
+  const { cnj } = req.query;
+  if (!cnj) {
+    return res.status(400).json({ error: "Parâmetro cnj não fornecido." });
+  }
+
+  const cleanCnj = cnj.replace(/\s+/g, '');
+
+  try {
+    // 1. Fetch active tasks with search filter
+    const activeUrl = `https://api.todoist.com/rest/v2/tasks?filter=${encodeURIComponent(`search:${cleanCnj}`)}`;
+    const activeRes = await fetch(activeUrl, {
+      headers: { Authorization: `Bearer ${req.todoistToken}` }
+    });
+    
+    let activeTasks: any[] = [];
+    if (activeRes.ok) {
+      activeTasks = await activeRes.json();
+    }
+
+    // 2. Fetch completed tasks (last 100) and filter by CNJ
+    const completedUrl = "https://api.todoist.com/sync/v9/completed/get_all?limit=100";
+    const completedRes = await fetch(completedUrl, {
+      headers: { Authorization: `Bearer ${req.todoistToken}` }
+    });
+
+    let completedTasks: any[] = [];
+    if (completedRes.ok) {
+      const completedData = await completedRes.json() as any;
+      if (completedData && Array.isArray(completedData.items)) {
+        completedTasks = completedData.items.filter((task: any) => {
+          const content = (task.content || "").replace(/\s+/g, "");
+          const description = (task.description || "").replace(/\s+/g, "");
+          return content.includes(cleanCnj) || description.includes(cleanCnj);
+        });
+      }
+    }
+
+    // Combine them with is_completed flag properly set
+    const combinedTasks = [
+      ...activeTasks.map(t => ({ ...t, is_completed: false })),
+      ...completedTasks.map(t => ({
+        id: t.task_id || t.id,
+        content: t.content,
+        description: t.description || "",
+        is_completed: true,
+        completed_at: t.completed_at,
+        project_id: t.project_id,
+        labels: t.labels || [],
+        priority: t.priority || 1,
+        due: t.due || null,
+        assignee_id: t.assignee_id || null
+      }))
+    ];
+
+    // Deduplicate combinedTasks by id
+    const uniqueTasksMap = new Map<string, any>();
+    for (const t of combinedTasks) {
+      if (t.id) {
+        uniqueTasksMap.set(t.id, t);
+      }
+    }
+    const uniqueTasks = Array.from(uniqueTasksMap.values());
+
+    // Fetch comments for each task
+    const detailsPromises = uniqueTasks.map(async (task: any) => {
+      try {
+        const commentsUrl = `https://api.todoist.com/rest/v2/comments?task_id=${task.id}`;
+        const commentsRes = await fetch(commentsUrl, {
+          headers: { Authorization: `Bearer ${req.todoistToken}` }
+        });
+        let comments: any[] = [];
+        if (commentsRes.ok) {
+          comments = await commentsRes.json();
+        }
+        return {
+          ...task,
+          comments
+        };
+      } catch (err) {
+        return {
+          ...task,
+          comments: []
+        };
+      }
+    });
+
+    const tasksWithComments = await Promise.all(detailsPromises);
+    res.json(tasksWithComments);
+  } catch (err: any) {
+    console.error("Erro ao buscar tarefas no Todoist:", err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -1400,6 +2442,63 @@ app.post("/api/todoist/tasks/:id", async (req: any, res) => {
   }
 });
 
+app.delete("/api/todoist/tasks/:id", async (req: any, res) => {
+  try {
+    const apiRes = await fetch(`https://api.todoist.com/rest/v2/tasks/${req.params.id}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${req.todoistToken}` }
+    });
+    if (!apiRes.ok) throw new Error(`Todoist API error: ${apiRes.status}`);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/todoist/tasks/:id/close", async (req: any, res) => {
+  try {
+    const apiRes = await fetch(`https://api.todoist.com/rest/v2/tasks/${req.params.id}/close`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${req.todoistToken}` }
+    });
+    if (!apiRes.ok) throw new Error(`Todoist API error: ${apiRes.status}`);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/todoist/tasks/:id/reopen", async (req: any, res) => {
+  try {
+    const apiRes = await fetch(`https://api.todoist.com/rest/v2/tasks/${req.params.id}/reopen`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${req.todoistToken}` }
+    });
+    if (!apiRes.ok) throw new Error(`Todoist API error: ${apiRes.status}`);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/todoist/comments", async (req: any, res) => {
+  const { task_id, project_id } = req.query;
+  let url = "https://api.todoist.com/rest/v2/comments";
+  if (task_id) url += `?task_id=${task_id}`;
+  else if (project_id) url += `?project_id=${project_id}`;
+
+  try {
+    const apiRes = await fetch(url, {
+      headers: { Authorization: `Bearer ${req.todoistToken}` }
+    });
+    if (!apiRes.ok) throw new Error(`Todoist API error: ${apiRes.status}`);
+    const data = await apiRes.json();
+    res.json(data);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post("/api/todoist/comments", async (req: any, res) => {
   try {
     const apiRes = await fetch("https://api.todoist.com/rest/v2/comments", {
@@ -1416,6 +2515,19 @@ app.post("/api/todoist/comments", async (req: any, res) => {
     }
     const data = await apiRes.json();
     res.json(data);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete("/api/todoist/comments/:id", async (req: any, res) => {
+  try {
+    const apiRes = await fetch(`https://api.todoist.com/rest/v2/comments/${req.params.id}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${req.todoistToken}` }
+    });
+    if (!apiRes.ok) throw new Error(`Todoist API error: ${apiRes.status}`);
+    res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

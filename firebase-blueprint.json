@@ -94,6 +94,54 @@
         }
       },
       "required": ["token", "userId", "name", "createdAt"]
+    },
+    "EmailRule": {
+      "title": "EmailRule",
+      "description": "Custom dynamic Gmail search and mass-action rule for continuous learning",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "query": { "type": "string" },
+        "category": { "type": "string" },
+        "risk": { "type": "string", "enum": ["alto", "medio", "baixo"] },
+        "actionRecommended": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "lastChecked": { "type": "string", "format": "date-time" },
+        "userId": { "type": "string" }
+      },
+      "required": ["name", "query", "category", "risk", "actionRecommended", "userId", "createdAt"]
+    },
+    "DjenPublication": {
+      "title": "DjenPublication",
+      "description": "Judicial publications collected nationally from DJEN",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "fonte": { "type": "string", "enum": ["djen"] },
+        "dataDisponibilizacao": { "type": "string" },
+        "dataPublicacao": { "type": "string" },
+        "tribunal": { "type": "string" },
+        "orgao": { "type": "string" },
+        "processo": { "type": "string" },
+        "classe": { "type": "string" },
+        "partes": { "type": "string" },
+        "advogadoEncontrado": { "type": "string" },
+        "oabEncontrada": { "type": "string" },
+        "conteudo": { "type": "string" },
+        "conteudoLimpo": { "type": "string" },
+        "linkOriginal": { "type": "string" },
+        "hashDuplicidade": { "type": "string" },
+        "status": { 
+          "type": "string", 
+          "enum": ["pendente", "em_conferencia", "conferida", "delegada", "ignorada", "duplicada", "revisar_depois"] 
+        },
+        "apparentDeadlineDays": { "type": "integer" },
+        "informativeOnly": { "type": "boolean" },
+        "userId": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["fonte", "processo", "conteudo", "userId", "createdAt"]
     }
   },
   "firestore": {
@@ -101,9 +149,17 @@
       "schema": "Publication",
       "description": "Judicial publications and subpoena records"
     },
+    "djen_publications/{pubId}": {
+      "schema": "DjenPublication",
+      "description": "National DJEN publications and conference queue"
+    },
     "api_tokens/{tokenId}": {
       "schema": "ApiToken",
       "description": "Authorization tokens for legacy system API integration"
+    },
+    "email_rules/{ruleId}": {
+      "schema": "EmailRule",
+      "description": "Email cleanup and organization rules"
     }
   }
 }
