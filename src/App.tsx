@@ -57,6 +57,7 @@ export default function App() {
 
   // Secure Auth & Auto-update states
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
   const [hasAutoUpdated, setHasAutoUpdated] = useState<boolean>(false);
   const [isGeneralUpdating, setIsGeneralUpdating] = useState<boolean>(false);
 
@@ -1295,7 +1296,8 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
 
   const fetchAllPushes = async () => {
     if (!cachedToken) {
-      handleGoogleLogin();
+      setPushesError("Não conectado ao Gmail. Por favor, conecte sua conta Google clicando em 'Conectar Gmail'.");
+      addSystemLog('warning', 'Tentativa de atualizar Pushes sem sessão ativa do Gmail.', 'gmail_sync');
       return;
     }
 
@@ -1352,7 +1354,7 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
 
   const fetchSinglePush = async (sender: string) => {
     if (!cachedToken) {
-      handleGoogleLogin();
+      addSystemLog('warning', 'Tentativa de atualizar PUSH sem sessão ativa do Gmail.', 'gmail_sync');
       return;
     }
 
@@ -1691,6 +1693,8 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
 
   // Google Sign In & Get Gmail Token
   const handleGoogleLogin = async () => {
+    if (isLoggingIn) return;
+    setIsLoggingIn(true);
     setLoginError(null);
     try {
       const result = await signInWithPopup(auth, googleProvider);
@@ -1732,8 +1736,18 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
       }
     } catch (error: any) {
       console.error("Erro de autenticação Google:", error);
-      setLoginError(`Falha de autenticação com o Google: ${error.message}`);
-      addSystemLog('error', `Falha de autenticação com o Google: ${error.message}`);
+      if (error.code === 'auth/cancelled-popup-request' || error.message?.includes('cancelled-popup-request')) {
+        setLoginError("Login do Google cancelado ou outra tentativa de login em andamento.");
+        addSystemLog('warning', "Login do Google cancelado ou outra tentativa de login em andamento.");
+      } else if (error.code === 'auth/popup-blocked' || error.message?.includes('popup-blocked')) {
+        setLoginError("O pop-up de login do Google foi bloqueado pelo seu navegador. Por favor, permita pop-ups para este site.");
+        addSystemLog('warning', "O pop-up de login do Google foi bloqueado pelo seu navegador.");
+      } else {
+        setLoginError(`Falha de autenticação com o Google: ${error.message}`);
+        addSystemLog('error', `Falha de autenticação com o Google: ${error.message}`);
+      }
+    } finally {
+      setIsLoggingIn(false);
     }
   };
 
