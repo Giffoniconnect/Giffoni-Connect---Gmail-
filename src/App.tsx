@@ -4720,40 +4720,52 @@ BOSS JUDICIAL - CONTROLADORIA INTELIGENTE
                             </div>
 
                             {/* Actions bar */}
-                            <div className="px-5 py-3.5 bg-white border-b border-slate-100 flex flex-wrap gap-2 justify-between items-center">
+                            <div className="px-5 py-3.5 bg-white border-b border-slate-100 flex flex-wrap gap-3 justify-between items-center">
                               {/* Left navigation shortcuts */}
-                              <div className="flex flex-wrap gap-2 items-start">
-                                <div className="flex flex-col gap-1.5">
-                                  <button
-                                    onClick={() => {
-                                      if (source) {
-                                        openGmailExplorer({
-                                          name: source.name,
-                                          sender: source.sender
-                                        }, 'all');
-                                      }
-                                    }}
-                                    className="bg-slate-900 hover:bg-slate-800 text-white font-bold text-[11px] py-2 px-3.5 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer w-full justify-center"
-                                  >
-                                    <Inbox className="h-3 w-3" />
-                                    Ver todos os e-mails deste PUSH
-                                  </button>
+                              <div className="flex flex-wrap gap-2 items-center">
+                                <button
+                                  onClick={() => {
+                                    if (source) {
+                                      openGmailExplorer({
+                                        name: source.name,
+                                        sender: source.sender
+                                      }, 'all');
+                                    }
+                                  }}
+                                  className="bg-slate-900 hover:bg-slate-800 text-white font-bold text-[11px] py-2 px-3.5 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+                                >
+                                  <Inbox className="h-3 w-3" />
+                                  Ver todos os e-mails deste PUSH
+                                </button>
 
-                                  {!isNotIdentified && group.processNumber && (
+                                {!isNotIdentified && group.processNumber && (
+                                  <div className="flex flex-wrap gap-2 items-center">
                                     <a
                                       href={buildOriginalGmailProcessUrl(group.processNumber)}
                                       target="_blank"
                                       rel="noopener noreferrer"
-                                      className="bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-[11px] py-2 px-3.5 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer border border-slate-200 w-full justify-center"
+                                      className="bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-[11px] py-2 px-3.5 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer border border-slate-200"
                                     >
                                       <ExternalLink className="h-3 w-3 text-slate-600" />
                                       Ver todos os E-mails deste Processo no Gmail ORIGINAL
                                     </a>
-                                  )}
-                                </div>
 
-                                {!isNotIdentified && (
-                                  <>
+                                    <button
+                                      onClick={() => handleOpenControladoriaWorkspace(group.messages[0], group, source.id)}
+                                      className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/50 font-bold text-[11px] py-2 px-3.5 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+                                    >
+                                      <Sliders className="h-3 w-3 text-indigo-600" />
+                                      Atualizar Controladoria
+                                    </button>
+
+                                    <button
+                                      onClick={() => handleOpenDelegarPrazoFromPush(group.messages[0], group)}
+                                      className="bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200/50 font-bold text-[11px] py-2 px-3.5 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+                                    >
+                                      <CalendarRange className="h-3 w-3 text-amber-600" />
+                                      Delegar Prazo
+                                    </button>
+
                                     <a
                                       href={group.todoistUrl}
                                       target="_blank"
@@ -4772,7 +4784,7 @@ BOSS JUDICIAL - CONTROLADORIA INTELIGENTE
                                       <Zap className="h-3 w-3 text-blue-600" />
                                       Acesse o Processo com 1 Clique
                                     </button>
-                                  </>
+                                  </div>
                                 )}
                               </div>
 

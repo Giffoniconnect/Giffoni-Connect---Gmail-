@@ -917,8 +917,10 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
   return (
     <div className="space-y-6 text-slate-800 animate-fade-in relative">
       
-      {/* Meta Diária da Controladoria */}
+      {/* 3. FOOTER: BENTO-GRID SMART QUEUES STATS & PROGRESS */}
       <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+        
+        {/* Progress block (Daily goals) */}
         <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-center">
           <div className="md:col-span-4 space-y-1">
             <h3 className="font-extrabold text-slate-900 text-sm flex items-center gap-2">
@@ -946,6 +948,7 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
             </span>
           </div>
         </div>
+
       </div>
 
       {/* 1. FIXED TOP BAR (SMART QUEUE HEADER) */}
@@ -2006,110 +2009,7 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
 
       </div>
 
-      {/* 3. FOOTER: BENTO-GRID SMART QUEUES STATS & PROGRESS */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-6">
-        
-        {/* Progress block (Daily goals) */}
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-center">
-          <div className="md:col-span-4 space-y-1">
-            <h3 className="font-extrabold text-slate-900 text-sm flex items-center gap-2">
-              <Target className="h-4 w-4 text-indigo-500 animate-pulse" /> Meta Diária da Controladoria
-            </h3>
-            <p className="text-[11px] text-slate-500 leading-relaxed">
-              Otimize o fluxo processando publicações com rapidez e precisão operacional.
-            </p>
-          </div>
-          <div className="md:col-span-5">
-            <div className="flex justify-between items-center text-xs mb-1.5 font-semibold text-slate-700">
-              <span>Metas Hoje: {processedToday} / 150</span>
-              <span>{Math.round((processedToday / 150) * 100)}% concluída</span>
-            </div>
-            <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
-              <div 
-                className="bg-indigo-600 h-full rounded-full transition-all duration-500"
-                style={{ width: `${Math.min(100, Math.round((processedToday / 150) * 100))}%` }}
-              ></div>
-            </div>
-          </div>
-          <div className="md:col-span-3 text-center md:text-right">
-            <span className="inline-block bg-indigo-50 text-indigo-700 border border-indigo-100 font-bold text-xs px-3.5 py-1.5 rounded-xl">
-              Falta pouco: ~ {Math.max(15, Math.round(((150 - processedToday) * avgTimePerPub) / 60))} min para a meta
-            </span>
-          </div>
-        </div>
 
-        {/* Smart Queues Stats Manager */}
-        <div className="border-t border-slate-100 pt-5 space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <h3 className="font-extrabold text-slate-900 text-sm flex items-center gap-1.5">
-              <Inbox className="h-4 w-4 text-indigo-500" /> Gerenciador de Filas Inteligentes
-            </h3>
-            <div className="flex flex-wrap gap-1">
-              {Object.keys(smartQueues).map((key) => (
-                <button
-                  key={key}
-                  onClick={() => setSelectedQueueTab(key)}
-                  className={`px-3 py-1 text-xs font-bold rounded-lg transition ${
-                    selectedQueueTab === key 
-                      ? "bg-slate-900 text-white" 
-                      : "bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200"
-                  }`}
-                >
-                  {smartQueues[key].name}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Bento-grid of stats for selected queue */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
-            
-            <div className="bg-slate-50 border border-slate-150 p-4 rounded-xl text-center shadow-inner">
-              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total</div>
-              <div className="text-xl font-extrabold font-mono text-slate-800 mt-1">
-                {smartQueues[selectedQueueTab]?.total || 0}
-              </div>
-            </div>
-
-            <div className="bg-emerald-50/50 border border-emerald-150 p-4 rounded-xl text-center">
-              <div className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">Conferidos</div>
-              <div className="text-xl font-extrabold font-mono text-emerald-700 mt-1">
-                {smartQueues[selectedQueueTab]?.conferidos || 0}
-              </div>
-            </div>
-
-            <div className="bg-amber-50/50 border border-amber-150 p-4 rounded-xl text-center">
-              <div className="text-[10px] font-bold text-amber-600 uppercase tracking-wider">Pendentes</div>
-              <div className="text-xl font-extrabold font-mono text-amber-700 mt-1">
-                {smartQueues[selectedQueueTab]?.pendentes || 0}
-              </div>
-            </div>
-
-            <div className="bg-blue-50/50 border border-blue-150 p-4 rounded-xl text-center">
-              <div className="text-[10px] font-bold text-blue-600 uppercase tracking-wider">Revisão</div>
-              <div className="text-xl font-extrabold font-mono text-blue-700 mt-1">
-                {smartQueues[selectedQueueTab]?.revisao || 0}
-              </div>
-            </div>
-
-            <div className="bg-orange-50/50 border border-orange-150 p-4 rounded-xl text-center">
-              <div className="text-[10px] font-bold text-orange-600 uppercase tracking-wider">Duplicados</div>
-              <div className="text-xl font-extrabold font-mono text-orange-700 mt-1">
-                {smartQueues[selectedQueueTab]?.duplicados || 0}
-              </div>
-            </div>
-
-            <div className="bg-red-50/50 border border-red-150 p-4 rounded-xl text-center">
-              <div className="text-[10px] font-bold text-red-600 uppercase tracking-wider">Ignorados</div>
-              <div className="text-xl font-extrabold font-mono text-red-700 mt-1">
-                {smartQueues[selectedQueueTab]?.ignorados || 0}
-              </div>
-            </div>
-
-          </div>
-        </div>
-
-      </div>
 
       {/* 4. MODAL: CONFIRM SAVE CHOICE DIALOG */}
       {showSaveChoiceModal && (
