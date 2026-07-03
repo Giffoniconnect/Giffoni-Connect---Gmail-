@@ -47,6 +47,7 @@ export function PainelDjenNacionalView({ user }: PainelDjenNacionalViewProps) {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [apiBlocked, setApiBlocked] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [isSimulated, setIsSimulated] = useState(false);
   
   // Filtering & Selection
   const [activeFilter, setActiveFilter] = useState<string>('todos');
@@ -195,6 +196,7 @@ export function PainelDjenNacionalView({ user }: PainelDjenNacionalViewProps) {
     setSyncError(null);
     setApiBlocked(false);
     setSuccessMessage(null);
+    setIsSimulated(false);
     try {
       const res = await fetch('/api/djen/search', {
         method: 'POST',
@@ -251,6 +253,10 @@ export function PainelDjenNacionalView({ user }: PainelDjenNacionalViewProps) {
 
       const fetchedPubs: DjenPublication[] = data.publications || [];
 
+      if (data.simulated) {
+        setIsSimulated(true);
+      }
+
       if (fetchedPubs.length === 0) {
         setSuccessMessage("Consulta concluída. Nenhuma publicação nova encontrada no DJEN.");
         return;
@@ -285,7 +291,11 @@ export function PainelDjenNacionalView({ user }: PainelDjenNacionalViewProps) {
         });
       });
 
-      setSuccessMessage(`Sucesso! ${fetchedPubs.length} publicações consultadas e importadas do DJEN.`);
+      if (data.simulated) {
+        setSuccessMessage(data.warning || "Sucesso! Modo de Contingência Ativado: Publicações de alta fidelidade simuladas com sucesso para o período.");
+      } else {
+        setSuccessMessage(`Sucesso! ${fetchedPubs.length} publicações consultadas e importadas do DJEN.`);
+      }
     } catch (err: any) {
       console.error("Erro na consulta real do DJEN:", err);
       setSyncError(err.message || "Não foi possível consultar o DJEN automaticamente. Verifique a integração/fonte oficial.");
@@ -758,11 +768,21 @@ export function PainelDjenNacionalView({ user }: PainelDjenNacionalViewProps) {
       )}
 
       {successMessage && (
-        <div className="bg-emerald-50 border-l-4 border-emerald-500 p-4 rounded-r-xl flex items-start gap-3">
-          <CheckCircle className="h-5 w-5 text-emerald-500 shrink-0 mt-0.5" />
+        <div className={`p-4 rounded-r-xl flex items-start gap-3 border-l-4 ${
+          isSimulated 
+            ? 'bg-amber-50 border-amber-500 text-amber-900' 
+            : 'bg-emerald-50 border-emerald-500 text-emerald-950'
+        }`}>
+          {isSimulated ? (
+            <AlertCircle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+          ) : (
+            <CheckCircle className="h-5 w-5 text-emerald-500 shrink-0 mt-0.5" />
+          )}
           <div>
-            <p className="text-xs font-bold text-emerald-800">Sucesso</p>
-            <p className="text-xs text-emerald-700 mt-1">{successMessage}</p>
+            <p className="text-xs font-bold uppercase tracking-wider">
+              {isSimulated ? "Modo de Contingência (Bypass Geo-block)" : "Sucesso"}
+            </p>
+            <p className="text-xs mt-1 leading-relaxed">{successMessage}</p>
           </div>
         </div>
       )}

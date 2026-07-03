@@ -4,6 +4,7 @@ import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
 import { createServer as createViteServer } from "vite";
 import { ComunicaApiService } from "./src/services/comunicaApiService.js";
+import { djenSearchHandler } from "./src/api/djen/search.js";
 
 // Load environment variables
 dotenv.config();
@@ -1693,99 +1694,7 @@ app.post("/api/recorte-digital/sync", async (req, res) => {
 });
 
 // 12. API: DJEN National search (now using Comunica API/PJe)
-app.post("/api/djen/search", async (req, res) => {
-  const { nome, oab, uf, periodo, dataInicio, dataFim } = req.body;
-
-  if (!nome || !oab || !uf) {
-    return res.status(400).json({ error: "Nome, OAB e UF são obrigatórios." });
-  }
-
-  // Define date range
-  const today = new Date();
-  let start = new Date();
-  let end = new Date();
-
-  const periodoLower = (periodo || "").toLowerCase();
-  if (periodoLower === 'hoje') {
-    start = today;
-    end = today;
-  } else if (periodoLower === 'ontem') {
-    const yesterday = new Date();
-    yesterday.setDate(today.getDate() - 1);
-    start = yesterday;
-    end = yesterday;
-  } else if (periodoLower === 'personalizado') {
-    if (!dataInicio || !dataFim) {
-      return res.status(400).json({ error: "Período personalizado exige data de início e fim." });
-    }
-    start = new Date(dataInicio);
-    end = new Date(dataFim);
-  } else {
-    // Matches "ultimos X dias" or just "X"
-    const matchDays = periodoLower.match(/\d+/);
-    if (matchDays) {
-      const days = parseInt(matchDays[0], 10);
-      const startDate = new Date();
-      startDate.setDate(today.getDate() - days);
-      start = startDate;
-      end = today;
-    } else {
-      start = today;
-      end = today;
-    }
-  }
-
-  function formatDate(date: Date): string {
-    const y = date.getFullYear();
-    const m = String(date.getMonth() + 1).padStart(2, '0');
-    const d = String(date.getDate()).padStart(2, '0');
-    return `${y}-${m}-${d}`;
-  }
-
-  const dataInicioStr = formatDate(start);
-  const dataFimStr = formatDate(end);
-
-  try {
-    const publications = await ComunicaApiService.searchCommunications({
-      nome,
-      oab,
-      uf,
-      dataInicial: dataInicioStr,
-      dataFinal: dataFimStr
-    });
-
-    return res.json({
-      success: true,
-      publications
-    });
-
-  } catch (err: any) {
-    console.error("Erro ao consultar a Comunica API/PJe:", err);
-    let errMsg = "Não foi possível consultar o PJe/Comunica API automaticamente. O site comunicaapi.pje.jus.br pode estar instável.";
-    let isBlocked = false;
-
-    if (err.message === "SWAGGER_GEO_BLOCKED" || err.message === "GEO_BLOCKED" || err.message === "HTTP_403_FORBIDDEN") {
-      isBlocked = true;
-      errMsg = "O servidor oficial da Comunica API/PJe (comunicaapi.pje.jus.br) bloqueou o acesso temporariamente devido a restrições de localização/IP (Proteção de Geo-blocking via CloudFront). Tribunais costumam restringir conexões originadas em servidores de nuvem fora do Brasil. Por favor, utilize o botão 'Abrir Swagger/Consulta Oficial' para realizar a consulta manualmente em seu navegador.";
-    } else if (
-      err.code === "ENOTFOUND" || 
-      err.message?.includes("getaddrinfo") || 
-      err.message?.includes("fetch failed") || 
-      err.cause?.message?.includes("getaddrinfo") ||
-      err.cause?.message?.includes("ENOTFOUND")
-    ) {
-      errMsg = "O servidor oficial da Comunica API/PJe (comunicaapi.pje.jus.br) está temporariamente inacessível ou offline (Erro de Conexão/DNS). Por favor, tente novamente mais tarde ou clique em 'Abrir Swagger/Consulta Oficial'.";
-    } else if (err.message) {
-      errMsg = `Erro ao acessar a Comunica API/PJe: ${err.message}.`;
-    }
-
-    return res.status(200).json({
-      success: false,
-      blocked: isBlocked,
-      error: errMsg
-    });
-  }
-});
+app.post("/api/djen/search", djenSearchHandler);
 
 // Helper to decode Gmail base64
 function decodeBase64(data: string): string {
