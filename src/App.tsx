@@ -23,6 +23,11 @@ function buildOriginalGmailPushUrl(sender: string): string {
   return `https://mail.google.com/mail/u/0/#search/in%3Ainbox+from%3A${encodeURIComponent(sender)}`;
 }
 
+function buildOriginalGmailProcessUrl(cnj: string): string {
+  const cnjEncoded = encodeURIComponent(cnj);
+  return `https://mail.google.com/mail/u/0/#advanced-search/subset=inbox&has=${cnjEncoded}&within=1d&sizeoperator=s_sl&sizeunit=s_smb&query=${cnjEncoded}`;
+}
+
 export default function App() {
   // Auth state
   const [user, setUser] = useState<User | null>(null);
@@ -863,7 +868,7 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
           const sender = (controladoriaActiveItem.from || '').toLowerCase();
           const source = PUSH_SOURCES.find(s => sender.includes(s.sender.toLowerCase()) || s.sender.toLowerCase().includes(sender));
           const resolvedPushId = source ? source.id : 'trt-mg';
-          setActiveTab(`pushes/push-${resolvedPushId}` as any);
+          handleTabChange(`pushes/push-${resolvedPushId}`);
         }, 1500);
       }
 
@@ -906,7 +911,7 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
     prefillTodoistForm(initialItem);
     
     // Navigate immediately
-    setActiveTab(`pushes/push-${resolvedSourceId}/atualizar-controladoria` as any);
+    handleTabChange(`pushes/push-${resolvedSourceId}/atualizar-controladoria`);
 
     // Fetch Todoist projects/sections if token is present
     const savedToken = localStorage.getItem('boss_todoist_api_token');
@@ -1013,64 +1018,103 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
   const renderControladoriaWorkspace = (source: any, theme: any) => {
     if (!controladoriaActiveItem) {
       return (
-        <div className="flex flex-col items-center justify-center py-20 bg-slate-50 border border-slate-200 rounded-3xl text-center space-y-4">
-          <RefreshCw className="h-10 w-10 text-indigo-500 animate-spin" />
-          <h3 className="text-base font-bold text-slate-800">Carregando Área de Trabalho...</h3>
-          <p className="text-xs text-slate-500 max-w-sm">
-            Aguarde enquanto os metadados do e-mail e as informações da publicação jurídica são carregados e analisados pelo Portal BOSS.
-          </p>
+        <div className="space-y-6 animate-fade-in text-slate-800">
+          {/* Back button */}
+          <button 
+            onClick={() => handleTabChange(`pushes/push-${source?.id || 'trt-mg'}`)} 
+            className="inline-flex items-center gap-1.5 text-xs text-indigo-600 hover:opacity-85 font-bold cursor-pointer transition"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Voltar para o painel do PUSH
+          </button>
+          
+          <div className="flex flex-col items-center justify-center py-20 bg-slate-50 border border-slate-200 rounded-3xl text-center space-y-4">
+            <AlertTriangle className="h-10 w-10 text-amber-500" />
+            <h3 className="text-base font-bold text-slate-800">Nenhum e-mail/processo selecionado para atualizar a Controladoria.</h3>
+            <p className="text-xs text-slate-500 max-w-sm">
+              Por favor, selecione um processo no painel operacional do PUSH antes de acessar a Controladoria.
+            </p>
+            <button
+              onClick={() => handleTabChange(`pushes/push-${source?.id || 'trt-mg'}`)}
+              className="bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs py-2 px-4 rounded-xl transition cursor-pointer"
+            >
+              Voltar para o painel do PUSH
+            </button>
+          </div>
         </div>
       );
     }
 
     return (
-      <ControladoriaWorkspaceComponent
-        controladoriaActiveItem={controladoriaActiveItem}
-        groupedPushes={groupedPushes}
-        theme={theme}
-        todoistToken={todoistToken}
-        setTodoistToken={setTodoistToken}
-        todoistProjects={todoistProjects}
-        todoistTaskTitle={todoistTaskTitle}
-        setTodoistTaskTitle={setTodoistTaskTitle}
-        todoistTaskDescription={todoistTaskDescription}
-        setTodoistTaskDescription={setTodoistTaskDescription}
-        todoistTaskAssignee={todoistTaskAssignee}
-        setTodoistTaskAssignee={setTodoistTaskAssignee}
-        todoistTaskDate={todoistTaskDate}
-        setTodoistTaskDate={setTodoistTaskDate}
-        todoistTaskPriority={todoistTaskPriority}
-        setTodoistTaskPriority={setTodoistTaskPriority}
-        todoistTaskProject={todoistTaskProject}
-        setTodoistTaskProject={setTodoistTaskProject}
-        todoistTaskComments={todoistTaskComments}
-        setTodoistTaskComments={setTodoistTaskComments}
-        todoistTaskSubtasks={todoistTaskSubtasks}
-        setTodoistTaskSubtasks={setTodoistTaskSubtasks}
-        todoistTaskLabels={todoistTaskLabels}
-        setTodoistTaskLabels={setTodoistTaskLabels}
-        todoistLinkedTask={todoistLinkedTask}
-        setTodoistLinkedTask={setTodoistLinkedTask}
-        todoistLoading={todoistLoading}
-        todoistSyncing={todoistSyncing}
-        handleSaveTodoistTask={handleSaveTodoistTask}
-        handleOpenControladoriaWorkspace={handleOpenControladoriaWorkspace}
-        handleMarkAsConferred={handleMarkAsConferred}
-        publications={publications}
-        setPublications={setPublications}
-        systemLogs={systemLogs}
-        addSystemLog={addSystemLog}
-        setActiveTab={setActiveTab}
-        source={source}
-        todoistMultipleTasksFound={todoistMultipleTasksFound}
-        setTodoistMultipleTasksFound={setTodoistMultipleTasksFound}
-        isTodoistSelectionModalOpen={isTodoistSelectionModalOpen}
-        setIsTodoistSelectionModalOpen={setIsTodoistSelectionModalOpen}
-        todoistNotFoundForCnj={todoistNotFoundForCnj}
-        setTodoistNotFoundForCnj={setTodoistNotFoundForCnj}
-        handleSelectTask={handleSelectTaskInApp}
-        cachedToken={cachedToken}
-      />
+      <div className="space-y-6 animate-fade-in text-slate-800">
+        {/* Back button */}
+        <button 
+          onClick={() => handleTabChange(`pushes/push-${source?.id || 'trt-mg'}`)} 
+          className="inline-flex items-center gap-1.5 text-xs text-indigo-600 hover:opacity-85 font-bold cursor-pointer transition"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Voltar para o painel do PUSH
+        </button>
+
+        {/* Page Header */}
+        <div className="border-b border-slate-200 pb-5">
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
+            <Sliders className="h-6 w-6 text-indigo-600" />
+            Atualizar Controladoria
+          </h1>
+          <p className="text-slate-500 text-xs mt-1">
+            Fonte do push: <strong className="text-slate-700">{source?.name || 'Push Geral'}</strong>
+          </p>
+        </div>
+
+        <ControladoriaWorkspaceComponent
+          controladoriaActiveItem={controladoriaActiveItem}
+          groupedPushes={groupedPushes}
+          theme={theme}
+          todoistToken={todoistToken}
+          setTodoistToken={setTodoistToken}
+          todoistProjects={todoistProjects}
+          todoistTaskTitle={todoistTaskTitle}
+          setTodoistTaskTitle={setTodoistTaskTitle}
+          todoistTaskDescription={todoistTaskDescription}
+          setTodoistTaskDescription={setTodoistTaskDescription}
+          todoistTaskAssignee={todoistTaskAssignee}
+          setTodoistTaskAssignee={setTodoistTaskAssignee}
+          todoistTaskDate={todoistTaskDate}
+          setTodoistTaskDate={setTodoistTaskDate}
+          todoistTaskPriority={todoistTaskPriority}
+          setTodoistTaskPriority={setTodoistTaskPriority}
+          todoistTaskProject={todoistTaskProject}
+          setTodoistTaskProject={setTodoistTaskProject}
+          todoistTaskComments={todoistTaskComments}
+          setTodoistTaskComments={setTodoistTaskComments}
+          todoistTaskSubtasks={todoistTaskSubtasks}
+          setTodoistTaskSubtasks={setTodoistTaskSubtasks}
+          todoistTaskLabels={todoistTaskLabels}
+          setTodoistTaskLabels={setTodoistTaskLabels}
+          todoistLinkedTask={todoistLinkedTask}
+          setTodoistLinkedTask={setTodoistLinkedTask}
+          todoistLoading={todoistLoading}
+          todoistSyncing={todoistSyncing}
+          handleSaveTodoistTask={handleSaveTodoistTask}
+          handleOpenControladoriaWorkspace={handleOpenControladoriaWorkspace}
+          handleMarkAsConferred={handleMarkAsConferred}
+          publications={publications}
+          setPublications={setPublications}
+          systemLogs={systemLogs}
+          addSystemLog={addSystemLog}
+          setActiveTab={handleTabChange}
+          source={source}
+          todoistMultipleTasksFound={todoistMultipleTasksFound}
+          setTodoistMultipleTasksFound={setTodoistMultipleTasksFound}
+          isTodoistSelectionModalOpen={isTodoistSelectionModalOpen}
+          setIsTodoistSelectionModalOpen={setIsTodoistSelectionModalOpen}
+          todoistNotFoundForCnj={todoistNotFoundForCnj}
+          setTodoistNotFoundForCnj={setTodoistNotFoundForCnj}
+          handleSelectTask={handleSelectTaskInApp}
+          cachedToken={cachedToken}
+        />
+      </div>
     );
   };
 
@@ -4431,9 +4475,23 @@ BOSS JUDICIAL - CONTROLADORIA INTELIGENTE
                               </div>
                             </div>
 
-                            <div className="border-t border-slate-100 mt-4 pt-3 flex items-center justify-between text-xs font-bold text-purple-600 group-hover:text-purple-800">
-                              <span>Abrir painel operacional</span>
-                              <ChevronRight className="h-4 w-4 transform group-hover:translate-x-1 transition-transform" />
+                            <div className="border-t border-slate-100 mt-4 pt-3 flex flex-col gap-2">
+                              <div className="flex items-center justify-between text-xs font-bold text-purple-600 group-hover:text-purple-800 py-1">
+                                <span>Abrir painel operacional</span>
+                                <ChevronRight className="h-4 w-4 transform group-hover:translate-x-1 transition-transform" />
+                              </div>
+                              <a
+                                href={buildOriginalGmailPushUrl(source.sender)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                }}
+                                className="w-full flex items-center justify-center gap-1.5 text-[10px] font-bold text-slate-700 hover:text-slate-900 bg-slate-50 hover:bg-slate-100 py-2 px-3 rounded-lg border border-slate-200 transition-colors cursor-pointer"
+                              >
+                                <ExternalLink className="h-3 w-3 text-slate-500" />
+                                <span>Ver todos os e-mails deste PUSH no Gmail ORIGINAL</span>
+                              </a>
                             </div>
                           </div>
                         );
@@ -4681,15 +4739,17 @@ BOSS JUDICIAL - CONTROLADORIA INTELIGENTE
                                     Ver todos os e-mails deste PUSH
                                   </button>
 
-                                  <a
-                                    href={buildOriginalGmailPushUrl(source?.sender || '')}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-[11px] py-2 px-3.5 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer border border-slate-200 w-full justify-center"
-                                  >
-                                    <ExternalLink className="h-3 w-3 text-slate-600" />
-                                    Ver todos os e-mails deste PUSH no Gmail ORIGINAL
-                                  </a>
+                                  {!isNotIdentified && group.processNumber && (
+                                    <a
+                                      href={buildOriginalGmailProcessUrl(group.processNumber)}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-[11px] py-2 px-3.5 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer border border-slate-200 w-full justify-center"
+                                    >
+                                      <ExternalLink className="h-3 w-3 text-slate-600" />
+                                      Ver todos os E-mails deste Processo no Gmail ORIGINAL
+                                    </a>
+                                  )}
                                 </div>
 
                                 {!isNotIdentified && (
