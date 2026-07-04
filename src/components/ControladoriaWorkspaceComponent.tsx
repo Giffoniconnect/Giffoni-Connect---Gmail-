@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { 
   Sliders, CalendarRange, Clock, Database, CheckCircle, RefreshCw, 
   ArrowLeft, ArrowRight, Save, Trash2, Check, Plus, ExternalLink, 
-  AlertTriangle, User, Calendar, Tag, ChevronDown, Download, Copy, 
+  AlertTriangle, User, Calendar, Tag, ChevronDown, Download, Copy, Settings, 
   Inbox, Flame, Target, Sparkles, Keyboard, Key, MessageSquare, Search, Terminal,
   Folder, Flag, X, FileText, CheckSquare, Bug, AlertCircle, Cpu,
   Hash, Bell, MapPin, Paperclip, Upload, Activity, GitBranch, ChevronRight
@@ -159,8 +159,17 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
   const [isInvestigadorModalOpen, setIsInvestigadorModalOpen] = useState(false);
   const [isLogsModalOpen, setIsLogsModalOpen] = useState(false);
   const [isSecretariadoOpen, setIsSecretariadoOpen] = useState(true);
+  const [isEquipeJuridicaOpen, setIsEquipeJuridicaOpen] = useState(false);
+  const [isAjustarParametrosOpen, setIsAjustarParametrosOpen] = useState(false);
   const [investigadorCopied, setInvestigadorCopied] = useState(false);
   const [logsModalCopied, setLogsModalCopied] = useState(false);
+  const [lastVerificationTime, setLastVerificationTime] = useState<string>("");
+  const [localTodoistHealth, setLocalTodoistHealth] = useState<any>({
+    enabled: false,
+    tokenLoaded: false,
+    tokenSource: 'AUSENTE',
+    status: 'checking'
+  });
   
   // Save Dialog/Modal State
   const [showSaveChoiceModal, setShowSaveChoiceModal] = useState(false);
@@ -863,16 +872,62 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
     }
     setTodoistLoadingLocal(true);
     try {
+      // 1. Fetch collaborators of the project to find assignee "giffonisecretaria"
+      let assigneeId: string | undefined = undefined;
+      let assigneeFound = false;
+      try {
+        const collabRes = await fetch(`/api/todoist/projects/${todoistLinkedTask.project_id}/collaborators`);
+        if (collabRes.ok) {
+          const collaborators = await collabRes.json();
+          if (Array.isArray(collaborators)) {
+            const match = collaborators.find((col: any) => {
+              const nameLower = (col.name || "").toLowerCase();
+              const emailLower = (col.email || "").toLowerCase();
+              return nameLower.includes("giffonisecretaria") || 
+                     emailLower.includes("giffonisecretaria") ||
+                     (nameLower.includes("giffoni") && nameLower.includes("secretaria"));
+            });
+            if (match) {
+              assigneeId = match.id;
+              assigneeFound = true;
+            }
+          }
+        }
+      } catch (collabErr) {
+        console.error("Erro ao buscar colaboradores do projeto:", collabErr);
+      }
+
+      // 2. Format today's date in YYYY-MM-DD
+      const today = new Date();
+      const year = today.getFullYear();
+      const month = String(today.getMonth() + 1).padStart(2, '0');
+      const day = String(today.getDate()).padStart(2, '0');
+      const formattedDate = `${year}-${month}-${day}`;
+
+      // 3. Define content and assignee field based on API search result
+      let content = "";
+      let payload: any = {
+        parent_id: todoistLinkedTask.id,
+        project_id: todoistLinkedTask.project_id,
+        due_date: formattedDate
+      };
+
+      if (assigneeFound && assigneeId) {
+        content = "Secretariado, por gentileza, agendar reunião com o cliente hoje";
+        payload.content = content;
+        payload.assignee_id = assigneeId;
+      } else {
+        content = "+giffonisecretaria Secretariado, por gentileza, agendar reunião com o cliente hoje";
+        payload.content = content;
+        addSystemLog("info", "Responsável não localizado via API; mantido prefixo no título.");
+      }
+
       const res = await fetch(`/api/todoist/tasks`, {
         method: "POST",
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          content: "+giffonisecretaria Secretariado, por gentileza, agendar reunião com o cliente hoje",
-          parent_id: todoistLinkedTask.id,
-          project_id: todoistLinkedTask.project_id
-        })
+        body: JSON.stringify(payload)
       });
       if (res.ok) {
         addSystemLog("success", "Subtarefa criada para o Secretariado.");
@@ -885,6 +940,16 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
       addSystemLog("error", "Erro ao conectar com a API Todoist.");
     } finally {
       setTodoistLoadingLocal(false);
+    }
+  };
+
+  const handleCopySubtaskText = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      addSystemLog("success", "Texto da subtarefa copiado.");
+    } catch (e) {
+      console.error(e);
+      addSystemLog("error", "Erro ao copiar texto.");
     }
   };
 
@@ -1060,6 +1125,38 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
       setLocalComments([]);
     }
   }, [controladoriaActiveItem, publications, cleanCnjStr, todoistLinkedTask]);
+
+  // Effect to fetch Todoist health status and update validation time
+  useEffect(() => {
+    const fetchLocalHealth = async () => {
+      try {
+        const res = await fetch("/api/todoist/health");
+        if (res.ok) {
+          const data = await res.json();
+          setLocalTodoistHealth(data);
+          setLastVerificationTime(new Date().toLocaleString('pt-BR'));
+        } else {
+          setLocalTodoistHealth({
+            enabled: false,
+            tokenLoaded: false,
+            tokenSource: 'AUSENTE',
+            status: 'error'
+          });
+          setLastVerificationTime(new Date().toLocaleString('pt-BR'));
+        }
+      } catch (err) {
+        console.error("Erro ao buscar saúde local do Todoist:", err);
+        setLocalTodoistHealth({
+          enabled: false,
+          tokenLoaded: false,
+          tokenSource: 'AUSENTE',
+          status: 'error'
+        });
+        setLastVerificationTime(new Date().toLocaleString('pt-BR'));
+      }
+    };
+    fetchLocalHealth();
+  }, [controladoriaActiveItem?.id]);
 
   // 2. Silent Pre-loading of Next Publication
   useEffect(() => {
@@ -1542,32 +1639,126 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
         
         {/* COLUMN 1: LEFT OPERATIONAL SIDEBAR (4 Cols) */}
         <div className="lg:col-span-4 space-y-4">
-          {/* Quick Connection Settings */}
-          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-xs space-y-2.5 shadow-inner">
-            <h4 className="font-bold text-slate-800 flex items-center gap-1.5">
-              <Key className="h-3.5 w-3.5 text-indigo-500" /> Todoist
-            </h4>
-            <div className="space-y-1.5">
-              <div className="flex justify-between items-center text-[11px]">
-                <span className="text-slate-500 font-medium">Status:</span>
-                {todoistHealth?.status === 'checking' ? (
-                  <span className="text-slate-400 font-bold animate-pulse text-[10px]">VERIFICANDO...</span>
-                ) : todoistHealth?.enabled ? (
-                  <span className="bg-emerald-50 text-emerald-700 font-bold px-2 py-0.5 rounded text-[9px] border border-emerald-100 flex items-center gap-1">
-                    <span className="h-1.5 w-1.5 bg-emerald-500 rounded-full animate-pulse"></span> Conectado via secret
-                  </span>
-                ) : (
-                  <span className="bg-amber-50 text-amber-700 font-bold px-2 py-0.5 rounded text-[9px] border border-amber-100">
-                    Desconectado
-                  </span>
-                )}
-              </div>
-              
-              {(!todoistHealth || !todoistHealth.enabled) && (
-                <div className="text-[10px] text-amber-600 leading-normal bg-amber-50/50 p-2 rounded border border-amber-100/60 font-medium mt-1">
-                  ⚠️ Configure a variável <code className="font-mono bg-amber-100/50 px-1 py-0.5 rounded">TODOIST_API_KEY</code> nos Secrets do backend para ativar o conector.
+          {/* Status da Conexão do Token do Todoist */}
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+            <div className="flex items-center gap-2 border-b border-slate-100 pb-2.5">
+              <Key className="h-4 w-4 text-indigo-600" />
+              <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">
+                Status da Conexão do Token do Todoist
+              </h3>
+            </div>
+            
+            {localTodoistHealth?.status === 'checking' ? (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-100 px-3 py-2 rounded-xl">
+                  <span className="h-2 w-2 bg-amber-500 rounded-full animate-pulse"></span>
+                  <span>🟡 Conectando</span>
                 </div>
-              )}
+                <ul className="space-y-2 text-[11px] font-semibold text-slate-600 pl-1.5">
+                  <li className="flex items-center gap-1.5">
+                    <span className="text-slate-400">•</span>
+                    <span>Status: <span className="text-amber-600 font-bold">Validando conexão...</span></span>
+                  </li>
+                  <li className="flex items-center gap-1.5">
+                    <span className="text-slate-400">•</span>
+                    <span>Origem da autenticação: <span className="text-slate-500 font-bold">Verificando...</span></span>
+                  </li>
+                  <li className="flex items-center gap-1.5">
+                    <span className="text-slate-400">•</span>
+                    <span>API: <span className="text-slate-500 font-bold">Verificando...</span></span>
+                  </li>
+                  <li className="flex items-center gap-1.5">
+                    <span className="text-slate-400">•</span>
+                    <span>Última verificação: <span className="text-slate-500 font-bold">{lastVerificationTime || "Verificando..."}</span></span>
+                  </li>
+                </ul>
+              </div>
+            ) : localTodoistHealth?.enabled ? (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-100 px-3 py-2 rounded-xl">
+                  <span className="h-2 w-2 bg-emerald-500 rounded-full animate-pulse"></span>
+                  <span>🟢 Conectado</span>
+                </div>
+                <ul className="space-y-2 text-[11px] font-semibold text-slate-600 pl-1.5">
+                  <li className="flex items-center gap-1.5">
+                    <span className="text-slate-400">•</span>
+                    <span>Status: <span className="text-emerald-600 font-bold">Conectado</span></span>
+                  </li>
+                  <li className="flex items-center gap-1.5">
+                    <span className="text-slate-400">•</span>
+                    <span>Origem da autenticação: <span className="text-slate-900 font-bold">Secret do Google AI Studio</span></span>
+                  </li>
+                  <li className="flex items-center gap-1.5">
+                    <span className="text-slate-400">•</span>
+                    <span>API: <span className="text-emerald-600 font-bold">Online</span></span>
+                  </li>
+                  <li className="flex items-center gap-1.5">
+                    <span className="text-slate-400">•</span>
+                    <span>Última verificação: <span className="text-slate-900 font-mono font-bold text-[10.5px]">{lastVerificationTime}</span></span>
+                  </li>
+                </ul>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 text-[11px] font-bold text-rose-700 bg-rose-50 border border-rose-100 px-3 py-2 rounded-xl">
+                  <span className="h-2 w-2 bg-rose-500 rounded-full animate-pulse"></span>
+                  <span>🔴 Desconectado</span>
+                </div>
+                <ul className="space-y-2 text-[11px] font-semibold text-slate-600 pl-1.5">
+                  <li className="flex items-center gap-1.5">
+                    <span className="text-slate-400">•</span>
+                    <span>Status: <span className="text-rose-600 font-bold">Token não encontrado</span></span>
+                  </li>
+                  <li className="flex items-center gap-1.5">
+                    <span className="text-slate-400">•</span>
+                    <span>Origem da autenticação: <span className="text-rose-600 font-bold">Não configurada</span></span>
+                  </li>
+                  <li className="flex items-center gap-1.5">
+                    <span className="text-slate-400">•</span>
+                    <span>API: <span className="text-rose-600 font-bold">Offline</span></span>
+                  </li>
+                  <li className="flex items-center gap-1.5">
+                    <span className="text-slate-400">•</span>
+                    <span>Última verificação: <span className="text-slate-500 font-bold">{lastVerificationTime || "N/A"}</span></span>
+                  </li>
+                </ul>
+              </div>
+            )}
+          </div>
+
+          {/* INVESTIGADOR DE BUGS DA INTEGRAÇÃO TODOIST */}
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <Bug className="h-5 w-5 text-indigo-600 animate-pulse" />
+                <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">
+                  Investigador de Bugs da Integração Todoist
+                </h3>
+              </div>
+              <span className="bg-slate-100 text-slate-700 text-[10px] px-2.5 py-1 rounded-full font-bold border border-slate-200">
+                Diagnóstico em Tempo Real
+              </span>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Verifique logs, status de autenticação e detalhes de payloads trafegados com os servidores da API Todoist para investigar erros e inconsistências de forma detalhada.
+            </p>
+
+            <div className="flex flex-wrap gap-3 pt-1">
+              <button
+                onClick={() => setIsInvestigadorModalOpen(true)}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition flex items-center gap-2 shadow-sm"
+              >
+                <Sparkles className="h-4 w-4" />
+                Relatório do Investigador
+              </button>
+              <button
+                onClick={() => setIsLogsModalOpen(true)}
+                className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold px-4 py-2.5 rounded-xl transition flex items-center gap-2 border border-slate-200"
+              >
+                <Terminal className="h-4 w-4 text-slate-500" />
+                Logs Técnicos Todoist
+              </button>
             </div>
           </div>
         </div>
@@ -1624,42 +1815,6 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
                   ? `Tarefa vinculada com sucesso: "${todoistLinkedTask.content}"` 
                   : "Nenhuma tarefa vinculada para esta publicação. Utilize o buscador acima ou crie uma tarefa no espelho abaixo."}
               </span>
-            </div>
-          </div>
-
-          {/* INVESTIGADOR DE BUGS DA INTEGRAÇÃO TODOIST */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2">
-                <Bug className="h-5 w-5 text-indigo-600 animate-pulse" />
-                <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">
-                  Investigador de Bugs da Integração Todoist
-                </h3>
-              </div>
-              <span className="bg-slate-100 text-slate-700 text-[10px] px-2.5 py-1 rounded-full font-bold border border-slate-200">
-                Diagnóstico em Tempo Real
-              </span>
-            </div>
-
-            <p className="text-xs text-slate-600 leading-relaxed">
-              Verifique logs, status de autenticação e detalhes de payloads trafegados com os servidores da API Todoist para investigar erros e inconsistências de forma detalhada.
-            </p>
-
-            <div className="flex flex-wrap gap-3 pt-1">
-              <button
-                onClick={() => setIsInvestigadorModalOpen(true)}
-                className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition flex items-center gap-2 shadow-sm"
-              >
-                <Sparkles className="h-4 w-4" />
-                Relatório do Investigador
-              </button>
-              <button
-                onClick={() => setIsLogsModalOpen(true)}
-                className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold px-4 py-2.5 rounded-xl transition flex items-center gap-2 border border-slate-200"
-              >
-                <Terminal className="h-4 w-4 text-slate-500" />
-                Logs Técnicos Todoist
-              </button>
             </div>
           </div>
 
@@ -2634,8 +2789,15 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
               </button>
             </div>
 
-            {/* Tarefas para o Secretariado */}
-            <div className="space-y-1.5 pt-1.5 border-t border-slate-100">
+            {/* Setor Title */}
+            <div className="pt-2 border-t border-slate-100">
+              <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-500 mb-1">
+                Tarefas Automatizadas para o Todoist
+              </h4>
+            </div>
+
+            {/* 1. Tarefas para o Secretariado */}
+            <div className="space-y-1.5">
               <button
                 onClick={() => setIsSecretariadoOpen(prev => !prev)}
                 className={`w-full text-left font-bold text-[10px] uppercase tracking-wider py-1.5 px-3 rounded-lg flex items-center justify-between transition ${
@@ -2659,15 +2821,13 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
                       <button
                         onClick={handleCreateSecretariadoSubtask}
                         disabled={todoistLoadingLocal || !todoistLinkedTask}
-                        className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white text-[10px] font-black tracking-tight px-3 py-1.5 rounded-lg shadow-sm shadow-indigo-100 transition flex items-center gap-1 shrink-0"
-                        title="Criar subtarefa no Todoist"
+                        className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white text-xs font-black tracking-tight p-2 rounded-lg shadow-sm shadow-indigo-100 transition flex items-center justify-center shrink-0"
+                        title="Criar subtarefa automática no Todoist"
                       >
                         {todoistLoadingLocal ? (
                           <RefreshCw className="h-3 w-3 animate-spin" />
                         ) : (
-                          <>
-                            <span>&gt;&gt;&gt;</span>
-                          </>
+                          <span className="text-sm">⚡</span>
                         )}
                       </button>
                     </div>
@@ -2681,39 +2841,74 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
               )}
             </div>
 
-            {/* Interactive slide controls */}
-            <div className="space-y-1 pt-1.5 border-t border-slate-100">
-              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Ajustar Parâmetros</div>
-              
+            {/* 2. Tarefas da Equipe Jurídica */}
+            <div className="space-y-1.5 pt-1.5 border-t border-slate-100">
               <button
-                onClick={() => {
-                  setIsRevisaoOpen(prev => !prev);
-                  setIsHistoricoOpen(false);
-                }}
-                className={`w-full text-left font-semibold text-xs py-2 px-3 rounded-xl transition flex items-center justify-between ${
-                  isRevisaoOpen ? "bg-blue-50 text-blue-800 border border-blue-200/50" : "text-slate-600 hover:bg-slate-50"
+                onClick={() => setIsEquipeJuridicaOpen(prev => !prev)}
+                className={`w-full text-left font-bold text-[10px] uppercase tracking-wider py-1.5 px-3 rounded-lg flex items-center justify-between transition ${
+                  isEquipeJuridicaOpen ? "bg-slate-50 text-indigo-700" : "text-slate-400 hover:text-slate-600 hover:bg-slate-50/50"
                 }`}
               >
-                <span className="flex items-center gap-2">
-                  <Clock className="h-4 w-4" /> Agendar Revisão
+                <span className="flex items-center gap-1.5">
+                  <CheckSquare className="h-3.5 w-3.5 text-indigo-500" /> Tarefas da Equipe Jurídica
                 </span>
-                <ChevronDown className={`h-3.5 w-3.5 transition ${isRevisaoOpen ? "rotate-180" : ""}`} />
+                <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${isEquipeJuridicaOpen ? "rotate-180" : ""}`} />
               </button>
 
+              {isEquipeJuridicaOpen && (
+                <div className="pl-3 pr-1 py-2 border-l border-indigo-100/60 ml-3 animate-fade-in text-[11px] text-slate-500 font-semibold italic">
+                  Nenhuma automação cadastrada.
+                </div>
+              )}
+            </div>
+
+            {/* 3. Ajustar Parâmetros */}
+            <div className="space-y-1.5 pt-1.5 border-t border-slate-100">
               <button
-                onClick={() => {
-                  setIsHistoricoOpen(prev => !prev);
-                  setIsRevisaoOpen(false);
-                }}
-                className={`w-full text-left font-semibold text-xs py-2 px-3 rounded-xl transition flex items-center justify-between ${
-                  isHistoricoOpen ? "bg-purple-50 text-purple-800 border border-purple-200/50" : "text-slate-600 hover:bg-slate-50"
+                onClick={() => setIsAjustarParametrosOpen(prev => !prev)}
+                className={`w-full text-left font-bold text-[10px] uppercase tracking-wider py-1.5 px-3 rounded-lg flex items-center justify-between transition ${
+                  isAjustarParametrosOpen ? "bg-slate-50 text-indigo-700" : "text-slate-400 hover:text-slate-600 hover:bg-slate-50/50"
                 }`}
               >
-                <span className="flex items-center gap-2">
-                  <Database className="h-4 w-4" /> Histórico Processo
+                <span className="flex items-center gap-1.5">
+                  <Settings className="h-3.5 w-3.5 text-indigo-500" /> Ajustar Parâmetros
                 </span>
-                <ChevronDown className={`h-3.5 w-3.5 transition ${isHistoricoOpen ? "rotate-180" : ""}`} />
+                <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${isAjustarParametrosOpen ? "rotate-180" : ""}`} />
               </button>
+
+              {isAjustarParametrosOpen && (
+                <div className="pl-3 pr-1 py-1.5 space-y-2 border-l border-indigo-100/60 ml-3 animate-fade-in">
+                  <button
+                    onClick={() => {
+                      setIsRevisaoOpen(prev => !prev);
+                      setIsHistoricoOpen(false);
+                    }}
+                    className={`w-full text-left font-semibold text-xs py-2 px-3 rounded-xl transition flex items-center justify-between ${
+                      isRevisaoOpen ? "bg-blue-50 text-blue-800 border border-blue-200/50" : "text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    <span className="flex items-center gap-2">
+                      <Clock className="h-4 w-4" /> Agendar Revisão
+                    </span>
+                    <ChevronDown className={`h-3.5 w-3.5 transition ${isRevisaoOpen ? "rotate-180" : ""}`} />
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setIsHistoricoOpen(prev => !prev);
+                      setIsRevisaoOpen(false);
+                    }}
+                    className={`w-full text-left font-semibold text-xs py-2 px-3 rounded-xl transition flex items-center justify-between ${
+                      isHistoricoOpen ? "bg-purple-50 text-purple-800 border border-purple-200/50" : "text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    <span className="flex items-center gap-2">
+                      <Database className="h-4 w-4" /> Histórico Processo
+                    </span>
+                    <ChevronDown className={`h-3.5 w-3.5 transition ${isHistoricoOpen ? "rotate-180" : ""}`} />
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Fila / Queue actions */}
@@ -2871,11 +3066,11 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
 
                 <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
                   {realTimeSubtasks.map((sub) => (
-                    <div key={sub.id} className="flex items-center justify-between bg-slate-50/70 border border-slate-100 p-2 rounded-lg text-xs group">
-                      <div className="flex items-center gap-2 min-w-0">
+                    <div key={sub.id} className="flex items-start justify-between bg-slate-50/70 border border-slate-100 p-2.5 rounded-lg text-xs group gap-3">
+                      <div className="flex items-start gap-2.5 flex-1 min-w-0">
                         <button
                           onClick={() => handleToggleSubtask(sub.id, sub.is_completed)}
-                          className={`h-4 w-4 rounded-full border flex items-center justify-center shrink-0 transition ${
+                          className={`h-4 w-4 rounded-full border flex items-center justify-center shrink-0 mt-0.5 transition ${
                             sub.is_completed 
                               ? "bg-indigo-600 border-indigo-600 text-white" 
                               : "border-slate-300 hover:border-indigo-500 text-transparent"
@@ -2883,17 +3078,28 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
                         >
                           <Check className="h-2.5 w-2.5 stroke-[3]" />
                         </button>
-                        <span className={`truncate font-medium text-slate-700 ${sub.is_completed ? "line-through text-slate-400" : ""}`}>
+                        <span className={`whitespace-pre-wrap break-words font-medium text-slate-700 leading-relaxed flex-1 ${sub.is_completed ? "line-through text-slate-400" : ""}`}>
                           {sub.content}
                         </span>
                       </div>
-                      <button
-                        onClick={() => handleDeleteSubtask(sub.id)}
-                        className="text-slate-400 hover:text-red-600 p-1 rounded transition opacity-0 group-hover:opacity-100"
-                        title="Remover subtarefa"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleCopySubtaskText(sub.content)}
+                          className="text-slate-400 hover:text-indigo-600 p-1 rounded transition opacity-0 group-hover:opacity-100"
+                          title="Copiar texto da subtarefa"
+                        >
+                          <Copy className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteSubtask(sub.id)}
+                          className="text-slate-400 hover:text-red-600 p-1 rounded transition opacity-0 group-hover:opacity-100"
+                          title="Remover subtarefa"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
                     </div>
                   ))}
                   {realTimeSubtasks.length === 0 && !loadingSubtasks && (

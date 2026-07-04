@@ -2087,6 +2087,23 @@ app.get("/api/todoist/projects", async (req: any, res) => {
   }
 });
 
+app.get("/api/todoist/projects/:id/collaborators", async (req: any, res) => {
+  try {
+    const apiRes = await fetch(`https://api.todoist.com/rest/v2/projects/${req.params.id}/collaborators`, {
+      headers: { Authorization: `Bearer ${req.todoistToken}` }
+    });
+    if (!apiRes.ok) {
+      // If project has no collaborators or it fails, return empty array to prevent crashing
+      return res.json([]);
+    }
+    const data = await apiRes.json();
+    res.json(data);
+  } catch (err: any) {
+    console.error("Error fetching collaborators:", err);
+    res.json([]);
+  }
+});
+
 app.get("/api/todoist/sections", async (req: any, res) => {
   try {
     const apiRes = await fetch("https://api.todoist.com/api/v1/sections", {
