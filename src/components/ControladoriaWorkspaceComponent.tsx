@@ -87,6 +87,8 @@ interface ControladoriaWorkspaceProps {
   addSystemLog: (type: string, msg: string, category?: string) => void;
   setActiveTab: (tab: any) => void;
   source: any;
+  todoistDiagnostic?: any;
+  setTodoistDiagnostic?: (d: any) => void;
 }
 
 export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspaceProps> = ({
@@ -137,7 +139,9 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
   addSystemLog,
   setActiveTab,
   source,
-  searchTodoistTasks
+  searchTodoistTasks,
+  todoistDiagnostic,
+  setTodoistDiagnostic
 }) => {
   const cleanCnjStr = (controladoriaActiveItem.processNumber || '').replace(/\s+/g, '');
 
@@ -1507,6 +1511,155 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
               </span>
             </div>
           </div>
+
+          {/* PAINEL DE DIAGNÓSTICO TODOIST */}
+          {todoistDiagnostic && (
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl text-slate-100 space-y-4 font-sans">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="h-5 w-5 text-indigo-400 animate-pulse" />
+                  <h3 className="text-xs font-black uppercase tracking-wider text-white">
+                    Relatório do Investigador: Diagnóstico Todoist
+                  </h3>
+                </div>
+                <span className={`text-[10px] uppercase font-black px-2.5 py-1 rounded-full border ${
+                  todoistDiagnostic.finalResult === 'encontrada' 
+                    ? 'bg-emerald-950/50 text-emerald-400 border-emerald-800'
+                    : todoistDiagnostic.finalResult === 'múltiplas encontradas'
+                      ? 'bg-sky-950/50 text-sky-400 border-sky-800'
+                      : 'bg-amber-950/50 text-amber-400 border-amber-800'
+                }`}>
+                  {todoistDiagnostic.finalResult}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                <div className="bg-slate-950/50 p-3 rounded-xl border border-slate-800/60 space-y-1.5">
+                  <div className="text-slate-400 font-bold uppercase tracking-wider text-[9px]">Informações Gerais:</div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500 font-medium">Token carregado:</span>
+                    <span className={todoistDiagnostic.tokenLoaded ? "text-emerald-400 font-bold font-mono" : "text-red-400 font-bold font-mono"}>
+                      {todoistDiagnostic.tokenLoaded ? "SIM (Oculto)" : "NÃO"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500 font-medium">Fonte do token:</span>
+                    <span className={`font-bold font-mono ${
+                      todoistDiagnostic.tokenSource === "SECRET" 
+                        ? "text-indigo-400" 
+                        : todoistDiagnostic.tokenSource === "HEADER"
+                          ? "text-sky-400"
+                          : "text-amber-400"
+                    }`}>
+                      {todoistDiagnostic.tokenSource || "AUSENTE"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500 font-medium">Tarefa Escolhida:</span>
+                    <span className="text-white font-semibold truncate max-w-[180px] font-mono" title={todoistDiagnostic.chosenTask || "Nenhuma"}>
+                      {todoistDiagnostic.chosenTask || "Nenhuma"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500 font-medium">Melhor Pontuação:</span>
+                    <span className="text-indigo-400 font-bold font-mono">
+                      {todoistDiagnostic.chosenTaskScore !== null ? `${todoistDiagnostic.chosenTaskScore} pts` : "N/A"}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="bg-slate-950/50 p-3 rounded-xl border border-slate-800/60 space-y-1.5">
+                  <div className="text-slate-400 font-bold uppercase tracking-wider text-[9px]">Status & Detalhes:</div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500 font-medium">Fallback Local:</span>
+                    <span className="text-slate-300 font-mono">
+                      {todoistDiagnostic.localFilterRun ? "EXECUTADO" : "NÃO REQUERIDO"}
+                    </span>
+                  </div>
+                  {todoistDiagnostic.failureReason ? (
+                    <div className="text-red-400 text-[10px] leading-normal font-medium mt-1">
+                      ⚠️ {todoistDiagnostic.failureReason}
+                    </div>
+                  ) : (
+                    <div className="text-emerald-400 text-[10px] leading-normal font-medium mt-1">
+                      ✓ Correspondência ou busca concluída com sucesso.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <div className="text-slate-300 font-bold text-[11px] uppercase tracking-wider flex items-center gap-1.5">
+                  <RefreshCw className="h-3.5 w-3.5 text-indigo-400" />
+                  Buscas em Sequência Executadas (API do Todoist):
+                </div>
+                <div className="overflow-x-auto border border-slate-800 rounded-xl">
+                  <table className="w-full text-left text-[10px] font-mono leading-relaxed border-collapse">
+                    <thead>
+                      <tr className="bg-slate-950/80 border-b border-slate-800 text-slate-400 uppercase tracking-wider text-[9px] font-bold">
+                        <th className="p-2.5">Passo</th>
+                        <th className="p-2.5">Query de Busca</th>
+                        <th className="p-2.5">Endpoint</th>
+                        <th className="p-2.5 text-center">Status HTTP</th>
+                        <th className="p-2.5 text-right">Retornado</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800">
+                      {todoistDiagnostic.queriesTried.map((step: any, idx: number) => (
+                        <tr key={idx} className="hover:bg-slate-800/30">
+                          <td className="p-2.5 text-slate-500">{idx + 1}</td>
+                          <td className="p-2.5 text-indigo-300 font-semibold">{step.query}</td>
+                          <td className="p-2.5 text-slate-400 break-all">{step.endpoint}</td>
+                          <td className="p-2.5 text-center">
+                            <span className={`px-1.5 py-0.5 rounded font-bold ${
+                              step.status === 200 ? "bg-emerald-950 text-emerald-400" : "bg-red-950 text-red-400"
+                            }`}>
+                              {step.status}
+                            </span>
+                          </td>
+                          <td className="p-2.5 text-right font-bold text-slate-300">{step.totalReturned}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {todoistDiagnostic.localFilterResults && todoistDiagnostic.localFilterResults.length > 0 && (
+                <div className="space-y-2">
+                  <div className="text-slate-300 font-bold text-[11px] uppercase tracking-wider flex items-center gap-1.5">
+                    <CheckSquare className="h-3.5 w-3.5 text-emerald-400" />
+                    Análise de Pontuação de Tarefas (Critérios de Comparação):
+                  </div>
+                  <div className="max-h-60 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+                    {todoistDiagnostic.localFilterResults.map((res: any, idx: number) => (
+                      <div key={idx} className="bg-slate-950/60 p-3 rounded-xl border border-slate-800 hover:border-slate-700 transition space-y-1.5">
+                        <div className="flex justify-between items-start">
+                          <span className="text-[11px] font-semibold text-slate-100 leading-normal max-w-[80%]">
+                            "{res.taskTitle}"
+                          </span>
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                            res.score >= 100 
+                              ? 'bg-emerald-950 text-emerald-400' 
+                              : res.score >= 50 
+                                ? 'bg-indigo-950 text-indigo-400' 
+                                : res.score > 0 
+                                  ? 'bg-slate-800 text-slate-300' 
+                                  : 'bg-red-950/40 text-red-400'
+                          }`}>
+                            {res.score} pts
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-slate-400 leading-relaxed font-mono">
+                          {res.decision}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* ESPELHO DA TAREFA */}
           <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col space-y-5 relative min-h-[500px]">

@@ -2021,15 +2021,27 @@ app.post("/api/gmail-messages-details", async (req, res) => {
 // --- TODOIST PROXY ENDPOINTS ---
 app.use("/api/todoist", (req: any, res, next) => {
   let token = process.env.TODOIST_API_KEY;
-  if (!token) {
+  let tokenSource = "AUSENTE";
+
+  if (token && token !== "env_secret") {
+    tokenSource = "SECRET";
+  } else {
     const headerToken = req.headers["x-todoist-token"] || req.headers["authorization"]?.toString().replace("Bearer ", "");
     if (headerToken && headerToken !== "env_secret") {
       token = headerToken;
+      tokenSource = "HEADER";
+    } else {
+      token = undefined;
     }
   }
 
+  res.setHeader("X-Todoist-Token-Source", tokenSource);
+  res.setHeader("X-Todoist-Token-Loaded", token ? "SIM" : "NÃO");
+
   if (!token) {
-    return res.status(401).json({ error: "TODOIST_API_KEY não configurada nos secrets." });
+    return res.status(401).json({
+      error: "TODOIST_API_KEY não configurada nos secrets do Google Build AI Studio."
+    });
   }
   req.todoistToken = token;
   next();
