@@ -263,6 +263,34 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
   const [mirrorErrors, setMirrorErrors] = useState<string[]>([]);
 
   const [isAutomationConfigModalOpen, setIsAutomationConfigModalOpen] = useState(false);
+
+  // States for Delegar Prazo para a Equipe
+  const [isDelegarPrazoModalOpen, setIsDelegarPrazoModalOpen] = useState(false);
+  const [isDelegarConfigModalOpen, setIsDelegarConfigModalOpen] = useState(false);
+  const [delegarResponsavelId, setDelegarResponsavelId] = useState<string>("");
+  const [delegarResponsavelNome, setDelegarResponsavelNome] = useState<string>("");
+  const [delegarNotificado, setDelegarNotificado] = useState<string>("");
+  const [delegarPrazoFatal, setDelegarPrazoFatal] = useState<string>("");
+  const [delegarPrazoSeguranca, setDelegarPrazoSeguranca] = useState<string>("");
+  const [delegarOQueFazer, setDelegarOQueFazer] = useState<string>("");
+  const [delegarLoading, setDelegarLoading] = useState<boolean>(false);
+  const [delegarConfig, setDelegarConfig] = useState<any>(() => {
+    const saved = localStorage.getItem("boss_delegar_prazo_config");
+    if (saved) {
+      try { return JSON.parse(saved); } catch (e) { console.error(e); }
+    }
+    return {
+      tipo: "criar subtarefa",
+      modeloTitulo: "[{responsavel}] {o_que_fazer}",
+      modeloDescricao: "Prazo fatal: {prazo_fatal}\nPrazo de segurança: {prazo_seguranca}\nNotificação: {notificacao}\nOrigem: Automação Delegar Prazo para a Equipe",
+      regraPrazoSeguranca: 3,
+      responsavelPadrao: "",
+      prioridadePadrao: 1,
+      etiquetasPadrao: "",
+      projetoHerdado: true,
+      secaoHerdada: true
+    };
+  });
   const [automationLogs, setAutomationLogs] = useState<Array<{ id: string; text: string; type: 'success' | 'alert' | 'error' | 'processing' }>>(() => {
     const saved = localStorage.getItem("boss_todoist_automation_logs");
     if (saved) {
@@ -1346,6 +1374,207 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
     } finally {
       setTodoistLoadingLocal(false);
     }
+  };
+
+  const renderTemplate = (template: string, variables: Record<string, string>) => {
+    let result = template;
+    for (const [key, value] of Object.entries(variables)) {
+      result = result.split(`{${key}}`).join(value || "");
+    }
+    return result;
+  };
+
+  const handleExecuteDelegarPrazo = async () => {
+    if (!todoistLinkedTask) {
+      addSystemLog("error", "Localize uma tarefa do Todoist antes de delegar prazo.");
+      alert("Localize uma tarefa do Todoist antes de delegar prazo.");
+      return;
+    }
+
+    if (!delegarResponsavelNome.trim()) {
+      addSystemLog("error", "O campo 'Quem é o responsável?' é obrigatório.");
+      alert("O campo 'Quem é o responsável?' é obrigatório.");
+      return;
+    }
+
+    if (!delegarPrazoFatal) {
+      addSystemLog("error", "O campo 'Qual é o Prazo Fatal?' é obrigatório.");
+      alert("O campo 'Qual é o Prazo Fatal?' é obrigatório.");
+      return;
+    }
+
+    if (!delegarOQueFazer.trim()) {
+      addSystemLog("error", "O campo 'O que deverá ser feito?' é obrigatório.");
+      alert("O campo 'O que deverá ser feito?' é obrigatório.");
+      return;
+    }
+
+    setDelegarLoading(true);
+    try {
+      let assigneeId: string | undefined = undefined;
+      let isFallback = true;
+      let finalResponsavelNome = delegarResponsavelNome.trim();
+
+      // Find if we have assigneeId
+      if (delegarResponsavelId && delegarResponsavelId !== "fallback") {
+        assigneeId = delegarResponsavelId;
+        isFallback = false;
+        const matched = projectCollaborators.find(c => String(c.id) === String(delegarResponsavelId));
+        if (matched) {
+          finalResponsavelNome = matched.name || finalResponsavelNome;
+        }
+      } else {
+        // Try to match name to a collaborator
+        const match = projectCollaborators.find((col: any) => {
+          const nameLower = (col.name || "").toLowerCase();
+          const emailLower = (col.email || "").toLowerCase();
+          const searchLower = finalResponsavelNome.toLowerCase();
+          return nameLower.includes(searchLower) || emailLower.includes(searchLower);
+        });
+        if (match) {
+          assigneeId = match.id;
+          finalResponsavelNome = match.name || finalResponsavelNome;
+          isFallback = false;
+        }
+      }
+
+      // Format fallback name for +Name notation (no spaces, remove accents)
+      const formatFallbackName = (name: string) => {
+        return name
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .replace(/\s+/g, "");
+      };
+
+      // Apply the title template
+      const titleTemplate = delegarConfig.modeloTitulo || "[{responsavel}] {o_que_fazer}";
+      let finalTitle = "";
+      if (isFallback) {
+        if (titleTemplate === "[{responsavel}] {o_que_fazer}") {
+          finalTitle = `+${formatFallbackName(finalResponsavelNome)} ${delegarOQueFazer.trim()}`;
+        } else {
+          finalTitle = renderTemplate(titleTemplate, {
+            responsavel: formatFallbackName(finalResponsavelNome),
+            o_que_fazer: delegarOQueFazer.trim()
+          });
+        }
+      } else {
+        finalTitle = renderTemplate(titleTemplate, {
+          responsavel: finalResponsavelNome,
+          o_que_fazer: delegarOQueFazer.trim()
+        });
+      }
+
+      // Render description
+      const descTemplate = delegarConfig.modeloDescricao || "Prazo fatal: {prazo_fatal}\nPrazo de segurança: {prazo_seguranca}\nNotificação: {notificacao}\nOrigem: Automação Delegar Prazo para a Equipe";
+      const finalDescription = renderTemplate(descTemplate, {
+        prazo_fatal: delegarPrazoFatal,
+        prazo_seguranca: delegarPrazoSeguranca,
+        notificacao: delegarNotificado || "Não definida"
+      });
+
+      // Build payload
+      const payload: any = {
+        content: finalTitle,
+        description: finalDescription,
+      };
+
+      if (assigneeId) {
+        payload.assignee_id = assigneeId;
+      }
+
+      if (delegarPrazoFatal) {
+        payload.due_date = delegarPrazoFatal;
+      }
+
+      // Handle project inheritance or override
+      payload.project_id = delegarConfig.projetoHerdado ? todoistLinkedTask.project_id : (delegarConfig.project || todoistLinkedTask.project_id);
+
+      // Handle section inheritance or override
+      if (delegarConfig.secaoHerdada && todoistLinkedTask.section_id) {
+        payload.section_id = todoistLinkedTask.section_id;
+      } else if (delegarConfig.section) {
+        payload.section_id = delegarConfig.section;
+      }
+
+      // Priority and labels
+      payload.priority = Number(delegarConfig.prioridadePadrao || 1);
+      if (delegarConfig.etiquetasPadrao) {
+        payload.labels = delegarConfig.etiquetasPadrao.split(",").map((l: string) => l.trim()).filter(Boolean);
+      }
+
+      // Is subtask
+      if (delegarConfig.tipo === "criar subtarefa" || !delegarConfig.tipo) {
+        payload.parent_id = todoistLinkedTask.id;
+      }
+
+      // Make API request
+      const res = await fetch("/api/todoist/tasks", {
+        method: "POST",
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (res.ok) {
+        addSystemLog("success", "Prazo delegado e subtarefa criada no Todoist!");
+        
+        // Add log
+        const logText = `Prazo delegado: "${finalTitle}" | Prazo fatal: ${delegarPrazoFatal} | Segurança: ${delegarPrazoSeguranca}`;
+        const newLog = { id: Date.now() + Math.random().toString(), text: logText, type: 'success' as const };
+        setAutomationLogs(prev => [newLog, ...prev]);
+        localStorage.setItem("boss_todoist_automation_logs", JSON.stringify([newLog, ...automationLogs]));
+
+        // Clear and close
+        setDelegarOQueFazer("");
+        setDelegarPrazoFatal("");
+        setDelegarPrazoSeguranca("");
+        setDelegarNotificado("");
+        setIsDelegarPrazoModalOpen(false);
+
+        // Reload task espelho (subtasks and comments)
+        await syncFullTodoistMirrorData();
+      } else {
+        const errorText = await res.text();
+        addSystemLog("error", `Erro ao criar subtarefa de prazo: ${errorText}`);
+        alert(`Erro ao criar subtarefa no Todoist (status ${res.status}).`);
+      }
+    } catch (err: any) {
+      console.error(err);
+      addSystemLog("error", `Erro ao executar a automação: ${err.message}`);
+    } finally {
+      setDelegarLoading(false);
+    }
+  };
+
+  const handleOpenDelegarPrazoForm = () => {
+    if (!todoistLinkedTask) {
+      addSystemLog("error", "Localize uma tarefa do Todoist antes de delegar prazo.");
+      alert("Localize uma tarefa do Todoist antes de delegar prazo.");
+      return;
+    }
+    
+    // Initialize values
+    const defaultResp = delegarConfig.responsavelPadrao || "";
+    const matched = projectCollaborators.find(c => 
+      String(c.id) === String(defaultResp) || 
+      (c.name && c.name.toLowerCase() === defaultResp.toLowerCase()) || 
+      (c.email && c.email.toLowerCase() === defaultResp.toLowerCase())
+    );
+    if (matched) {
+      setDelegarResponsavelId(matched.id);
+      setDelegarResponsavelNome(matched.name || matched.email);
+    } else {
+      setDelegarResponsavelId(defaultResp ? "fallback" : "");
+      setDelegarResponsavelNome(defaultResp);
+    }
+    
+    setDelegarPrazoFatal("");
+    setDelegarPrazoSeguranca("");
+    setDelegarNotificado("");
+    setDelegarOQueFazer("");
+    setIsDelegarPrazoModalOpen(true);
   };
 
   const handleCreateSecretariadoSubtask = async () => {
@@ -3276,8 +3505,31 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
               </button>
 
               {isEquipeJuridicaOpen && (
-                <div className="pl-3 pr-1 py-2 border-l border-indigo-100/60 ml-3 animate-fade-in text-[11px] text-slate-500 font-semibold italic">
-                  Nenhuma automação cadastrada.
+                <div className="pl-3 pr-1 py-1.5 space-y-2 border-l border-indigo-100/60 ml-3 animate-fade-in">
+                  <span className="text-[10px] font-semibold text-slate-500">Automações Jurídicas do Todoist:</span>
+                  <div className="flex items-center justify-between bg-indigo-50/50 border border-indigo-100 rounded-xl p-2.5 gap-2 group hover:bg-indigo-50 transition">
+                    <span className="text-xs font-bold text-indigo-950 leading-normal flex-1">
+                      Delegar Prazo para a Equipe
+                    </span>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setIsDelegarConfigModalOpen(true)}
+                        className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-white rounded-lg transition-all border border-transparent hover:border-slate-100 shadow-none hover:shadow-sm"
+                        title="Configurações da automação"
+                      >
+                        <span className="text-sm">⚙️</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleOpenDelegarPrazoForm}
+                        className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-white rounded-lg transition-all border border-transparent hover:border-slate-100 shadow-none hover:shadow-sm"
+                        title="Executar automação"
+                      >
+                        <span className="text-sm">⚡</span>
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
@@ -4852,6 +5104,458 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
                   className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-5 py-2 rounded-xl transition shadow-md shadow-indigo-900/40"
                 >
                   Salvar Configurações
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ⚡ Execution Modal: Delegar Prazo para a Equipe */}
+      {isDelegarPrazoModalOpen && (
+        <div className="fixed inset-0 bg-slate-950/75 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-xl max-h-[90vh] flex flex-col shadow-2xl text-slate-100 overflow-hidden font-sans animate-fade-in">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-slate-800 p-5 bg-slate-950/40">
+              <div className="flex items-center gap-2.5">
+                <CheckSquare className="h-5 w-5 text-indigo-400" />
+                <div>
+                  <h3 className="text-sm font-black text-white tracking-wider uppercase">
+                    FASE 1 — Decidindo a delegação de prazos
+                  </h3>
+                  <p className="text-[10px] text-slate-400 font-semibold mt-0.5">
+                    Defina o responsável, a data de notificação e o prazo fatal para criar a subtarefa de controle.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsDelegarPrazoModalOpen(false)}
+                className="text-slate-400 hover:text-white hover:bg-slate-800 p-2 rounded-xl transition"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Form Scroll Area */}
+            <form onSubmit={(e) => { e.preventDefault(); handleExecuteDelegarPrazo(); }} className="overflow-y-auto p-6 space-y-4 flex-1 custom-scrollbar">
+              
+              {/* 1. Quem é o responsável? */}
+              <div className="space-y-1.5">
+                <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                  1. Quem é o responsável? <span className="text-rose-400">*</span>
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <select
+                    value={delegarResponsavelId}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setDelegarResponsavelId(val);
+                      if (val === "fallback") {
+                        setDelegarResponsavelNome("");
+                      } else {
+                        const matched = projectCollaborators.find(c => String(c.id) === String(val));
+                        if (matched) {
+                          setDelegarResponsavelNome(matched.name || matched.email);
+                        } else {
+                          setDelegarResponsavelNome("");
+                        }
+                      }
+                    }}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                    required
+                  >
+                    <option value="">Selecione o responsável...</option>
+                    {projectCollaborators.map((col) => (
+                      <option key={col.id} value={col.id}>
+                        👤 {col.name || col.email}
+                      </option>
+                    ))}
+                    <option value="fallback">✏️ Digitar responsável manualmente (Fallback)</option>
+                  </select>
+
+                  {/* Fallback name input if select custom */}
+                  {(delegarResponsavelId === "fallback" || projectCollaborators.length === 0) && (
+                    <input
+                      type="text"
+                      value={delegarResponsavelNome}
+                      onChange={(e) => setDelegarResponsavelNome(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                      placeholder="Nome do responsável (Ex: João Silva)"
+                      required
+                    />
+                  )}
+                </div>
+              </div>
+
+              {/* 2. Quando o usuário será notificado? */}
+              <div className="space-y-1.5">
+                <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                  2. Quando o usuário será notificado?
+                </label>
+                <input
+                  type="date"
+                  value={delegarNotificado}
+                  onChange={(e) => setDelegarNotificado(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                />
+                <span className="text-[9px] text-slate-500 block">
+                  Aviso/lembrete interno da automação. Não altera o vencimento real do Todoist.
+                </span>
+              </div>
+
+              {/* 3. Qual é o Prazo Fatal? */}
+              <div className="space-y-1.5">
+                <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                  3. Qual é o Prazo Fatal? <span className="text-rose-400">*</span>
+                </label>
+                <input
+                  type="date"
+                  value={delegarPrazoFatal}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setDelegarPrazoFatal(val);
+                    if (val) {
+                      const offset = Number(delegarConfig.regraPrazoSeguranca) || 3;
+                      const dateObj = new Date(val + "T12:00:00");
+                      if (!isNaN(dateObj.getTime())) {
+                        dateObj.setDate(dateObj.getDate() - offset);
+                        const year = dateObj.getFullYear();
+                        const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+                        const day = String(dateObj.getDate()).padStart(2, '0');
+                        setDelegarPrazoSeguranca(`${year}-${month}-${day}`);
+                      }
+                    } else {
+                      setDelegarPrazoSeguranca("");
+                    }
+                  }}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                  required
+                />
+                <span className="text-[9px] text-slate-500 block">
+                  Este será o vencimento real (due_date) da subtarefa no Todoist.
+                </span>
+              </div>
+
+              {/* 4. Prazo de Segurança */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                    4. Prazo de Segurança
+                  </label>
+                  <span className="text-[9px] text-indigo-400 font-semibold uppercase">
+                    Auto-calculado: fatal - {delegarConfig.regraPrazoSeguranca || 3} dias
+                  </span>
+                </div>
+                <input
+                  type="date"
+                  value={delegarPrazoSeguranca}
+                  onChange={(e) => setDelegarPrazoSeguranca(e.target.value)}
+                  className="w-full bg-slate-950/60 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-indigo-500"
+                  placeholder="Prazo de segurança"
+                />
+              </div>
+
+              {/* 5. O que deverá ser feito? */}
+              <div className="space-y-1.5">
+                <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                  5. O que deverá ser feito? <span className="text-rose-400">*</span>
+                </label>
+                <textarea
+                  value={delegarOQueFazer}
+                  onChange={(e) => setDelegarOQueFazer(e.target.value)}
+                  rows={3}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                  placeholder="Descreva a atividade jurídica a ser realizada (Ex: Elaborar contestação do processo)"
+                  required
+                />
+              </div>
+
+            </form>
+
+            {/* Footer */}
+            <div className="bg-slate-950 border-t border-slate-800 px-6 py-4 flex justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setIsDelegarPrazoModalOpen(false)}
+                className="bg-slate-850 hover:bg-slate-800 text-slate-300 font-bold text-xs px-4 py-2 rounded-xl transition border border-slate-800"
+              >
+                Voltar
+              </button>
+              <button
+                type="button"
+                disabled={delegarLoading}
+                onClick={handleExecuteDelegarPrazo}
+                className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-xs px-5 py-2 rounded-xl transition shadow-md shadow-indigo-900/40 flex items-center gap-1.5"
+              >
+                {delegarLoading ? (
+                  <>
+                    <RefreshCw className="h-3 w-3 animate-spin" />
+                    Delegando...
+                  </>
+                ) : (
+                  <>
+                    ⚡ Executar Delegação
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ⚙️ Configuration Modal: Parâmetros de Delegação de Prazos */}
+      {isDelegarConfigModalOpen && (
+        <div className="fixed inset-0 bg-slate-950/75 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl text-slate-100 overflow-hidden font-sans animate-fade-in">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-slate-800 p-5 bg-slate-950/40">
+              <div className="flex items-center gap-2.5">
+                <Settings className="h-5 w-5 text-indigo-400" />
+                <div>
+                  <h3 className="text-sm font-black text-white tracking-wider uppercase">
+                    Configurações da Automação — Delegar Prazo
+                  </h3>
+                  <p className="text-[10px] text-slate-400 font-semibold mt-0.5">
+                    Defina os modelos e regras padrão aplicáveis à criação de tarefas e prazos jurídicos.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsDelegarConfigModalOpen(false)}
+                className="text-slate-400 hover:text-white hover:bg-slate-800 p-2 rounded-xl transition"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Form Scroll Area */}
+            <div className="overflow-y-auto p-6 space-y-5 flex-1 custom-scrollbar">
+              
+              {/* Tipo e Regra do Prazo de Segurança */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+                    Tipo de Ação
+                  </label>
+                  <select
+                    value={delegarConfig.tipo || "criar subtarefa"}
+                    onChange={(e) => setDelegarConfig({ ...delegarConfig, tipo: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                  >
+                    <option value="criar subtarefa">Criar Subtarefa na Tarefa do Espelho</option>
+                    <option value="criar tarefa principal">Criar Tarefa Principal Solta</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+                    Regra do Prazo de Segurança (Dias Subtraídos)
+                  </label>
+                  <input
+                    type="number"
+                    value={delegarConfig.regraPrazoSeguranca || 3}
+                    onChange={(e) => setDelegarConfig({ ...delegarConfig, regraPrazoSeguranca: Number(e.target.value) })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                    min="0"
+                    max="30"
+                  />
+                  <span className="text-[9px] text-slate-500 mt-1 block">
+                    Define quantos dias a menos o sistema irá sugerir no Prazo de Segurança.
+                  </span>
+                </div>
+              </div>
+
+              {/* Modelo do Título */}
+              <div className="space-y-1.5">
+                <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                  Modelo do Título (Título da Tarefa)
+                </label>
+                <input
+                  type="text"
+                  value={delegarConfig.modeloTitulo || ""}
+                  onChange={(e) => setDelegarConfig({ ...delegarConfig, modeloTitulo: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500 font-mono"
+                  placeholder="[{responsavel}] {o_que_fazer}"
+                />
+                <span className="text-[9px] text-slate-500 block">
+                  Variáveis suportadas: <code className="text-indigo-400 bg-slate-950/60 px-1 py-0.5 rounded font-mono">{`{responsavel}`}</code>, <code className="text-indigo-400 bg-slate-950/60 px-1 py-0.5 rounded font-mono">{`{o_que_fazer}`}</code>
+                </span>
+              </div>
+
+              {/* Modelo da Descrição */}
+              <div className="space-y-1.5">
+                <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                  Modelo da Descrição
+                </label>
+                <textarea
+                  value={delegarConfig.modeloDescricao || ""}
+                  onChange={(e) => setDelegarConfig({ ...delegarConfig, modeloDescricao: e.target.value })}
+                  rows={4}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500 font-mono"
+                  placeholder="Modelo da descrição"
+                />
+                <span className="text-[9px] text-slate-500 block">
+                  Variáveis: <code className="text-indigo-400 bg-slate-950/60 px-1 py-0.5 rounded font-mono">{`{prazo_fatal}`}</code>, <code className="text-indigo-400 bg-slate-950/60 px-1 py-0.5 rounded font-mono">{`{prazo_seguranca}`}</code>, <code className="text-indigo-400 bg-slate-950/60 px-1 py-0.5 rounded font-mono">{`{notificacao}`}</code>
+                </span>
+              </div>
+
+              {/* Responsável e Prioridade Padrão */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+                    Responsável Padrão
+                  </label>
+                  <select
+                    value={delegarConfig.responsavelPadrao || ""}
+                    onChange={(e) => setDelegarConfig({ ...delegarConfig, responsavelPadrao: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                  >
+                    <option value="">Nenhum</option>
+                    {projectCollaborators.map((col) => (
+                      <option key={col.id} value={col.id}>
+                        👤 {col.name || col.email}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+                    Prioridade Padrão
+                  </label>
+                  <select
+                    value={delegarConfig.prioridadePadrao || 1}
+                    onChange={(e) => setDelegarConfig({ ...delegarConfig, prioridadePadrao: Number(e.target.value) })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                  >
+                    <option value={1}>P4 (Baixa/Cinza)</option>
+                    <option value={2}>P3 (Média/Azul)</option>
+                    <option value={3}>P2 (Alta/Laranja)</option>
+                    <option value={4}>P1 (Urgente/Vermelho)</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Etiquetas e Heranças */}
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+                    Etiquetas Padrão (Separadas por vírgula)
+                  </label>
+                  <input
+                    type="text"
+                    value={delegarConfig.etiquetasPadrao || ""}
+                    onChange={(e) => setDelegarConfig({ ...delegarConfig, etiquetasPadrao: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                    placeholder="Ex: prazo-juridico, controle"
+                  />
+                </div>
+
+                <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800/80 space-y-3">
+                  <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider block">
+                    Herança de Metadados
+                  </span>
+                  
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-xs font-semibold text-white block">Projeto Herdado</span>
+                      <span className="text-[9.5px] text-slate-400">Criar no mesmo projeto da tarefa principal do Espelho</span>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={delegarConfig.projetoHerdado ?? true}
+                      onChange={(e) => setDelegarConfig({ ...delegarConfig, projetoHerdado: e.target.checked })}
+                      className="h-4.5 w-4.5 text-indigo-600 border-slate-800 rounded focus:ring-indigo-500"
+                    />
+                  </div>
+
+                  {!delegarConfig.projetoHerdado && (
+                    <div className="pt-2">
+                      <label className="block text-[9.5px] font-bold text-slate-400 uppercase mb-1">
+                        Projeto ID Override (Opcional)
+                      </label>
+                      <input
+                        type="text"
+                        value={delegarConfig.project || ""}
+                        onChange={(e) => setDelegarConfig({ ...delegarConfig, project: e.target.value })}
+                        className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-xs text-white font-mono"
+                        placeholder="ID do Projeto"
+                      />
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between border-t border-slate-800 pt-2.5">
+                    <div>
+                      <span className="text-xs font-semibold text-white block">Seção Herdada</span>
+                      <span className="text-[9.5px] text-slate-400">Criar na mesma seção da tarefa principal (se houver)</span>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={delegarConfig.secaoHerdada ?? true}
+                      onChange={(e) => setDelegarConfig({ ...delegarConfig, secaoHerdada: e.target.checked })}
+                      className="h-4.5 w-4.5 text-indigo-600 border-slate-800 rounded focus:ring-indigo-500"
+                    />
+                  </div>
+
+                  {!delegarConfig.secaoHerdada && (
+                    <div className="pt-2">
+                      <label className="block text-[9.5px] font-bold text-slate-400 uppercase mb-1">
+                        Seção ID Override (Opcional)
+                      </label>
+                      <input
+                        type="text"
+                        value={delegarConfig.section || ""}
+                        onChange={(e) => setDelegarConfig({ ...delegarConfig, section: e.target.value })}
+                        className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-xs text-white font-mono"
+                        placeholder="ID da Seção"
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+
+            </div>
+
+            {/* Footer */}
+            <div className="bg-slate-950 border-t border-slate-800 px-6 py-4 flex justify-between items-center">
+              <button
+                type="button"
+                onClick={() => {
+                  setDelegarConfig({
+                    tipo: "criar subtarefa",
+                    modeloTitulo: "[{responsavel}] {o_que_fazer}",
+                    modeloDescricao: "Prazo fatal: {prazo_fatal}\nPrazo de segurança: {prazo_seguranca}\nNotificação: {notificacao}\nOrigem: Automação Delegar Prazo para a Equipe",
+                    regraPrazoSeguranca: 3,
+                    responsavelPadrao: "",
+                    prioridadePadrao: 1,
+                    etiquetasPadrao: "",
+                    projetoHerdado: true,
+                    secaoHerdada: true
+                  });
+                  addSystemLog("info", "Configurações redefinidas para o padrão de delegação.");
+                }}
+                className="text-[11px] font-bold text-rose-400 hover:text-rose-300 transition"
+              >
+                Redefinir Padrão
+              </button>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsDelegarConfigModalOpen(false)}
+                  className="bg-slate-850 hover:bg-slate-800 text-slate-300 font-bold text-xs px-4 py-2 rounded-xl transition border border-slate-800"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    localStorage.setItem("boss_delegar_prazo_config", JSON.stringify(delegarConfig));
+                    addSystemLog("success", "Parâmetros de delegação de prazos salvos com sucesso!");
+                    setIsDelegarConfigModalOpen(false);
+                  }}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-5 py-2 rounded-xl transition shadow-md shadow-indigo-900/40"
+                >
+                  Salvar Parâmetros
                 </button>
               </div>
             </div>
