@@ -3,7 +3,7 @@ import {
   Sliders, CalendarRange, Clock, Database, CheckCircle, RefreshCw, 
   ArrowLeft, ArrowRight, Save, Trash2, Check, Plus, ExternalLink, 
   AlertTriangle, User, Calendar, Tag, ChevronDown, Download, Copy, 
-  Inbox, Flame, Target, Sparkles, Keyboard, Key, MessageSquare, Search,
+  Inbox, Flame, Target, Sparkles, Keyboard, Key, MessageSquare, Search, Terminal,
   Folder, Flag, X, FileText, CheckSquare
 } from "lucide-react";
 
@@ -39,8 +39,8 @@ interface ControladoriaWorkspaceProps {
   controladoriaActiveItem: any;
   groupedPushes: any;
   theme: any;
-  todoistToken: string;
-  setTodoistToken: (tk: string) => void;
+  todoistToken?: string;
+  setTodoistToken?: (tk: string) => void;
   todoistProjects: any[];
   todoistTaskTitle: string;
   setTodoistTaskTitle: (v: string) => void;
@@ -75,7 +75,7 @@ interface ControladoriaWorkspaceProps {
   setTodoistNotFoundForCnj: (v: boolean) => void;
   handleSelectTask: (task: any) => void;
   cachedToken: string;
-  searchTodoistTasks?: (item: any, tokenToUse: string) => Promise<void>;
+  searchTodoistTasks?: (item: any) => Promise<void>;
   
   handleSaveTodoistTask: (skipRedirect?: boolean) => Promise<any>;
   handleOpenControladoriaWorkspace: (msg: any, group: any, sourceId: string) => Promise<void>;
@@ -89,6 +89,7 @@ interface ControladoriaWorkspaceProps {
   source: any;
   todoistDiagnostic?: any;
   setTodoistDiagnostic?: (d: any) => void;
+  todoistHealth?: any;
 }
 
 export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspaceProps> = ({
@@ -141,7 +142,8 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
   source,
   searchTodoistTasks,
   todoistDiagnostic,
-  setTodoistDiagnostic
+  setTodoistDiagnostic,
+  todoistHealth
 }) => {
   const cleanCnjStr = (controladoriaActiveItem.processNumber || '').replace(/\s+/g, '');
 
@@ -152,6 +154,7 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
   const [isHistoricoOpen, setIsHistoricoOpen] = useState(false);
   const [isKeyboardShortcutsOpen, setIsKeyboardShortcutsOpen] = useState(false);
   const [isMetadataModalOpen, setIsMetadataModalOpen] = useState(false);
+  const [logsCopied, setLogsCopied] = useState(false);
   
   // Save Dialog/Modal State
   const [showSaveChoiceModal, setShowSaveChoiceModal] = useState(false);
@@ -224,7 +227,7 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
 
   const handleManualSearch = () => {
     if (searchTodoistTasks && searchQuery.trim()) {
-      searchTodoistTasks({ processNumber: searchQuery.trim() }, todoistToken);
+      searchTodoistTasks({ processNumber: searchQuery.trim() });
     } else {
       addSystemLog("warning", "Digite um número de processo ou termo válido.");
     }
@@ -243,22 +246,20 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
 
   // Load comments and subtasks when a linked task is active
   useEffect(() => {
-    if (todoistLinkedTask?.id && todoistToken) {
+    if (todoistLinkedTask?.id) {
       fetchRealTimeComments();
       fetchRealTimeSubtasks();
     } else {
       setRealTimeSubtasks([]);
       setRealTimeComments([]);
     }
-  }, [todoistLinkedTask?.id, todoistToken]);
+  }, [todoistLinkedTask?.id]);
 
   const fetchRealTimeComments = async () => {
-    if (!todoistLinkedTask?.id || !todoistToken) return;
+    if (!todoistLinkedTask?.id) return;
     setLoadingComments(true);
     try {
-      const res = await fetch(`/api/todoist/comments?task_id=${todoistLinkedTask.id}`, {
-        headers: { 'x-todoist-token': todoistToken }
-      });
+      const res = await fetch(`/api/todoist/comments?task_id=${todoistLinkedTask.id}`);
       if (res.ok) {
         const data = await res.json();
         setRealTimeComments(Array.isArray(data) ? data : []);
@@ -271,12 +272,10 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
   };
 
   const fetchRealTimeSubtasks = async () => {
-    if (!todoistLinkedTask?.id || !todoistToken) return;
+    if (!todoistLinkedTask?.id) return;
     setLoadingSubtasks(true);
     try {
-      const res = await fetch(`/api/todoist/tasks?project_id=${todoistLinkedTask.project_id}`, {
-        headers: { 'x-todoist-token': todoistToken }
-      });
+      const res = await fetch(`/api/todoist/tasks?project_id=${todoistLinkedTask.project_id}`);
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data)) {
@@ -292,7 +291,7 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
   };
 
   const handleUpdateProperty = async (fields: any) => {
-    if (!todoistLinkedTask?.id || !todoistToken) return;
+    if (!todoistLinkedTask?.id) return;
     setTodoistLoadingLocal(true);
     try {
       const payload: any = {};
@@ -308,7 +307,6 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
       const res = await fetch(`/api/todoist/tasks/${todoistLinkedTask.id}`, {
         method: "POST",
         headers: {
-          'x-todoist-token': todoistToken,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify(payload)
@@ -341,14 +339,13 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
   };
 
   const handleToggleParentTask = async () => {
-    if (!todoistLinkedTask?.id || !todoistToken) return;
+    if (!todoistLinkedTask?.id) return;
     setTodoistLoadingLocal(true);
     const isClosing = !todoistLinkedTask.is_completed;
     const endpoint = isClosing ? `/api/todoist/tasks/${todoistLinkedTask.id}/close` : `/api/todoist/tasks/${todoistLinkedTask.id}/reopen`;
     try {
       const res = await fetch(endpoint, {
-        method: "POST",
-        headers: { 'x-todoist-token': todoistToken }
+        method: "POST"
       });
       if (res.ok) {
         addSystemLog("success", isClosing ? "Tarefa marcada como CONCLUÍDA no Todoist!" : "Tarefa REABERTA no Todoist!");
@@ -367,13 +364,12 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
 
   const handleAddRealTimeSubtask = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!localSubtaskInput.trim() || !todoistLinkedTask?.id || !todoistToken) return;
+    if (!localSubtaskInput.trim() || !todoistLinkedTask?.id) return;
     setTodoistLoadingLocal(true);
     try {
       const res = await fetch(`/api/todoist/tasks`, {
         method: "POST",
         headers: {
-          'x-todoist-token': todoistToken,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
@@ -397,13 +393,11 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
   };
 
   const handleToggleSubtask = async (subtaskId: string, currentCompleted: boolean) => {
-    if (!todoistToken) return;
     setTodoistLoadingLocal(true);
     const endpoint = !currentCompleted ? `/api/todoist/tasks/${subtaskId}/close` : `/api/todoist/tasks/${subtaskId}/reopen`;
     try {
       const res = await fetch(endpoint, {
-        method: "POST",
-        headers: { 'x-todoist-token': todoistToken }
+        method: "POST"
       });
       if (res.ok) {
         addSystemLog("success", !currentCompleted ? "Subtarefa marcada como concluída!" : "Subtarefa reaberta!");
@@ -419,12 +413,10 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
   };
 
   const handleDeleteSubtask = async (subtaskId: string) => {
-    if (!todoistToken) return;
     setTodoistLoadingLocal(true);
     try {
       const res = await fetch(`/api/todoist/tasks/${subtaskId}`, {
-        method: "DELETE",
-        headers: { 'x-todoist-token': todoistToken }
+        method: "DELETE"
       });
       if (res.ok) {
         addSystemLog("success", "Subtarefa excluída do Todoist.");
@@ -441,13 +433,12 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
 
   const handleAddRealTimeComment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!localCommentInput.trim() || !todoistLinkedTask?.id || !todoistToken) return;
+    if (!localCommentInput.trim() || !todoistLinkedTask?.id) return;
     setTodoistLoadingLocal(true);
     try {
       const res = await fetch(`/api/todoist/comments`, {
         method: "POST",
         headers: {
-          'x-todoist-token': todoistToken,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
@@ -470,12 +461,10 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
   };
 
   const handleDeleteComment = async (commentId: string) => {
-    if (!todoistToken) return;
     setTodoistLoadingLocal(true);
     try {
       const res = await fetch(`/api/todoist/comments/${commentId}`, {
-        method: "DELETE",
-        headers: { 'x-todoist-token': todoistToken }
+        method: "DELETE"
       });
       if (res.ok) {
         addSystemLog("success", "Comentário removido do Todoist.");
@@ -491,8 +480,8 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
   };
 
   const handleCreateMirrorTask = async () => {
-    if (!todoistToken) {
-      addSystemLog("warning", "Token do Todoist ausente.");
+    if (!todoistHealth?.enabled) {
+      addSystemLog("warning", "O Todoist não está ativo ou conectado via secret.");
       return;
     }
     setTodoistLoadingLocal(true);
@@ -509,7 +498,6 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
       const res = await fetch(`/api/todoist/tasks`, {
         method: "POST",
         headers: {
-          'x-todoist-token': todoistToken,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify(taskPayload)
@@ -1147,7 +1135,6 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
                           const res = await fetch(`/api/todoist/tasks`, {
                             method: "POST",
                             headers: {
-                              'x-todoist-token': todoistToken,
                               'Content-Type': 'application/json'
                             },
                             body: JSON.stringify({
@@ -1181,7 +1168,6 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
                           const res = await fetch(`/api/todoist/tasks`, {
                             method: "POST",
                             headers: {
-                              'x-todoist-token': todoistToken,
                               'Content-Type': 'application/json'
                             },
                             body: JSON.stringify({
@@ -1215,7 +1201,6 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
                           const res = await fetch(`/api/todoist/tasks`, {
                             method: "POST",
                             headers: {
-                              'x-todoist-token': todoistToken,
                               'Content-Type': 'application/json'
                             },
                             body: JSON.stringify({
@@ -1249,7 +1234,6 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
                           const res = await fetch(`/api/todoist/tasks`, {
                             method: "POST",
                             headers: {
-                              'x-todoist-token': todoistToken,
                               'Content-Type': 'application/json'
                             },
                             body: JSON.stringify({
@@ -1438,22 +1422,32 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
           </div>
 
           {/* Quick Connection Settings */}
-          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-xs space-y-3 shadow-inner">
-            <h4 className="font-bold text-slate-800 flex items-center gap-1">
-              <Key className="h-3.5 w-3.5 text-indigo-500" /> Conector Todoist
+          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-xs space-y-2.5 shadow-inner">
+            <h4 className="font-bold text-slate-800 flex items-center gap-1.5">
+              <Key className="h-3.5 w-3.5 text-indigo-500" /> Todoist
             </h4>
-            <input 
-              type="password"
-              placeholder="Configurar Token..."
-              value={todoistToken}
-              onChange={(e) => {
-                const tk = e.target.value.trim();
-                localStorage.setItem('boss_todoist_api_token', tk);
-                setTodoistToken(tk);
-              }}
-              className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 text-[11px] font-mono focus:ring-1 focus:ring-indigo-500"
-            />
-            <div className="text-[9px] text-slate-400">Token salvo de forma segura localmente no navegador.</div>
+            <div className="space-y-1.5">
+              <div className="flex justify-between items-center text-[11px]">
+                <span className="text-slate-500 font-medium">Status:</span>
+                {todoistHealth?.status === 'checking' ? (
+                  <span className="text-slate-400 font-bold animate-pulse text-[10px]">VERIFICANDO...</span>
+                ) : todoistHealth?.enabled ? (
+                  <span className="bg-emerald-50 text-emerald-700 font-bold px-2 py-0.5 rounded text-[9px] border border-emerald-100 flex items-center gap-1">
+                    <span className="h-1.5 w-1.5 bg-emerald-500 rounded-full animate-pulse"></span> Conectado via secret
+                  </span>
+                ) : (
+                  <span className="bg-amber-50 text-amber-700 font-bold px-2 py-0.5 rounded text-[9px] border border-amber-100">
+                    Desconectado
+                  </span>
+                )}
+              </div>
+              
+              {(!todoistHealth || !todoistHealth.enabled) && (
+                <div className="text-[10px] text-amber-600 leading-normal bg-amber-50/50 p-2 rounded border border-amber-100/60 font-medium mt-1">
+                  ⚠️ Configure a variável <code className="font-mono bg-amber-100/50 px-1 py-0.5 rounded">TODOIST_API_KEY</code> nos Secrets do backend para ativar o conector.
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -1660,6 +1654,121 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
               )}
             </div>
           )}
+
+          {/* PAINEL DE LOGS TÉCNICOS COPIÁVEL */}
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl text-slate-100 space-y-4 font-sans">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Terminal className="h-5 w-5 text-indigo-400" />
+                <h3 className="text-xs font-black uppercase tracking-wider text-white">
+                  Logs Técnicos Todoist
+                </h3>
+              </div>
+              <button
+                onClick={() => {
+                  const timestamp = new Date().toLocaleString('pt-BR');
+                  const rotaAtual = "/pushes/push-trt-mg/atualizar-controladoria";
+                  const todoistEnabled = todoistHealth?.enabled ? "SIM" : "NÃO";
+                  const tokenSource = todoistDiagnostic?.tokenSource || todoistHealth?.tokenSource || "AUSENTE";
+                  const tokenLoaded = todoistDiagnostic?.tokenLoaded || todoistHealth?.tokenLoaded ? "SIM" : "NÃO";
+                  
+                  const getMaskedToken = () => {
+                    return todoistHealth?.enabled ? "SECRET (Oculto)" : "AUSENTE";
+                  };
+
+                  let lastQueryInfo = "";
+                  if (todoistDiagnostic?.queriesTried && todoistDiagnostic.queriesTried.length > 0) {
+                    const lastStep = todoistDiagnostic.queriesTried[todoistDiagnostic.queriesTried.length - 1];
+                    let errorBody = lastStep.rawResponse || "";
+                    let todoistError = "";
+                    try {
+                      const parsed = JSON.parse(lastStep.rawResponse);
+                      todoistError = parsed.error || parsed.message || JSON.stringify(parsed);
+                    } catch (e) {
+                      todoistError = lastStep.rawResponse;
+                    }
+                    
+                    lastQueryInfo = `
+Endpoint chamado: ${lastStep.endpoint || "N/A"}
+Query enviada: ${lastStep.query || "N/A"}
+Status HTTP: ${lastStep.status || "N/A"}
+Corpo do erro retornado pelo backend: ${lastStep.status !== 200 ? errorBody : "Nenhum"}
+Corpo do erro retornado pela API Todoist: ${todoistError || "Nenhum"}
+Resultado bruto parcial: ${lastStep.rawResponse ? lastStep.rawResponse.substring(0, 500) : "Vazio"}`;
+                  } else {
+                    lastQueryInfo = `
+Endpoint chamado: N/A
+Query enviada: N/A
+Status HTTP: N/A
+Corpo do erro retornado pelo backend: Nenhum
+Corpo do erro retornado pela API Todoist: Nenhum
+Resultado bruto parcial: Vazio`;
+                  }
+
+                  const logText = `========================================
+LOGS TÉCNICOS TODOIST
+========================================
+Data/hora: ${timestamp}
+Rota atual: ${rotaAtual}
+Todoist Enabled: ${todoistEnabled}
+Fonte do token: ${tokenSource}
+Token carregado: ${tokenLoaded}
+Mascaramento: ${getMaskedToken()}
+----------------------------------------
+DETALHES DA ÚLTIMA BUSCA:${lastQueryInfo}
+----------------------------------------
+Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha registrada ou busca não executada."}
+========================================`;
+
+                  navigator.clipboard.writeText(logText);
+                  setLogsCopied(true);
+                  setTimeout(() => setLogsCopied(false), 2000);
+                  addSystemLog('success', 'Logs Técnicos Todoist copiados com sucesso!', 'gmail_sync');
+                }}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[11px] uppercase px-3 py-1.5 rounded-xl transition flex items-center gap-1 shadow-md"
+              >
+                {logsCopied ? (
+                  <>
+                    <Check className="h-3.5 w-3.5 text-emerald-300" />
+                    Copiado!
+                  </>
+                ) : (
+                  <>
+                    <Copy className="h-3.5 w-3.5" />
+                    Copiar logs
+                  </>
+                )}
+              </button>
+            </div>
+
+            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 font-mono text-[10px] leading-relaxed text-indigo-200 overflow-x-auto max-h-72 custom-scrollbar space-y-1">
+              <div><span className="text-slate-500">Data/hora:</span> {new Date().toLocaleString('pt-BR')}</div>
+              <div><span className="text-slate-500">Rota atual:</span> /pushes/push-trt-mg/atualizar-controladoria</div>
+              <div><span className="text-slate-500">Todoist Enabled:</span> {todoistHealth?.enabled ? "SIM" : "NÃO"}</div>
+              <div><span className="text-slate-500">Fonte do token:</span> {todoistDiagnostic?.tokenSource || todoistHealth?.tokenSource || "AUSENTE"}</div>
+              <div><span className="text-slate-500">Token carregado:</span> {todoistDiagnostic?.tokenLoaded || todoistHealth?.tokenLoaded ? "SIM" : "NÃO"}</div>
+              <div><span className="text-slate-500">Token mascarado:</span> {todoistHealth?.enabled ? 'SECRET (Oculto)' : 'AUSENTE'}</div>
+              
+              {todoistDiagnostic?.queriesTried && todoistDiagnostic.queriesTried.length > 0 ? (
+                <>
+                  <div className="border-t border-slate-800/80 my-2 pt-2 text-white font-semibold">Último Passo Executado:</div>
+                  <div><span className="text-slate-500">Endpoint chamado:</span> {todoistDiagnostic.queriesTried[todoistDiagnostic.queriesTried.length - 1].endpoint}</div>
+                  <div><span className="text-slate-500">Query enviada:</span> {todoistDiagnostic.queriesTried[todoistDiagnostic.queriesTried.length - 1].query}</div>
+                  <div><span className="text-slate-500">Status HTTP:</span> <span className={todoistDiagnostic.queriesTried[todoistDiagnostic.queriesTried.length - 1].status === 200 ? "text-emerald-400" : "text-red-400 font-bold"}>{todoistDiagnostic.queriesTried[todoistDiagnostic.queriesTried.length - 1].status}</span></div>
+                  
+                  {todoistDiagnostic.queriesTried[todoistDiagnostic.queriesTried.length - 1].status !== 200 && (
+                    <>
+                      <div><span className="text-slate-500">Corpo do erro retornado pelo backend:</span> {todoistDiagnostic.queriesTried[todoistDiagnostic.queriesTried.length - 1].rawResponse}</div>
+                    </>
+                  )}
+                  <div><span className="text-slate-500">Resultado bruto parcial:</span> <span className="text-slate-400">{todoistDiagnostic.queriesTried[todoistDiagnostic.queriesTried.length - 1].rawResponse?.substring(0, 300) || "Vazio"}...</span></div>
+                </>
+              ) : (
+                <div className="text-slate-500 italic py-2">Nenhuma busca executada ainda. Use o Investigador ou busque uma tarefa para gerar logs detalhados.</div>
+              )}
+              <div className="border-t border-slate-800/80 my-2 pt-2"><span className="text-slate-500">Motivo final da falha:</span> <span className="text-amber-400">{todoistDiagnostic?.failureReason || "Nenhuma falha."}</span></div>
+            </div>
+          </div>
 
           {/* ESPELHO DA TAREFA */}
           <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col space-y-5 relative min-h-[500px]">

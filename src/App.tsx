@@ -452,9 +452,27 @@ export default function App() {
   const [isRevisaoPanelOpen, setIsRevisaoPanelOpen] = useState(false);
   const [selectedRevisionOption, setSelectedRevisionOption] = useState('');
   const [showHistoryPanel, setShowHistoryPanel] = useState(false);
-  const [todoistToken, setTodoistToken] = useState(() => {
-    return 'env_secret';
+  const [todoistHealth, setTodoistHealth] = useState<any>({
+    enabled: false,
+    tokenLoaded: false,
+    tokenSource: 'AUSENTE',
+    status: 'checking'
   });
+
+  useEffect(() => {
+    const fetchHealth = async () => {
+      try {
+        const res = await fetch("/api/todoist/health");
+        if (res.ok) {
+          const data = await res.json();
+          setTodoistHealth(data);
+        }
+      } catch (err) {
+        console.error("Erro ao buscar saúde do Todoist:", err);
+      }
+    };
+    fetchHealth();
+  }, []);
 
   const handleAcesseProcessoClique = (cnj: string | undefined, senderRaw: string, subject: string = '', snippet: string = '') => {
     // Clean sender email
@@ -653,15 +671,14 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
     ]);
   };
 
-  const searchTodoistTasks = async (item: any, tokenToUse: string) => {
-    if (!item || !tokenToUse) return;
+  const searchTodoistTasks = async (item: any) => {
+    if (!item) return;
     setTodoistLoading(true);
     setTodoistNotFoundForCnj(false);
     setIsTodoistSelectionModalOpen(false);
     setTodoistMultipleTasksFound([]);
 
     // Initialize diagnostic report object
-    const tokenLoaded = !!tokenToUse && tokenToUse !== 'env_secret';
     const queriesTriedLog: any[] = [];
     let localFilterRun = false;
     let localFilterResults: any[] = [];
@@ -670,7 +687,7 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
     let failureReason: string | null = null;
     let finalResult = "nenhuma encontrada";
     let detectedTokenSource = "AUSENTE";
-    let detectedTokenLoaded = tokenLoaded;
+    let detectedTokenLoaded = false;
 
     try {
       // 1. Extrair do push
@@ -693,9 +710,7 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
 
         if (savedTaskId) {
           // Fetch specific task
-          const taskRes = await fetch(`/api/todoist/tasks/${savedTaskId}`, {
-            headers: { 'x-todoist-token': tokenToUse }
-          });
+          const taskRes = await fetch(`/api/todoist/tasks/${savedTaskId}`);
           const sourceHeader = taskRes.headers.get("X-Todoist-Token-Source");
           const loadedHeader = taskRes.headers.get("X-Todoist-Token-Loaded");
           if (sourceHeader) detectedTokenSource = sourceHeader;
@@ -803,9 +818,7 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
         let titles: string[] = [];
 
         try {
-          const response = await fetch(endpoint, {
-            headers: { 'x-todoist-token': tokenToUse }
-          });
+          const response = await fetch(endpoint);
           status = response.status;
           const sourceHeader = response.headers.get("X-Todoist-Token-Source");
           const loadedHeader = response.headers.get("X-Todoist-Token-Loaded");
@@ -853,9 +866,7 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
         addSystemLog('warning', `🕵️‍♂️ Buscas parciais falharam. Executando fallback bruto (GET /tasks)...`, 'gmail_sync');
 
         try {
-          const response = await fetch(fallbackEndpoint, {
-            headers: { 'x-todoist-token': tokenToUse }
-          });
+          const response = await fetch(fallbackEndpoint);
           status = response.status;
           const sourceHeader = response.headers.get("X-Todoist-Token-Source");
           const loadedHeader = response.headers.get("X-Todoist-Token-Loaded");
@@ -1137,9 +1148,7 @@ ${localFilterResults.map((r, idx) => `
         if (isClearlySuperior) {
           // Buscar comentários da tarefa selecionada
           try {
-            const commentsRes = await fetch(`/api/todoist/comments?task_id=${topTask.id}`, {
-              headers: { 'x-todoist-token': tokenToUse }
-            });
+            const commentsRes = await fetch(`/api/todoist/comments?task_id=${topTask.id}`);
             if (commentsRes.ok) {
               const comments = await commentsRes.json();
               topTask.comments = Array.isArray(comments) ? comments : [];
@@ -1166,9 +1175,7 @@ ${localFilterResults.map((r, idx) => `
           // Mais de uma tarefa plausível
           const enrichPromises = sortedTasks.slice(0, 5).map(async (task) => {
             try {
-              const commentsRes = await fetch(`/api/todoist/comments?task_id=${task.id}`, {
-                headers: { 'x-todoist-token': tokenToUse }
-              });
+              const commentsRes = await fetch(`/api/todoist/comments?task_id=${task.id}`);
               if (commentsRes.ok) {
                 const comments = await commentsRes.json();
                 task.comments = Array.isArray(comments) ? comments : [];
@@ -1200,12 +1207,9 @@ ${localFilterResults.map((r, idx) => `
     }
   };
 
-  const fetchTodoistMetadata = async (tokenToUse: string) => {
-    if (!tokenToUse) return;
+  const fetchTodoistMetadata = async () => {
     try {
-      const projRes = await fetch("/api/todoist/projects", {
-        headers: { 'x-todoist-token': tokenToUse }
-      });
+      const projRes = await fetch("/api/todoist/projects");
       if (projRes.ok) {
         const projects = await projRes.json();
         setTodoistProjects(projects);
@@ -1215,9 +1219,7 @@ ${localFilterResults.map((r, idx) => `
         }
       }
 
-      const secRes = await fetch("/api/todoist/sections", {
-        headers: { 'x-todoist-token': tokenToUse }
-      });
+      const secRes = await fetch("/api/todoist/sections");
       if (secRes.ok) {
         const sections = await secRes.json();
         setTodoistSections(sections);
@@ -1228,11 +1230,6 @@ ${localFilterResults.map((r, idx) => `
   };
 
   const handleSaveTodoistTask = async (skipRedirect = false) => {
-    if (!todoistToken) {
-      addSystemLog('warning', 'Token de API do Todoist não configurado. Por favor, insira o token para salvar.');
-      return;
-    }
-
     setTodoistSyncing(true);
     try {
       const taskPayload: any = {
@@ -1253,7 +1250,6 @@ ${localFilterResults.map((r, idx) => `
         const updateRes = await fetch(`/api/todoist/tasks/${todoistLinkedTask.id}`, {
           method: "POST",
           headers: {
-            'x-todoist-token': todoistToken,
             'Content-Type': 'application/json'
           },
           body: JSON.stringify(taskPayload)
@@ -1270,7 +1266,6 @@ ${localFilterResults.map((r, idx) => `
         const createRes = await fetch(`/api/todoist/tasks`, {
           method: "POST",
           headers: {
-            'x-todoist-token': todoistToken,
             'Content-Type': 'application/json'
           },
           body: JSON.stringify(taskPayload)
@@ -1289,7 +1284,6 @@ ${localFilterResults.map((r, idx) => `
         await fetch(`/api/todoist/comments`, {
           method: "POST",
           headers: {
-            'x-todoist-token': todoistToken,
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
@@ -1305,7 +1299,6 @@ ${localFilterResults.map((r, idx) => `
           await fetch(`/api/todoist/tasks`, {
             method: "POST",
             headers: {
-              'x-todoist-token': todoistToken,
               'Content-Type': 'application/json'
             },
             body: JSON.stringify({
@@ -1316,7 +1309,7 @@ ${localFilterResults.map((r, idx) => `
         }
       }
 
-      addSystemLog('info', `Controladoria atualizada para o processo ${controladoriaActiveItem.processNumber}.`, 'gmail_sync');
+      addSystemLog('info', `Controladoria updated for process ${controladoriaActiveItem.processNumber}.`, 'gmail_sync');
       
       if (!skipRedirect) {
         // Navigate back
@@ -1369,11 +1362,8 @@ ${localFilterResults.map((r, idx) => `
     // Navigate immediately
     handleTabChange(`pushes/push-${resolvedSourceId}/atualizar-controladoria`);
 
-    // Fetch Todoist projects/sections if token is present
-    const savedToken = todoistToken || 'env_secret';
-    if (savedToken) {
-      fetchTodoistMetadata(savedToken);
-    }
+    // Fetch Todoist projects/sections
+    fetchTodoistMetadata();
 
     // If no bodyText, fetch details
     if (!msg.bodyText) {
@@ -1415,9 +1405,7 @@ ${localFilterResults.map((r, idx) => `
               setControladoriaActiveItem(updatedItem);
               prefillTodoistForm(updatedItem);
               
-              if (savedToken) {
-                searchTodoistTasks(updatedItem, savedToken);
-              }
+              searchTodoistTasks(updatedItem);
             }
           }
         }
@@ -1425,9 +1413,7 @@ ${localFilterResults.map((r, idx) => `
         console.error("Erro ao buscar detalhes da publicação:", err);
       }
     } else {
-      if (savedToken) {
-        searchTodoistTasks(initialItem, savedToken);
-      }
+      searchTodoistTasks(initialItem);
     }
   };
 
@@ -1527,8 +1513,6 @@ ${localFilterResults.map((r, idx) => `
           controladoriaActiveItem={controladoriaActiveItem}
           groupedPushes={groupedPushes}
           theme={theme}
-          todoistToken={todoistToken}
-          setTodoistToken={setTodoistToken}
           todoistProjects={todoistProjects}
           todoistTaskTitle={todoistTaskTitle}
           setTodoistTaskTitle={setTodoistTaskTitle}
@@ -1572,6 +1556,7 @@ ${localFilterResults.map((r, idx) => `
           searchTodoistTasks={searchTodoistTasks}
           todoistDiagnostic={todoistDiagnostic}
           setTodoistDiagnostic={setTodoistDiagnostic}
+          todoistHealth={todoistHealth}
         />
       </div>
     );
@@ -2580,8 +2565,8 @@ BOSS JUDICIAL - CONTROLADORIA INTELIGENTE
     setDelegationComment(`Segue teor integral da publicação para conferência:\n\n${pub.textClean}`);
     
     // Auto-search in Todoist
-    if (todoistToken && pub.cnj) {
-      searchTodoistTasks({ processNumber: pub.cnj }, todoistToken);
+    if (pub.cnj) {
+      searchTodoistTasks({ processNumber: pub.cnj });
     }
   };
 
@@ -2603,11 +2588,6 @@ BOSS JUDICIAL - CONTROLADORIA INTELIGENTE
   }, [recorteSelectedIdx, activeRecorteServiceId, activeTab]);
 
   const handleConfirmDelegation = async (source: 'prius' | 'recorte') => {
-    if (!todoistToken) {
-      addSystemLog('warning', 'Token de API do Todoist não configurado.');
-      return;
-    }
-
     const session = source === 'prius' ? priusSession : recorteSessions[activeRecorteServiceId];
     const idx = source === 'prius' ? priusSelectedIdx : recorteSelectedIdx;
     if (!session || idx === null) return;
@@ -2631,8 +2611,7 @@ BOSS JUDICIAL - CONTROLADORIA INTELIGENTE
       const createRes = await fetch("/api/todoist/tasks", {
         method: "POST",
         headers: {
-          "Content-Type": "application/json",
-          "x-todoist-token": todoistToken
+          "Content-Type": "application/json"
         },
         body: JSON.stringify(taskPayload)
       });
@@ -2650,8 +2629,7 @@ BOSS JUDICIAL - CONTROLADORIA INTELIGENTE
         await fetch("/api/todoist/comments", {
           method: "POST",
           headers: {
-            "Content-Type": "application/json",
-            "x-todoist-token": todoistToken
+            "Content-Type": "application/json"
           },
           body: JSON.stringify({
             task_id: taskId,
@@ -2666,8 +2644,7 @@ BOSS JUDICIAL - CONTROLADORIA INTELIGENTE
         await fetch("/api/todoist/tasks", {
           method: "POST",
           headers: {
-            "Content-Type": "application/json",
-            "x-todoist-token": todoistToken
+            "Content-Type": "application/json"
           },
           body: JSON.stringify({
             content: sub,
@@ -5983,7 +5960,7 @@ BOSS JUDICIAL - CONTROLADORIA INTELIGENTE
                                 {!todoistLinkedTask && (
                                   <button
                                     onClick={() => handleConfirmDelegation('prius')}
-                                    disabled={todoistSyncing || !todoistToken}
+                                    disabled={todoistSyncing}
                                     className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold text-xs py-2.5 px-4 rounded-xl shadow transition flex items-center justify-center gap-1.5"
                                   >
                                     {todoistSyncing ? (
@@ -6444,7 +6421,7 @@ BOSS JUDICIAL - CONTROLADORIA INTELIGENTE
                                   {!todoistLinkedTask && (
                                     <button
                                       onClick={() => handleConfirmDelegation('recorte')}
-                                      disabled={todoistSyncing || !todoistToken}
+                                      disabled={todoistSyncing}
                                       className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-xs py-2.5 px-4 rounded-xl shadow transition flex items-center justify-center gap-1.5"
                                     >
                                       <PlusCircle className="h-3.5 w-3.5" />
