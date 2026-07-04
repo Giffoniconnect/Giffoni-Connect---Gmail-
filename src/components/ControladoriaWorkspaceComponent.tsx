@@ -158,6 +158,7 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
   const [logsCopied, setLogsCopied] = useState(false);
   const [isInvestigadorModalOpen, setIsInvestigadorModalOpen] = useState(false);
   const [isLogsModalOpen, setIsLogsModalOpen] = useState(false);
+  const [isSecretariadoOpen, setIsSecretariadoOpen] = useState(true);
   const [investigadorCopied, setInvestigadorCopied] = useState(false);
   const [logsModalCopied, setLogsModalCopied] = useState(false);
   
@@ -181,6 +182,15 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
   const [newLabelText, setNewLabelText] = useState("");
   const [newCommentText, setNewCommentText] = useState("");
   const [localComments, setLocalComments] = useState<string[]>([]);
+
+  const getPriorityBorderClass = (priority: number) => {
+    switch (priority) {
+      case 4: return "border-red-500 hover:bg-red-50 text-red-500";
+      case 3: return "border-orange-500 hover:bg-orange-50 text-orange-500";
+      case 2: return "border-blue-500 hover:bg-blue-50 text-blue-500";
+      default: return "border-slate-300 hover:bg-slate-50 text-slate-400";
+    }
+  };
 
   // Smart Queues State
   const [selectedQueueTab, setSelectedQueueTab] = useState<string>("trt-mg");
@@ -846,6 +856,38 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
     }
   };
 
+  const handleCreateSecretariadoSubtask = async () => {
+    if (!todoistLinkedTask) {
+      addSystemLog("error", "Localize uma tarefa do Todoist antes de criar subtarefa.");
+      return;
+    }
+    setTodoistLoadingLocal(true);
+    try {
+      const res = await fetch(`/api/todoist/tasks`, {
+        method: "POST",
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          content: "+giffonisecretaria Secretariado, por gentileza, agendar reunião com o cliente hoje",
+          parent_id: todoistLinkedTask.id,
+          project_id: todoistLinkedTask.project_id
+        })
+      });
+      if (res.ok) {
+        addSystemLog("success", "Subtarefa criada para o Secretariado.");
+        fetchRealTimeSubtasks();
+      } else {
+        addSystemLog("error", "Erro ao criar subtarefa para o Secretariado.");
+      }
+    } catch (e) {
+      console.error(e);
+      addSystemLog("error", "Erro ao conectar com a API Todoist.");
+    } finally {
+      setTodoistLoadingLocal(false);
+    }
+  };
+
   const handleToggleSubtask = async (subtaskId: string, currentCompleted: boolean) => {
     setTodoistLoadingLocal(true);
     const endpoint = !currentCompleted ? `/api/todoist/tasks/${subtaskId}/close` : `/api/todoist/tasks/${subtaskId}/reopen`;
@@ -1500,381 +1542,6 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
         
         {/* COLUMN 1: LEFT OPERATIONAL SIDEBAR (4 Cols) */}
         <div className="lg:col-span-4 space-y-4">
-          <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm space-y-3.5">
-            <div className="border-b border-slate-100 pb-2 flex items-center justify-between">
-              <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
-                <Sliders className="h-4 w-4 text-indigo-500" /> Ações Rápidas
-              </h3>
-              <button 
-                onClick={() => setIsKeyboardShortcutsOpen(true)}
-                className="text-slate-400 hover:text-indigo-600 transition"
-                title="Atalhos de teclado"
-              >
-                <Keyboard className="h-4 w-4" />
-              </button>
-            </div>
-
-            {/* Principal Save */}
-            <div className="space-y-2">
-              <button
-                onClick={() => setShowSaveChoiceModal(true)}
-                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs py-2.5 px-4 rounded-xl shadow-md shadow-indigo-100 transition flex items-center justify-center gap-1.5"
-              >
-                <Save className="h-4 w-4" /> Salvar / Atualizar
-              </button>
-
-              <button
-                onClick={handleQuickMarkConferred}
-                disabled={saveLoading}
-                className="w-full bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold text-xs py-2 px-4 rounded-xl transition flex items-center justify-center gap-1.5"
-              >
-                <Check className="h-4 w-4" /> Marcar como Conferido
-              </button>
-            </div>
-
-            {/* Interactive slide controls */}
-            <div className="space-y-1 pt-1.5">
-              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Ajustar Parâmetros</div>
-              
-              <button
-                onClick={() => {
-                  setIsRevisaoOpen(prev => !prev);
-                  setIsHistoricoOpen(false);
-                }}
-                className={`w-full text-left font-semibold text-xs py-2 px-3 rounded-xl transition flex items-center justify-between ${
-                  isRevisaoOpen ? "bg-blue-50 text-blue-800 border border-blue-200/50" : "text-slate-600 hover:bg-slate-50"
-                }`}
-              >
-                <span className="flex items-center gap-2">
-                  <Clock className="h-4 w-4" /> Agendar Revisão
-                </span>
-                <ChevronDown className={`h-3.5 w-3.5 transition ${isRevisaoOpen ? "rotate-180" : ""}`} />
-              </button>
-
-              <button
-                onClick={() => {
-                  setIsHistoricoOpen(prev => !prev);
-                  setIsRevisaoOpen(false);
-                }}
-                className={`w-full text-left font-semibold text-xs py-2 px-3 rounded-xl transition flex items-center justify-between ${
-                  isHistoricoOpen ? "bg-purple-50 text-purple-800 border border-purple-200/50" : "text-slate-600 hover:bg-slate-50"
-                }`}
-              >
-                <span className="flex items-center gap-2">
-                  <Database className="h-4 w-4" /> Histórico Processo
-                </span>
-                <ChevronDown className={`h-3.5 w-3.5 transition ${isHistoricoOpen ? "rotate-180" : ""}`} />
-              </button>
-            </div>
-
-            {/* Collapsible Panel: AGENDAR REVISÃO */}
-            {isRevisaoOpen && (
-              <div className="bg-gradient-to-br from-blue-50/70 to-white border border-blue-200 rounded-xl p-3.5 space-y-3.5 shadow-sm mt-3 animate-fade-in">
-                <div className="flex justify-between items-center border-b border-blue-100 pb-1.5">
-                  <span className="text-xs font-bold text-blue-800 flex items-center gap-1.5">
-                    <Clock className="h-4 w-4" /> Programar Revisão Processual
-                  </span>
-                  <button onClick={() => setIsRevisaoOpen(false)} className="text-slate-400 hover:text-slate-600 text-xs">✕</button>
-                </div>
-                <p className="text-[10px] text-slate-500 leading-relaxed">
-                  Adicione gatilhos de conferência ou revisão futura como subtarefas do Todoist:
-                </p>
-                <div className="grid grid-cols-1 gap-1.5 text-xs">
-                  <button 
-                    onClick={async () => {
-                      const subText = `Revisar publicação em 15 dias: Processo ${cleanCnjStr}`;
-                      if (todoistLinkedTask?.id) {
-                        setTodoistLoadingLocal(true);
-                        try {
-                          const res = await fetch(`/api/todoist/tasks`, {
-                            method: "POST",
-                            headers: {
-                              'Content-Type': 'application/json'
-                            },
-                            body: JSON.stringify({
-                              content: subText,
-                              parent_id: todoistLinkedTask.id,
-                              project_id: todoistLinkedTask.project_id
-                            })
-                          });
-                          if (res.ok) {
-                            addSystemLog('success', 'Gatilho de revisão em 15 dias adicionado ao Todoist!');
-                            fetchRealTimeSubtasks();
-                          }
-                        } catch (e) { console.error(e); }
-                        finally { setTodoistLoadingLocal(false); }
-                      } else {
-                        setTodoistTaskSubtasks([...todoistTaskSubtasks, subText]);
-                        addSystemLog('success', 'Gatilho de revisão em 15 dias planejado!');
-                      }
-                      setIsRevisaoOpen(false);
-                    }}
-                    className="p-2 bg-white hover:bg-blue-50 border border-slate-200 rounded-lg text-left font-semibold text-slate-700 hover:text-blue-700 transition text-[11px]"
-                  >
-                    Revisar em 15 dias
-                  </button>
-                  <button 
-                    onClick={async () => {
-                      const subText = `Revisar publicação em 30 dias: Processo ${cleanCnjStr}`;
-                      if (todoistLinkedTask?.id) {
-                        setTodoistLoadingLocal(true);
-                        try {
-                          const res = await fetch(`/api/todoist/tasks`, {
-                            method: "POST",
-                            headers: {
-                              'Content-Type': 'application/json'
-                            },
-                            body: JSON.stringify({
-                              content: subText,
-                              parent_id: todoistLinkedTask.id,
-                              project_id: todoistLinkedTask.project_id
-                            })
-                          });
-                          if (res.ok) {
-                            addSystemLog('success', 'Gatilho de revisão em 30 dias adicionado ao Todoist!');
-                            fetchRealTimeSubtasks();
-                          }
-                        } catch (e) { console.error(e); }
-                        finally { setTodoistLoadingLocal(false); }
-                      } else {
-                        setTodoistTaskSubtasks([...todoistTaskSubtasks, subText]);
-                        addSystemLog('success', 'Gatilho de revisão em 30 dias planejado!');
-                      }
-                      setIsRevisaoOpen(false);
-                    }}
-                    className="p-2 bg-white hover:bg-blue-50 border border-slate-200 rounded-lg text-left font-semibold text-slate-700 hover:text-blue-700 transition text-[11px]"
-                  >
-                    Revisar em 30 dias
-                  </button>
-                  <button 
-                    onClick={async () => {
-                      const subText = `Revisar após julgamento de embargos: Processo ${cleanCnjStr}`;
-                      if (todoistLinkedTask?.id) {
-                        setTodoistLoadingLocal(true);
-                        try {
-                          const res = await fetch(`/api/todoist/tasks`, {
-                            method: "POST",
-                            headers: {
-                              'Content-Type': 'application/json'
-                            },
-                            body: JSON.stringify({
-                              content: subText,
-                              parent_id: todoistLinkedTask.id,
-                              project_id: todoistLinkedTask.project_id
-                            })
-                          });
-                          if (res.ok) {
-                            addSystemLog('success', 'Gatilho pós-julgamento de embargos adicionado ao Todoist!');
-                            fetchRealTimeSubtasks();
-                          }
-                        } catch (e) { console.error(e); }
-                        finally { setTodoistLoadingLocal(false); }
-                      } else {
-                        setTodoistTaskSubtasks([...todoistTaskSubtasks, subText]);
-                        addSystemLog('success', 'Gatilho pós-julgamento planejado!');
-                      }
-                      setIsRevisaoOpen(false);
-                    }}
-                    className="p-2 bg-white hover:bg-blue-50 border border-slate-200 rounded-lg text-left font-semibold text-slate-700 hover:text-blue-700 transition text-[11px]"
-                  >
-                    Pós Julgamento
-                  </button>
-                  <button 
-                    onClick={async () => {
-                      const subText = `Conferir decurso e trânsito em julgado: Processo ${cleanCnjStr}`;
-                      if (todoistLinkedTask?.id) {
-                        setTodoistLoadingLocal(true);
-                        try {
-                          const res = await fetch(`/api/todoist/tasks`, {
-                            method: "POST",
-                            headers: {
-                              'Content-Type': 'application/json'
-                            },
-                            body: JSON.stringify({
-                              content: subText,
-                              parent_id: todoistLinkedTask.id,
-                              project_id: todoistLinkedTask.project_id
-                            })
-                          });
-                          if (res.ok) {
-                            addSystemLog('success', 'Gatilho de decurso e trânsito adicionado ao Todoist!');
-                            fetchRealTimeSubtasks();
-                          }
-                        } catch (e) { console.error(e); }
-                        finally { setTodoistLoadingLocal(false); }
-                      } else {
-                        setTodoistTaskSubtasks([...todoistTaskSubtasks, subText]);
-                        addSystemLog('success', 'Gatilho pós prazo fatal planejado!');
-                      }
-                      setIsRevisaoOpen(false);
-                    }}
-                    className="p-2 bg-white hover:bg-blue-50 border border-slate-200 rounded-lg text-left font-semibold text-slate-700 hover:text-blue-700 transition text-[11px]"
-                  >
-                    Pós Prazo Fatal
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Collapsible Panel: HISTÓRICO */}
-            {isHistoricoOpen && (
-              <div className="bg-gradient-to-br from-purple-50/70 to-white border border-purple-200 rounded-xl p-3.5 space-y-3.5 shadow-sm mt-3 max-h-80 overflow-y-auto animate-fade-in">
-                <div className="flex justify-between items-center border-b border-purple-100 pb-1.5">
-                  <span className="text-xs font-bold text-purple-800 flex items-center gap-1.5">
-                    <Database className="h-4 w-4" /> Histórico Operacional
-                  </span>
-                  <button onClick={() => setIsHistoricoOpen(false)} className="text-slate-400 hover:text-slate-600 text-xs">✕</button>
-                </div>
-                <div className="space-y-2">
-                  {systemLogs
-                    .filter(log => log.message.includes(cleanCnjStr))
-                    .map(log => (
-                      <div key={log.id} className="text-[11px] border-l-2 border-purple-400 pl-2 space-y-0.5">
-                        <div className="text-[9px] text-slate-400">{new Date(log.timestamp).toLocaleString('pt-BR')}</div>
-                        <p className="text-slate-600 leading-relaxed">{log.message}</p>
-                      </div>
-                    ))}
-                  {systemLogs.filter(log => log.message.includes(cleanCnjStr)).length === 0 && (
-                    <div className="text-center py-4 text-[10px] text-slate-400">
-                      Nenhum histórico anterior para este processo.
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Subtarefas Automáticas (Migrated here) */}
-            <div className="space-y-2 border-t border-slate-100 pt-3">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                <Tag className="h-3 w-3 text-indigo-500" /> Subtarefas Automáticas ({todoistTaskSubtasks.length})
-              </label>
-              
-              <div className="space-y-1.5">
-                {todoistTaskSubtasks.map((sub, i) => (
-                  <div key={i} className="flex items-center justify-between bg-slate-50 border border-slate-150 p-2.5 rounded-xl text-xs">
-                    <span className="font-semibold text-slate-700 leading-relaxed pr-2">{sub}</span>
-                    <button 
-                      onClick={() => handleRemoveSubtask(i)}
-                      className="text-slate-400 hover:text-red-600 transition"
-                      title="Excluir subtarefa"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                ))}
-                {todoistTaskSubtasks.length === 0 && (
-                  <div className="text-center py-4 bg-slate-50 border border-dashed border-slate-200 rounded-xl text-slate-400 text-[11px] italic">
-                    Nenhuma subtarefa agendada.
-                  </div>
-                )}
-              </div>
-
-              <form 
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  if (!newSubtaskText.trim()) return;
-                  setTodoistTaskSubtasks([...todoistTaskSubtasks, newSubtaskText.trim()]);
-                  setNewSubtaskText("");
-                  addSystemLog('success', 'Subtarefa manual adicionada com sucesso.');
-                }} 
-                className="flex gap-2"
-              >
-                <input 
-                  type="text" 
-                  placeholder="Nova subtarefa manual..."
-                  value={newSubtaskText}
-                  onChange={(e) => setNewSubtaskText(e.target.value)}
-                  className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:ring-1 focus:ring-indigo-400"
-                />
-                <button type="submit" className="p-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-lg transition border border-indigo-200">
-                  <Plus className="h-4 w-4" />
-                </button>
-              </form>
-            </div>
-
-            {/* Fila / Queue actions */}
-            <div className="space-y-1 border-t border-slate-100 pt-3">
-              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Ações de Fila</div>
-              
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={handlePrev}
-                  className="bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 font-bold text-[11px] py-1.5 px-2 rounded-lg transition flex items-center justify-center gap-1"
-                >
-                  <ArrowLeft className="h-3 w-3" /> Voltar
-                </button>
-                <button
-                  onClick={handleSkip}
-                  className="bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 font-bold text-[11px] py-1.5 px-2 rounded-lg transition flex items-center justify-center gap-1"
-                >
-                  Pular <ArrowRight className="h-3 w-3" />
-                </button>
-              </div>
-
-              <button
-                onClick={handleMarkAsRevisarDepois}
-                className="w-full text-left font-semibold text-xs py-1.5 px-3 rounded-lg text-slate-600 hover:bg-amber-50 hover:text-amber-800 transition flex items-center gap-2"
-              >
-                <Clock className="h-3.5 w-3.5 text-amber-500" /> Revisar Depois
-              </button>
-
-              <button
-                onClick={handleMarkAsIgnored}
-                className="w-full text-left font-semibold text-xs py-1.5 px-3 rounded-lg text-slate-600 hover:bg-red-50 hover:text-red-800 transition flex items-center gap-2"
-              >
-                <Trash2 className="h-3.5 w-3.5 text-red-400" /> Não é Publicação
-              </button>
-
-              <button
-                onClick={handleMarkAsDuplicate}
-                className="w-full text-left font-semibold text-xs py-1.5 px-3 rounded-lg text-slate-600 hover:bg-orange-50 hover:text-orange-800 transition flex items-center gap-2"
-              >
-                <AlertTriangle className="h-3.5 w-3.5 text-orange-400" /> Marcar Duplicidade
-              </button>
-            </div>
-
-            {/* Links Externos */}
-            <div className="space-y-1 border-t border-slate-100 pt-3">
-              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Sistemas de Apoio</div>
-              
-              <button
-                onClick={() => setIsMetadataModalOpen(true)}
-                className="w-full text-left text-slate-600 hover:text-indigo-600 font-semibold text-xs py-1.5 px-3 rounded-lg hover:bg-slate-50 transition flex items-center justify-between"
-              >
-                <span className="flex items-center gap-2">
-                  <Sparkles className="h-3.5 w-3.5 text-purple-500 animate-pulse" /> Ver metadados
-                </span>
-              </button>
-
-              <button
-                onClick={handleOpenProcesso}
-                className="w-full text-left text-slate-600 hover:text-indigo-600 font-semibold text-xs py-1.5 px-3 rounded-lg hover:bg-slate-50 transition flex items-center justify-between"
-              >
-                <span className="flex items-center gap-2">
-                  <ExternalLink className="h-3.5 w-3.5 text-slate-400" /> Abrir no Tribunal
-                </span>
-              </button>
-
-              <button
-                onClick={handleOpenGmail}
-                className="w-full text-left text-slate-600 hover:text-indigo-600 font-semibold text-xs py-1.5 px-3 rounded-lg hover:bg-slate-50 transition flex items-center justify-between"
-              >
-                <span className="flex items-center gap-2">
-                  <ExternalLink className="h-3.5 w-3.5 text-slate-400" /> Abrir Gmail Original
-                </span>
-              </button>
-
-              <button
-                onClick={handleOpenTodoist}
-                className="w-full text-left text-slate-600 hover:text-indigo-600 font-semibold text-xs py-1.5 px-3 rounded-lg hover:bg-slate-50 transition flex items-center justify-between"
-              >
-                <span className="flex items-center gap-2">
-                  <ExternalLink className="h-3.5 w-3.5 text-slate-400" /> Abrir Todoist
-                </span>
-              </button>
-            </div>
-          </div>
-
           {/* Quick Connection Settings */}
           <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-xs space-y-2.5 shadow-inner">
             <h4 className="font-bold text-slate-800 flex items-center gap-1.5">
@@ -2928,6 +2595,151 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
           )}
 
           {/* ESPELHO DA TAREFA */}
+        </div> {/* closes Column 2 & 3 (lg:col-span-8) */}
+      </div> {/* closes Main Grid */}
+
+      {/* Side-by-side Ações Rápidas & ESPELHO DA TAREFA */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start mt-6">
+        {/* Left Side: Ações Rápidas */}
+        <div className="lg:col-span-4 space-y-4">
+          <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm space-y-3.5">
+            <div className="border-b border-slate-100 pb-2 flex items-center justify-between">
+              <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
+                <Sliders className="h-4 w-4 text-indigo-500" /> Ações Rápidas
+              </h3>
+              <button 
+                onClick={() => setIsKeyboardShortcutsOpen(true)}
+                className="text-slate-400 hover:text-indigo-600 transition"
+                title="Atalhos de teclado"
+              >
+                <Keyboard className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Principal Save */}
+            <div className="space-y-2">
+              <button
+                onClick={() => setShowSaveChoiceModal(true)}
+                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs py-2.5 px-4 rounded-xl shadow-md shadow-indigo-100 transition flex items-center justify-center gap-1.5"
+              >
+                <Save className="h-4 w-4" /> Salvar / Atualizar
+              </button>
+
+              <button
+                onClick={handleQuickMarkConferred}
+                disabled={saveLoading}
+                className="w-full bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold text-xs py-2 px-4 rounded-xl transition flex items-center justify-center gap-1.5"
+              >
+                <Check className="h-4 w-4" /> Marcar como Conferido
+              </button>
+            </div>
+
+            {/* Tarefas para o Secretariado */}
+            <div className="space-y-1.5 pt-1.5 border-t border-slate-100">
+              <button
+                onClick={() => setIsSecretariadoOpen(prev => !prev)}
+                className={`w-full text-left font-bold text-[10px] uppercase tracking-wider py-1.5 px-3 rounded-lg flex items-center justify-between transition ${
+                  isSecretariadoOpen ? "bg-slate-50 text-indigo-700" : "text-slate-400 hover:text-slate-600 hover:bg-slate-50/50"
+                }`}
+              >
+                <span className="flex items-center gap-1.5">
+                  <User className="h-3.5 w-3.5 text-indigo-500" /> Tarefas para o Secretariado
+                </span>
+                <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${isSecretariadoOpen ? "rotate-180" : ""}`} />
+              </button>
+
+              {isSecretariadoOpen && (
+                <div className="pl-3 pr-1 py-1.5 space-y-2 border-l border-indigo-100/60 ml-3 animate-fade-in">
+                  <div className="flex flex-col space-y-1">
+                    <span className="text-[10px] font-semibold text-slate-500">Criar subtarefa automática:</span>
+                    <div className="flex items-center justify-between bg-indigo-50/50 border border-indigo-100 rounded-xl p-2.5 gap-2 group hover:bg-indigo-50 transition">
+                      <span className="text-xs font-bold text-indigo-950 leading-normal">
+                        Agendar hoje reunião com Cliente
+                      </span>
+                      <button
+                        onClick={handleCreateSecretariadoSubtask}
+                        disabled={todoistLoadingLocal || !todoistLinkedTask}
+                        className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white text-[10px] font-black tracking-tight px-3 py-1.5 rounded-lg shadow-sm shadow-indigo-100 transition flex items-center gap-1 shrink-0"
+                        title="Criar subtarefa no Todoist"
+                      >
+                        {todoistLoadingLocal ? (
+                          <RefreshCw className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <>
+                            <span>&gt;&gt;&gt;</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                  {!todoistLinkedTask && (
+                    <div className="text-[10px] text-amber-600 font-semibold bg-amber-50/60 border border-amber-100/60 rounded-lg p-2 leading-normal">
+                      Localize uma tarefa do Todoist antes de criar subtarefa.
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Interactive slide controls */}
+            <div className="space-y-1 pt-1.5 border-t border-slate-100">
+              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Ajustar Parâmetros</div>
+              
+              <button
+                onClick={() => {
+                  setIsRevisaoOpen(prev => !prev);
+                  setIsHistoricoOpen(false);
+                }}
+                className={`w-full text-left font-semibold text-xs py-2 px-3 rounded-xl transition flex items-center justify-between ${
+                  isRevisaoOpen ? "bg-blue-50 text-blue-800 border border-blue-200/50" : "text-slate-600 hover:bg-slate-50"
+                }`}
+              >
+                <span className="flex items-center gap-2">
+                  <Clock className="h-4 w-4" /> Agendar Revisão
+                </span>
+                <ChevronDown className={`h-3.5 w-3.5 transition ${isRevisaoOpen ? "rotate-180" : ""}`} />
+              </button>
+
+              <button
+                onClick={() => {
+                  setIsHistoricoOpen(prev => !prev);
+                  setIsRevisaoOpen(false);
+                }}
+                className={`w-full text-left font-semibold text-xs py-2 px-3 rounded-xl transition flex items-center justify-between ${
+                  isHistoricoOpen ? "bg-purple-50 text-purple-800 border border-purple-200/50" : "text-slate-600 hover:bg-slate-50"
+                }`}
+              >
+                <span className="flex items-center gap-2">
+                  <Database className="h-4 w-4" /> Histórico Processo
+                </span>
+                <ChevronDown className={`h-3.5 w-3.5 transition ${isHistoricoOpen ? "rotate-180" : ""}`} />
+              </button>
+            </div>
+
+            {/* Fila / Queue actions */}
+            <div className="space-y-1 border-t border-slate-100 pt-3">
+              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Ações de Fila</div>
+              
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={handlePrev}
+                  className="bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 font-bold text-[11px] py-1.5 px-2 rounded-lg transition flex items-center justify-center gap-1"
+                >
+                  <ArrowLeft className="h-3 w-3" /> Voltar
+                </button>
+                <button
+                  onClick={handleSkip}
+                  className="bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 font-bold text-[11px] py-1.5 px-2 rounded-lg transition flex items-center justify-center gap-1"
+                >
+                  Pular <ArrowRight className="h-3 w-3" />
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Right Side: ESPELHO DA TAREFA */}
+        <div className="lg:col-span-8">
           <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col space-y-5 relative min-h-[500px]">
             
             {/* Header of Mirror View */}
@@ -2950,6 +2762,11 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
           ) : todoistLinkedTask ? (
             // ACTIVE MIRROR VIEW LAYOUT (TASK FOUND)
             <div className="flex-1 flex flex-col space-y-5 overflow-visible">
+              
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                
+                {/* Left Column (2/3 width) - Title, Description, Subtasks, Comments */}
+                <div className="md:col-span-2 space-y-5 pr-0 md:pr-6 md:border-r md:border-slate-100">
               
               {/* Task title and checkbox block */}
               <div className="flex items-start">
@@ -3043,51 +2860,6 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
                 )}
               </div>
 
-              {/* Task Properties Grid (Synced to Todoist REST API v2 on change) */}
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 grid grid-cols-2 gap-3.5 text-[11px]">
-                
-                {/* Due Date property */}
-                <div className="space-y-1">
-                  <span className="text-[9px] font-bold text-slate-400 uppercase flex items-center gap-1"><Calendar className="h-3.5 w-3.5 text-rose-500" /> Vencimento</span>
-                  <input
-                    type="date"
-                    value={todoistLinkedTask.due?.date || ""}
-                    onChange={(e) => handleUpdateProperty({ due_date: e.target.value })}
-                    className="w-full bg-white border border-slate-200 rounded-lg p-1.5 font-semibold text-slate-800 focus:ring-1 focus:ring-indigo-400 text-xs"
-                  />
-                </div>
-
-                {/* Priority property */}
-                <div className="space-y-1">
-                  <span className="text-[9px] font-bold text-slate-400 uppercase flex items-center gap-1"><Flag className="h-3.5 w-3.5 text-amber-500" /> Prioridade</span>
-                  <select
-                    value={todoistLinkedTask.priority}
-                    onChange={(e) => handleUpdateProperty({ priority: Number(e.target.value) })}
-                    className="w-full bg-white border border-slate-200 rounded-lg p-1.5 font-bold text-slate-800 focus:ring-1 focus:ring-indigo-400 text-xs"
-                  >
-                    <option value={4}>P1 - Urgência Crítica (Vermelho)</option>
-                    <option value={3}>P2 - Urgência Média (Laranja)</option>
-                    <option value={2}>P3 - Urgência Normal (Azul)</option>
-                    <option value={1}>P4 - Sem Urgência (Cinza)</option>
-                  </select>
-                </div>
-
-                {/* Assignee property */}
-                <div className="space-y-1 col-span-2 border-t border-slate-200/60 pt-2.5">
-                  <span className="text-[9px] font-bold text-slate-400 uppercase flex items-center gap-1"><User className="h-3.5 w-3.5 text-indigo-500" /> Advogado Responsável</span>
-                  <select
-                    value={todoistLinkedTask.assignee_id || ""}
-                    onChange={(e) => handleUpdateProperty({ assignee_id: e.target.value || null })}
-                    className="w-full bg-white border border-slate-200 rounded-lg p-1.5 font-semibold text-slate-800 focus:ring-1 focus:ring-indigo-400 text-xs"
-                  >
-                    <option value="">Não atribuído</option>
-                    <option value="direito.rgr@gmail.com">Você (direito.rgr@gmail.com)</option>
-                    <option value="controladoria@giffoni.adv.br">controladoria@giffoni.adv.br</option>
-                    <option value="prazos@giffoni.adv.br">prazos@giffoni.adv.br</option>
-                  </select>
-                </div>
-              </div>
-
               {/* Subtasks Section (Interactive sub-resource) */}
               <div className="space-y-2 border-t border-slate-100 pt-3">
                 <div className="flex justify-between items-center">
@@ -3149,61 +2921,7 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
                 </form>
               </div>
 
-              {/* Labels Row */}
-              <div className="space-y-1.5 border-t border-slate-100 pt-3">
-                <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                  <Tag className="h-3.5 w-3.5 text-indigo-500" /> Etiquetas do Todoist
-                </span>
-                <div className="flex flex-wrap gap-1.5">
-                  {todoistLinkedTask.labels?.map((lbl: string, i: number) => (
-                    <span
-                      key={i}
-                      className="inline-flex items-center gap-1 bg-indigo-50 text-indigo-700 border border-indigo-100 text-[10px] px-2.5 py-1 rounded-full font-bold hover:bg-rose-50 hover:text-rose-700 hover:border-rose-100 transition cursor-pointer"
-                      onClick={() => handleUpdateProperty({ labels: todoistLinkedTask.labels.filter((l: string) => l !== lbl) })}
-                      title="Clique para remover"
-                    >
-                      {lbl} <span className="text-[8px]">×</span>
-                    </span>
-                  ))}
-                  {(!todoistLinkedTask.labels || todoistLinkedTask.labels.length === 0) && (
-                    <span className="text-[10px] text-slate-400 italic">Sem etiquetas.</span>
-                  )}
-                  {isAddingLabel ? (
-                    <form
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        if (labelInput.trim()) {
-                          const current = todoistLinkedTask.labels || [];
-                          if (!current.includes(labelInput.trim())) {
-                            handleUpdateProperty({ labels: [...current, labelInput.trim()] });
-                          }
-                          setLabelInput("");
-                          setIsAddingLabel(false);
-                        }
-                      }}
-                      className="flex gap-1.5 items-center"
-                    >
-                      <input
-                        type="text"
-                        value={labelInput}
-                        onChange={(e) => setLabelInput(e.target.value)}
-                        placeholder="Nova..."
-                        className="bg-white border border-slate-200 rounded px-1.5 py-0.5 text-[10px] focus:outline-none focus:ring-1 focus:ring-indigo-400 w-16"
-                        autoFocus
-                      />
-                      <button type="submit" className="text-emerald-600 text-xs font-bold">✓</button>
-                      <button type="button" onClick={() => setIsAddingLabel(false)} className="text-rose-600 text-xs font-bold">×</button>
-                    </form>
-                  ) : (
-                    <button
-                      onClick={() => setIsAddingLabel(true)}
-                      className="bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-500 text-[10px] px-2 py-0.5 rounded-full font-bold flex items-center gap-0.5 transition"
-                    >
-                      <Plus className="h-2.5 w-2.5" /> Adicionar
-                    </button>
-                  )}
-                </div>
-              </div>
+
 
               {/* Comments Section (Interactive comments feed) */}
               <div className="space-y-2 border-t border-slate-100 pt-3">
@@ -3256,6 +2974,149 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
                     <Plus className="h-4 w-4" />
                   </button>
                 </form>
+              </div>
+
+                </div>
+
+                {/* Right Column (1/3 width) - Metadata Sidebar (identical to Todoist layout) */}
+                <div className="space-y-4 text-xs font-sans">
+                  
+                  {/* Projeto */}
+                  <div className="space-y-1">
+                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                      <Database className="h-3.5 w-3.5 text-indigo-500" /> Projeto
+                    </span>
+                    <div className="w-full bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 font-bold text-slate-700 truncate text-[11px] flex items-center gap-1.5">
+                      <span className="h-2 w-2 rounded-full bg-indigo-500"></span>
+                      Teste Automação (Giffoni Connect)
+                    </div>
+                  </div>
+
+                  {/* Responsável */}
+                  <div className="space-y-1">
+                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                      <User className="h-3.5 w-3.5 text-indigo-500" /> Responsável
+                    </span>
+                    <select
+                      value={todoistLinkedTask.assignee_id || ""}
+                      onChange={(e) => handleUpdateProperty({ assignee_id: e.target.value || null })}
+                      className="w-full bg-slate-50 hover:bg-slate-100/70 border border-slate-200/80 rounded-xl p-2.5 font-bold text-slate-700 focus:ring-1 focus:ring-indigo-400 text-xs"
+                    >
+                      <option value="">Não atribuído</option>
+                      <option value="direito.rgr@gmail.com">Você (direito.rgr@gmail.com)</option>
+                      <option value="controladoria@giffoni.adv.br">controladoria@giffoni.adv.br</option>
+                      <option value="prazos@giffoni.adv.br">prazos@giffoni.adv.br</option>
+                    </select>
+                  </div>
+
+                  {/* Data de Vencimento */}
+                  <div className="space-y-1">
+                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                      <Calendar className="h-3.5 w-3.5 text-rose-500" /> Data de Vencimento
+                    </span>
+                    <input
+                      type="date"
+                      value={todoistLinkedTask.due?.date || ""}
+                      onChange={(e) => handleUpdateProperty({ due_date: e.target.value })}
+                      className="w-full bg-slate-50 hover:bg-slate-100/70 border border-slate-200/80 rounded-xl p-2.5 font-bold text-slate-700 focus:ring-1 focus:ring-indigo-400 text-xs"
+                    />
+                  </div>
+
+                  {/* Prioridade */}
+                  <div className="space-y-1">
+                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                      <Flag className="h-3.5 w-3.5 text-amber-500" /> Prioridade
+                    </span>
+                    <select
+                      value={todoistLinkedTask.priority}
+                      onChange={(e) => handleUpdateProperty({ priority: Number(e.target.value) })}
+                      className="w-full bg-slate-50 hover:bg-slate-100/70 border border-slate-200/80 rounded-xl p-2.5 font-black text-slate-700 focus:ring-1 focus:ring-indigo-400 text-[11px]"
+                    >
+                      <option value={4}>P1 - Urgência Crítica (Vermelho)</option>
+                      <option value={3}>P2 - Urgência Média (Laranja)</option>
+                      <option value={2}>P3 - Urgência Normal (Azul)</option>
+                      <option value={1}>P4 - Sem Urgência (Cinza)</option>
+                    </select>
+                  </div>
+
+                  {/* Etiquetas */}
+                  <div className="space-y-1.5 border-t border-slate-100 pt-2.5">
+                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                      <Tag className="h-3.5 w-3.5 text-indigo-500" /> Etiquetas
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {todoistLinkedTask.labels?.map((lbl: string, i: number) => (
+                        <span
+                          key={i}
+                          className="inline-flex items-center gap-1 bg-indigo-50 text-indigo-700 border border-indigo-100 text-[10px] px-2.5 py-1 rounded-full font-bold hover:bg-rose-50 hover:text-rose-700 hover:border-rose-100 transition cursor-pointer"
+                          onClick={() => handleUpdateProperty({ labels: todoistLinkedTask.labels.filter((l: string) => l !== lbl) })}
+                          title="Clique para remover"
+                        >
+                          {lbl} <span className="text-[8px]">×</span>
+                        </span>
+                      ))}
+                      {(!todoistLinkedTask.labels || todoistLinkedTask.labels.length === 0) && (
+                        <span className="text-[10px] text-slate-400 italic">Sem etiquetas.</span>
+                      )}
+                    </div>
+                    {isAddingLabel ? (
+                      <form
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          if (labelInput.trim()) {
+                            const current = todoistLinkedTask.labels || [];
+                            if (!current.includes(labelInput.trim())) {
+                              handleUpdateProperty({ labels: [...current, labelInput.trim()] });
+                            }
+                            setLabelInput("");
+                            setIsAddingLabel(false);
+                          }
+                        }}
+                        className="flex gap-1.5 items-center mt-1"
+                      >
+                        <input
+                          type="text"
+                          value={labelInput}
+                          onChange={(e) => setLabelInput(e.target.value)}
+                          placeholder="Nova..."
+                          className="bg-white border border-slate-200 rounded px-1.5 py-1 text-[10px] focus:outline-none focus:ring-1 focus:ring-indigo-400 w-full"
+                          autoFocus
+                        />
+                        <button type="submit" className="text-emerald-600 text-xs font-bold px-1 font-sans">✓</button>
+                        <button type="button" onClick={() => setIsAddingLabel(false)} className="text-rose-600 text-xs font-bold px-1 font-sans">×</button>
+                      </form>
+                    ) : (
+                      <button
+                        onClick={() => setIsAddingLabel(true)}
+                        className="bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-500 text-[10px] px-2 py-1 rounded-full font-bold flex items-center gap-0.5 transition w-full justify-center font-sans"
+                      >
+                        <Plus className="h-2.5 w-2.5" /> Adicionar etiqueta
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Lembretes */}
+                  <div className="space-y-1 border-t border-slate-100 pt-2.5">
+                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                      <Clock className="h-3.5 w-3.5 text-blue-500" /> Lembretes
+                    </span>
+                    <div className="text-[10px] text-slate-500 italic bg-slate-50/50 p-2 rounded-lg border border-slate-150">
+                      Configurados na tarefa principal (e-mail, push)
+                    </div>
+                  </div>
+
+                  {/* Local */}
+                  <div className="space-y-1 border-t border-slate-100 pt-2.5">
+                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                      <MapPin className="h-3.5 w-3.5 text-emerald-500" /> Local
+                    </span>
+                    <div className="text-[10px] text-slate-500 font-bold bg-slate-50/50 p-2 rounded-lg border border-slate-150 truncate">
+                      Belo Horizonte, MG, Brasil
+                    </div>
+                  </div>
+
+                </div>
+
               </div>
 
             </div>
