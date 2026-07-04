@@ -13,6 +13,7 @@ interface DashboardPrincipalViewProps {
     unreadCount: number;
     archivedToday: number;
     deletedToday: number;
+    loadedFromRealApi?: boolean;
   };
   emailRules: EmailRule[];
   publications: Publication[];
@@ -34,6 +35,32 @@ export function DashboardPrincipalView({
   onForceSyncStats,
   statsLoading
 }: DashboardPrincipalViewProps) {
+  const isGmailLoading = !!statsLoading || !!syncLoading;
+  const isGmailConnected = !!cachedToken && !!globalStats.loadedFromRealApi;
+
+  const renderGmailCardContent = (
+    renderContent: () => React.ReactNode,
+    className = "mt-2"
+  ) => {
+    if (isGmailLoading) {
+      return (
+        <div className={`${className} text-indigo-500 font-medium text-[11px] flex items-center gap-1.5 animate-pulse min-h-[40px]`}>
+          <RefreshCw className="h-3.5 w-3.5 animate-spin shrink-0 text-indigo-500" />
+          <span>🔄 Consultando Gmail...</span>
+        </div>
+      );
+    }
+    if (!isGmailConnected) {
+      return (
+        <div className={`${className} text-red-600 font-semibold text-[11px] leading-tight flex items-start gap-1 min-h-[40px]`}>
+          <span className="shrink-0">❌</span>
+          <span>Não foi possível apresentar os dados. Conecte-se no Gmail.</span>
+        </div>
+      );
+    }
+    return renderContent();
+  };
+
   // 1. Calculations for indicators
   const totalEmails = globalStats.messagesTotal;
   const inInbox = globalStats.inboxCount;
@@ -129,7 +156,7 @@ export function DashboardPrincipalView({
           <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Painel Executivo</span>
           <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 mt-1">Centro de Comando Global</h1>
           <p className="text-slate-500 text-xs mt-1">
-            {cachedToken 
+            {isGmailConnected 
               ? `Conectado como ${globalStats.emailAddress || 'usuário do Google'}.`
               : "Conecte sua conta do Google para carregar os dados reais do Gmail."
             }
@@ -163,94 +190,116 @@ export function DashboardPrincipalView({
       {/* 10 indicators layout (Geometric elegance) */}
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
         {/* Row 1 */}
-        <div className="bg-white border border-slate-200 p-4 shadow-sm flex flex-col justify-between">
+        <div className="bg-white border border-slate-200 p-4 shadow-sm flex flex-col justify-between min-h-[110px]">
           <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Total na Conta</span>
-          <div className="mt-2 flex items-baseline gap-1">
-            <span className="text-xl font-bold text-slate-800">{totalEmails.toLocaleString()}</span>
-            <span className="text-[10px] text-slate-400">e-mails</span>
-          </div>
+          {renderGmailCardContent(() => (
+            <div className="mt-2 flex items-baseline gap-1">
+              <span className="text-xl font-bold text-slate-800">{totalEmails.toLocaleString()}</span>
+              <span className="text-[10px] text-slate-400">e-mails</span>
+            </div>
+          ))}
           <p className="text-[9px] text-slate-400 mt-1">Capacidade total do perfil</p>
         </div>
 
-        <div className="bg-white border border-slate-200 p-4 shadow-sm flex flex-col justify-between">
+        <div className="bg-white border border-slate-200 p-4 shadow-sm flex flex-col justify-between min-h-[110px]">
           <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block text-blue-600">Caixa de Entrada</span>
-          <div className="mt-2 flex items-baseline gap-1">
-            <span className="text-xl font-bold text-blue-700">{inInbox}</span>
-            <span className="text-[10px] text-blue-400">ativos</span>
-          </div>
+          {renderGmailCardContent(() => (
+            <div className="mt-2 flex items-baseline gap-1">
+              <span className="text-xl font-bold text-blue-700">{inInbox}</span>
+              <span className="text-[10px] text-blue-400">ativos</span>
+            </div>
+          ))}
           <p className="text-[9px] text-slate-400 mt-1">Pendentes de triagem</p>
         </div>
 
-        <div className="bg-white border border-slate-200 p-4 shadow-sm flex flex-col justify-between">
+        <div className="bg-white border border-slate-200 p-4 shadow-sm flex flex-col justify-between min-h-[110px]">
           <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block text-amber-600">Emails Não Lidos</span>
-          <div className="mt-2 flex items-baseline gap-1">
-            <span className="text-xl font-bold text-amber-700">{unread}</span>
-            <span className="text-[10px] text-amber-500">não lidos</span>
-          </div>
+          {renderGmailCardContent(() => (
+            <div className="mt-2 flex items-baseline gap-1">
+              <span className="text-xl font-bold text-amber-700">{unread}</span>
+              <span className="text-[10px] text-amber-500">não lidos</span>
+            </div>
+          ))}
           <p className="text-[9px] text-slate-400 mt-1">Aguardando visualização</p>
         </div>
 
-        <div className="bg-white border border-slate-200 p-4 shadow-sm flex flex-col justify-between">
+        <div className="bg-white border border-slate-200 p-4 shadow-sm flex flex-col justify-between min-h-[110px]">
           <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Pendente Arquivo</span>
-          <div className="mt-2 flex items-baseline gap-1">
-            <span className="text-xl font-bold text-slate-700">{pendingArchiving}</span>
-            <span className="text-[10px] text-slate-500">e-mails</span>
-          </div>
+          {renderGmailCardContent(() => (
+            <div className="mt-2 flex items-baseline gap-1">
+              <span className="text-xl font-bold text-slate-700">{pendingArchiving}</span>
+              <span className="text-[10px] text-slate-500">e-mails</span>
+            </div>
+          ))}
           <p className="text-[9px] text-slate-400 mt-1">Regras de Médio Risco</p>
         </div>
 
-        <div className="bg-white border border-slate-200 p-4 shadow-sm flex flex-col justify-between">
+        <div className="bg-white border border-slate-200 p-4 shadow-sm flex flex-col justify-between min-h-[110px]">
           <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block text-red-600">Pendente Exclusão</span>
-          <div className="mt-2 flex items-baseline gap-1">
-            <span className="text-xl font-bold text-red-700">{pendingDeletion}</span>
-            <span className="text-[10px] text-red-500">e-mails</span>
-          </div>
+          {renderGmailCardContent(() => (
+            <div className="mt-2 flex items-baseline gap-1">
+              <span className="text-xl font-bold text-red-700">{pendingDeletion}</span>
+              <span className="text-[10px] text-red-500">e-mails</span>
+            </div>
+          ))}
           <p className="text-[9px] text-slate-400 mt-1">Regras de Baixo Risco</p>
         </div>
 
         {/* Row 2 */}
-        <div className="bg-white border border-slate-200 p-4 shadow-sm flex flex-col justify-between">
+        <div className="bg-white border border-slate-200 p-4 shadow-sm flex flex-col justify-between min-h-[110px]">
           <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block text-emerald-600">Arquivados Hoje</span>
-          <div className="mt-2 flex items-baseline gap-1">
-            <span className="text-xl font-bold text-emerald-700">{archivedToday}</span>
-            <span className="text-[10px] text-emerald-500">concluídos</span>
-          </div>
+          {renderGmailCardContent(() => (
+            <div className="mt-2 flex items-baseline gap-1">
+              <span className="text-xl font-bold text-emerald-700">{archivedToday}</span>
+              <span className="text-[10px] text-emerald-500">concluídos</span>
+            </div>
+          ))}
           <p className="text-[9px] text-slate-400 mt-1">Limpos por arquivamento</p>
         </div>
 
-        <div className="bg-white border border-slate-200 p-4 shadow-sm flex flex-col justify-between">
+        <div className="bg-white border border-slate-200 p-4 shadow-sm flex flex-col justify-between min-h-[110px]">
           <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block text-red-600">Deletados Hoje</span>
-          <div className="mt-2 flex items-baseline gap-1">
-            <span className="text-xl font-bold text-red-700">{deletedToday}</span>
-            <span className="text-[10px] text-red-500">excluídos</span>
-          </div>
+          {renderGmailCardContent(() => (
+            <div className="mt-2 flex items-baseline gap-1">
+              <span className="text-xl font-bold text-red-700">{deletedToday}</span>
+              <span className="text-[10px] text-red-500">excluídos</span>
+            </div>
+          ))}
           <p className="text-[9px] text-slate-400 mt-1">Enviados para a lixeira</p>
         </div>
 
-        <div className="bg-white border border-slate-200 p-4 shadow-sm flex flex-col justify-between">
+        <div className="bg-white border border-slate-200 p-4 shadow-sm flex flex-col justify-between min-h-[110px]">
           <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block text-violet-600">Gmail Zero Index</span>
-          <div className="mt-2 flex items-baseline gap-1">
-            <span className="text-xl font-bold text-violet-700">{gmailZeroProgress}%</span>
-            <span className="text-[10px] text-violet-500">de progresso</span>
-          </div>
-          <div className="w-full bg-slate-100 h-1 mt-1 rounded-full overflow-hidden">
-            <div className="bg-violet-600 h-full" style={{ width: `${gmailZeroProgress}%` }}></div>
-          </div>
+          {renderGmailCardContent(() => (
+            <>
+              <div className="mt-2 flex items-baseline gap-1">
+                <span className="text-xl font-bold text-violet-700">{gmailZeroProgress}%</span>
+                <span className="text-[10px] text-violet-500">de progresso</span>
+              </div>
+              <div className="w-full bg-slate-100 h-1 mt-1 rounded-full overflow-hidden">
+                <div className="bg-violet-600 h-full" style={{ width: `${gmailZeroProgress}%` }}></div>
+              </div>
+            </>
+          ))}
         </div>
 
-        <div className="bg-white border border-slate-200 p-4 shadow-sm flex flex-col justify-between">
+        <div className="bg-white border border-slate-200 p-4 shadow-sm flex flex-col justify-between min-h-[110px]">
           <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Meta Consolidada</span>
-          <div className="mt-2 flex items-baseline gap-1">
-            <span className="text-xs font-bold text-slate-700">{gmailZeroGoal}</span>
-          </div>
+          {renderGmailCardContent(() => (
+            <div className="mt-2 flex items-baseline gap-1">
+              <span className="text-xs font-bold text-slate-700">{gmailZeroGoal}</span>
+            </div>
+          ))}
           <p className="text-[9px] text-slate-400 mt-1">Foco em Inbox Zero diário</p>
         </div>
 
-        <div className="bg-white border border-slate-200 p-4 shadow-sm flex flex-col justify-between col-span-1">
+        <div className="bg-white border border-slate-200 p-4 shadow-sm flex flex-col justify-between col-span-1 min-h-[110px]">
           <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block text-amber-600">Tempo para Zerar</span>
-          <div className="mt-1 flex items-baseline gap-1">
-            <span className="text-xs font-bold text-slate-800 leading-tight">{estimatedTime}</span>
-          </div>
+          {renderGmailCardContent(() => (
+            <div className="mt-1 flex items-baseline gap-1">
+              <span className="text-xs font-bold text-slate-800 leading-tight">{estimatedTime}</span>
+            </div>
+          ))}
           <p className="text-[9px] text-slate-400 mt-1">No ritmo de limpeza diária</p>
         </div>
       </div>
@@ -308,14 +357,18 @@ export function DashboardPrincipalView({
           </div>
 
           <div className="grid grid-cols-2 gap-4">
-            <div className="bg-slate-50 p-3 rounded-lg relative group">
+            <div className="bg-slate-50 p-3 rounded-lg relative group min-h-[85px]">
               <span className="text-[10px] text-slate-400 font-semibold block">Caixa de Entrada</span>
-              <span className="text-xl font-bold text-slate-800">{inInbox} e-mails</span>
+              {renderGmailCardContent(() => (
+                <span className="text-xl font-bold text-slate-800 block mt-1">{inInbox} e-mails</span>
+              ), "mt-0")}
               <span className="text-[8px] text-slate-400 block mt-0.5 leading-none">Threads ativas</span>
             </div>
-            <div className="bg-slate-50 p-3 rounded-lg relative group">
+            <div className="bg-slate-50 p-3 rounded-lg relative group min-h-[85px]">
               <span className="text-[10px] text-slate-400 font-semibold block">E-mails não lidos</span>
-              <span className="text-xl font-bold text-slate-800">{unread} pendentes</span>
+              {renderGmailCardContent(() => (
+                <span className="text-xl font-bold text-slate-800 block mt-1">{unread} pendentes</span>
+              ), "mt-0")}
               <span className="text-[8px] text-slate-400 block mt-0.5 leading-none">Em tópicos</span>
             </div>
             <div className="bg-slate-50 p-3 rounded-lg">
@@ -358,27 +411,37 @@ export function DashboardPrincipalView({
           <div className="space-y-3">
             <div className="flex justify-between text-xs font-semibold text-slate-700">
               <span>Limpeza da Caixa de Entrada</span>
-              <span>{100 - gmailZeroProgress}% Restante</span>
+              {isGmailConnected && !isGmailLoading ? (
+                <span>{100 - gmailZeroProgress}% Restante</span>
+              ) : null}
             </div>
-            <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
-              <div className="bg-violet-600 h-full transition-all duration-500" style={{ width: `${gmailZeroProgress}%` }}></div>
-            </div>
+            {renderGmailCardContent(() => (
+              <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
+                <div className="bg-violet-600 h-full transition-all duration-500" style={{ width: `${gmailZeroProgress}%` }}></div>
+              </div>
+            ), "mt-0")}
           </div>
 
           <div className="grid grid-cols-2 gap-3 text-xs mt-2">
-            <div className="p-2 border border-slate-100 rounded-lg">
+            <div className="p-2 border border-slate-100 rounded-lg min-h-[70px]">
               <p className="text-slate-400 text-[10px] font-medium">Baixo Risco Deletável</p>
-              <p className="font-bold text-slate-800 text-sm mt-0.5">{pendingDeletion} e-mails</p>
+              {renderGmailCardContent(() => (
+                <p className="font-bold text-slate-800 text-sm mt-0.5">{pendingDeletion} e-mails</p>
+              ), "mt-0")}
             </div>
-            <div className="p-2 border border-slate-100 rounded-lg">
+            <div className="p-2 border border-slate-100 rounded-lg min-h-[70px]">
               <p className="text-slate-400 text-[10px] font-medium">Médio Risco Arquivável</p>
-              <p className="font-bold text-slate-800 text-sm mt-0.5">{pendingArchiving} e-mails</p>
+              {renderGmailCardContent(() => (
+                <p className="font-bold text-slate-800 text-sm mt-0.5">{pendingArchiving} e-mails</p>
+              ), "mt-0")}
             </div>
           </div>
 
           <div className="flex justify-between items-center text-xs text-slate-500 pt-1">
             <span>Objetivo final:</span>
-            <span className="font-bold text-slate-800">0 e-mails ativos</span>
+            {renderGmailCardContent(() => (
+              <span className="font-bold text-slate-800">0 e-mails ativos</span>
+            ), "mt-0")}
           </div>
         </div>
 

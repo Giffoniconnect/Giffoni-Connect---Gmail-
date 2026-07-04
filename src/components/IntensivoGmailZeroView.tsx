@@ -76,11 +76,11 @@ export function IntensivoGmailZeroView({
 
   const handleStartSession = () => {
     if (!cachedToken) {
-      alert("Conecte ao Google antes de iniciar a sessão intensiva.");
+      onAddSystemLog('warning', "Conecte ao Google antes de iniciar a sessão intensiva.", 'gmail_sync');
       return;
     }
     if (lowRiskRulesWithEmails.length === 0) {
-      alert("Nenhum e-mail de baixo risco pendente na caixa de entrada. Tudo limpo! 🎉");
+      onAddSystemLog('info', "Nenhum e-mail de baixo risco pendente na caixa de entrada. Tudo limpo! 🎉", 'gmail_sync');
       return;
     }
     setSessionActive(true);

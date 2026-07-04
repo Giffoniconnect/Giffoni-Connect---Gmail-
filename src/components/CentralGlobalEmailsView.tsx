@@ -536,7 +536,7 @@ export function CentralGlobalEmailsView({
   // Handle Scan for a specific rule
   const handleScanRule = async (rule: EmailRule) => {
     if (!cachedToken) {
-      alert("Por favor, conecte com o Google antes de iniciar o escaneamento.");
+      onAddSystemLog('warning', "Por favor, conecte com o Google antes de iniciar o escaneamento.", 'gmail_sync');
       return;
     }
     setScanningRuleId(rule.id);
@@ -551,7 +551,10 @@ export function CentralGlobalEmailsView({
         body: JSON.stringify({ accessToken: cachedToken, query: rule.query })
       });
 
-      if (!listRes.ok) throw new Error("Erro ao buscar lista de e-mails.");
+      if (!listRes.ok) {
+        const errJson = await listRes.json().catch(() => ({}));
+        throw new Error(errJson.message || errJson.error || "Erro ao buscar lista de e-mails.");
+      }
       const listData = await listRes.json();
       const allIds = listData.messageIds || [];
       const totalCount = allIds.length;
@@ -676,7 +679,7 @@ export function CentralGlobalEmailsView({
   const handleBatchModify = async (action: 'read' | 'unread' | 'archive') => {
     const selectedIds = Object.keys(selectedMessageIds).filter(id => selectedMessageIds[id]);
     if (selectedIds.length === 0) {
-      alert("Por favor, selecione ao menos um e-mail.");
+      onAddSystemLog('warning', "Por favor, selecione ao menos um e-mail.");
       return;
     }
 
@@ -719,7 +722,7 @@ export function CentralGlobalEmailsView({
           await handleScanRule(selectedRule);
         }
       } else {
-        throw new Error(data.error || "Erro na modificação.");
+        throw new Error(data.message || data.error || "Erro na modificação.");
       }
     } catch (err: any) {
       console.error(err);
@@ -737,7 +740,7 @@ export function CentralGlobalEmailsView({
 
     const requiredPhrase = `Confirmo a exclusão de ${selectedIds.length} emails desta regra.`;
     if (deleteConfirmationText !== requiredPhrase) {
-      alert("A frase de confirmação digitada está incorreta.");
+      onAddSystemLog('error', "A frase de confirmação digitada está incorreta.");
       return;
     }
 
@@ -767,7 +770,7 @@ export function CentralGlobalEmailsView({
           await handleScanRule(selectedRule);
         }
       } else {
-        throw new Error(data.error || "Erro ao deletar.");
+        throw new Error(data.message || data.error || "Erro ao deletar.");
       }
     } catch (err: any) {
       console.error(err);
@@ -785,7 +788,7 @@ export function CentralGlobalEmailsView({
       : Object.keys(selectedMessageIds).filter(id => selectedMessageIds[id]).length;
 
     if (selectedCount === 0) {
-      alert("Nenhum e-mail disponível para exclusão.");
+      onAddSystemLog('warning', "Nenhum e-mail disponível para exclusão.");
       return;
     }
     setShowDeleteModal(true);
@@ -832,7 +835,7 @@ export function CentralGlobalEmailsView({
   // Save manual query as a permanent rule (Learning mode)
   const handleSaveAsRule = async () => {
     if (!newRuleForm.name || !newRuleForm.query) {
-      alert("Por favor, preencha todos os campos da nova regra.");
+      onAddSystemLog('warning', "Por favor, preencha todos os campos da nova regra.");
       return;
     }
 

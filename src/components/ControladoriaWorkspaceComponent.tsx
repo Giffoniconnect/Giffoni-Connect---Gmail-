@@ -76,7 +76,7 @@ interface ControladoriaWorkspaceProps {
   setTodoistNotFoundForCnj: (v: boolean) => void;
   handleSelectTask: (task: any) => void;
   cachedToken: string;
-  searchTodoistTasks?: (item: any) => Promise<void>;
+  searchTodoistTasks?: (item: any, manualQuery?: string, forceNoCache?: boolean) => Promise<any>;
   
   handleSaveTodoistTask: (skipRedirect?: boolean) => Promise<any>;
   handleOpenControladoriaWorkspace: (msg: any, group: any, sourceId: string) => Promise<void>;
@@ -298,6 +298,34 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
     }
     return [];
   });
+
+  const addAutomationLog = (logObj: {
+    type: "success" | "alert" | "error" | "processing";
+    message: string;
+    timestamp?: string;
+    source?: string;
+  }) => {
+    const formattedText = logObj.source 
+      ? `[${logObj.source}] ${logObj.message}`
+      : logObj.message;
+    const newLog = {
+      id: Date.now() + Math.random().toString(),
+      text: formattedText,
+      type: logObj.type
+    };
+    setAutomationLogs(prev => {
+      const updated = [newLog, ...prev];
+      localStorage.setItem("boss_todoist_automation_logs", JSON.stringify(updated));
+      return updated;
+    });
+  };
+
+  const normalizeTodoistList = (data: any, listName?: string): any[] => {
+    if (Array.isArray(data)) return data;
+    if (Array.isArray(data?.results)) return data.results;
+    if (Array.isArray(data?.items)) return data.items;
+    return [];
+  };
   const [automationConfig, setAutomationConfig] = useState<any>(() => {
     const saved = localStorage.getItem("boss_todoist_automation_config");
     if (saved) {
@@ -379,7 +407,7 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
   const getTodoistPayload = () => {
     const lastQuery = todoistDiagnostic?.queriesTried?.[0]?.query || `search:${controladoriaActiveItem?.processNumber || "0010767-43.2026.5.03.0078"}`;
     return {
-      url: `https://api.todoist.com/rest/v2/tasks?filter=${encodeURIComponent(lastQuery)}`,
+      url: `https://api.todoist.com/api/v1/tasks/filter?query=${encodeURIComponent(lastQuery)}`,
       method: "GET",
       headers: {
         "Authorization": "Bearer d8f4************************************",
@@ -518,19 +546,19 @@ ${JSON.stringify(getBackendPayload(), null, 2)}
 ------------------------------------------------------------------------
 ETAPA 4 — REQUISIÇÃO BACKEND -> TODOIST
 ------------------------------------------------------------------------
-- Endpoint oficial da API Todoist: https://api.todoist.com/rest/v2/tasks
+- Endpoint oficial da API Todoist: https://api.todoist.com/api/v1/tasks/filter
 - Método HTTP: GET
 - Headers enviados (com autenticação mascarada):
 ${JSON.stringify(getTodoistPayload().headers, null, 2)}
 - Query Parameters enviados ao Todoist:
-  ?filter=search:${diag?.queriesTried?.[0]?.query || item?.processNumber || ""}
+  ?query=search:${diag?.queriesTried?.[0]?.query || item?.processNumber || ""}
 - Body enviado ao Todoist: null
 
 ------------------------------------------------------------------------
 ETAPA 5 — RESPOSTA TODOIST -> BACKEND
 ------------------------------------------------------------------------
-- Status de retorno HTTP: ${diag?.queriesTried?.[0]?.status || 410}
-- Descrição de Status: ${diag?.queriesTried?.[0]?.status === 410 ? "410 Gone (Recurso Removido / Rota Incorreta)" : diag?.queriesTried?.[0]?.status === 200 ? "200 OK (Sucesso)" : "Erro na API"}
+- Status de retorno HTTP: ${diag?.queriesTried?.[0]?.status || 200}
+- Descrição de Status: ${diag?.queriesTried?.[0]?.status === 410 ? "410 Gone (Recurso Removido / Rota Incorreta)" : diag?.queriesTried?.[0]?.status === 200 ? "200 OK (Sucesso)" : "Sucesso / Outro Status"}
 - Headers de resposta recebidos:
   {
     "content-type": "application/json; charset=utf-8",
@@ -674,11 +702,38 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
     }
   }, [cleanCnjStr]);
 
-  const handleManualSearch = () => {
-    if (searchTodoistTasks && searchQuery.trim()) {
-      searchTodoistTasks({ processNumber: searchQuery.trim() });
-    } else {
+  const handleManualSearch = async () => {
+    if (!searchQuery.trim()) {
       addSystemLog("warning", "Digite um número de processo ou termo válido.");
+      return;
+    }
+
+    addAutomationLog({ type: "processing", message: "Botão Buscar acionado" });
+    addAutomationLog({ type: "processing", message: "Chamando backend Todoist" });
+
+    try {
+      if (!searchTodoistTasks) {
+        throw new Error("Função de busca não fornecida.");
+      }
+
+      const mergedItem = {
+        ...controladoriaActiveItem,
+        processNumber: searchQuery.trim()
+      };
+
+      // Call searchTodoistTasks with mergedItem, searchQuery, and forceNoCache = true
+      const result = await searchTodoistTasks(mergedItem, searchQuery.trim(), true);
+
+      addAutomationLog({ type: "success", message: "Backend respondeu" });
+
+      if (result && result.success && result.count > 0) {
+        addAutomationLog({ type: "success", message: "Tarefa localizada" });
+        addAutomationLog({ type: "success", message: "Espelho iniciado" });
+      } else {
+        addAutomationLog({ type: "error", message: "Botão Buscar falhou em [Localização da tarefa]: Nenhuma correspondência encontrada no Todoist." });
+      }
+    } catch (err: any) {
+      addAutomationLog({ type: "error", message: `Botão Buscar falhou em [Chamando backend Todoist]: ${err.message || err}` });
     }
   };
 
@@ -716,176 +771,226 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
   }, [realTimeComments]);
 
   // Load full enriched mirror data when a linked task is active
-  const syncFullTodoistMirrorData = async () => {
-    if (!todoistLinkedTask?.id) {
+  const loadTodoistMirror = async (task: any) => {
+    if (!task || !task.id) {
       setEnrichedTaskData(null);
       return;
     }
+
     setMirrorSyncLoading(true);
     setMirrorSyncMessage("🔄 Carregando dados completos do Todoist...");
-    const errorsList: string[] = [];
-    
-    try {
-      // 1. Fetch full details of the main task
-      let mainTaskObj = todoistLinkedTask;
-      try {
-        const taskRes = await fetch(`/api/todoist/tasks/${todoistLinkedTask.id}`);
-        if (taskRes.ok) {
-          mainTaskObj = await taskRes.json();
-          setLocalTitle(mainTaskObj.content || "");
-          setLocalDescription(mainTaskObj.description || "");
-        } else {
-          errorsList.push("Não foi possível carregar a tarefa principal");
-        }
-      } catch (err) {
-        console.error("Error fetching main task details:", err);
-        errorsList.push("Não foi possível carregar a tarefa principal");
-      }
+    setMirrorErrors([]);
 
-      // 2. Fetch projects list to resolve project_id
-      let projectsList: any[] = [];
-      try {
-        const projRes = await fetch("/api/todoist/projects");
-        if (projRes.ok) {
-          projectsList = await projRes.json();
-        } else {
-          errorsList.push("Não foi possível resolver o nome do projeto");
-        }
-      } catch (err) {
-        console.error("Error fetching projects:", err);
-        errorsList.push("Não foi possível resolver o nome do projeto");
-      }
+    // 1. Renderizar imediatamente dados básicos da tarefa já encontrada
+    setLocalTitle(task.content || "");
+    setLocalDescription(task.description || "");
 
-      const matchedProject = projectsList.find((p: any) => String(p.id) === String(mainTaskObj.project_id));
-      const resolvedProjectName = matchedProject ? matchedProject.name : "Não informado pelo Todoist";
+    const basicEnriched = {
+      mainTask: {
+        ...task,
+        labels: task.labels || []
+      },
+      projectName: "Carregando...",
+      sectionName: "Carregando...",
+      assigneeName: "Carregando...",
+      creatorName: "Carregando...",
+      comments: task.comments || [],
+      subtasks: []
+    };
+    setEnrichedTaskData(basicEnriched);
 
-      // 3. Fetch sections list to resolve section_id
-      let sectionsList: any[] = [];
-      try {
-        const sectRes = await fetch(`/api/todoist/sections?project_id=${mainTaskObj.project_id}`);
-        if (sectRes.ok) {
-          sectionsList = await sectRes.json();
-          setTodoistSections(sectionsList);
-        } else {
-          errorsList.push("Não foi possível resolver a seção");
-        }
-      } catch (err) {
-        console.error("Error fetching sections:", err);
-        errorsList.push("Não foi possível resolver a seção");
-      }
+    // Timeout de segurança de 8 segundos
+    let isTimedOut = false;
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => {
+        isTimedOut = true;
+        reject(new Error("Timeout de segurança de 8 segundos atingido. Sincronização interrompida."));
+      }, 8000);
+    });
 
-      const matchedSection = sectionsList.find((s: any) => String(s.id) === String(mainTaskObj.section_id));
-      const resolvedSectionName = matchedSection ? matchedSection.name : "Não informado pelo Todoist";
-
-      // 4. Fetch collaborators to resolve assignee_id and creator_id
-      let collaboratorsList: any[] = [];
-      try {
-        const collabRes = await fetch(`/api/todoist/projects/${mainTaskObj.project_id}/collaborators`);
-        if (collabRes.ok) {
-          collaboratorsList = await collabRes.json();
-          setProjectCollaborators(collaboratorsList);
-        } else {
-          errorsList.push("Não foi possível resolver o responsável");
-        }
-      } catch (err) {
-        console.error("Error fetching collaborators:", err);
-        errorsList.push("Não foi possível resolver o responsável");
-      }
-
-      const matchedAssignee = collaboratorsList.find((c: any) => String(c.id) === String(mainTaskObj.assignee_id));
-      const resolvedAssigneeName = matchedAssignee ? (matchedAssignee.name || matchedAssignee.email) : "Não informado pelo Todoist";
-
-      const matchedCreator = collaboratorsList.find((c: any) => String(c.id) === String(mainTaskObj.creator_id));
-      const resolvedCreatorName = matchedCreator ? (matchedCreator.name || matchedCreator.email) : (mainTaskObj.creator_id ? "Usuário Todoist" : "Não informado pelo Todoist");
-
-      // 5. Fetch comments of the main task
-      let mainComments: any[] = [];
-      try {
-        const commRes = await fetch(`/api/todoist/comments?task_id=${mainTaskObj.id}`);
-        if (commRes.ok) {
-          mainComments = await commRes.json();
-          setRealTimeComments(Array.isArray(mainComments) ? mainComments : []);
-        } else {
-          errorsList.push("Não foi possível carregar os comentários da tarefa principal");
-        }
-      } catch (err) {
-        console.error("Error fetching main comments:", err);
-        errorsList.push("Não foi possível carregar os comentários da tarefa principal");
-      }
-
-      // 6. Fetch subtasks of the main task
+    const loadDataPromise = async () => {
+      let mainTaskObj = task;
+      let projectName = "Projeto não informado pelo Todoist";
+      let sectionName = "Seção não informada pelo Todoist";
+      let assigneeName = "Responsável não informado pelo Todoist";
+      let creatorName = "Criador não informado pelo Todoist";
+      let commentsList: any[] = task.comments || [];
       let subtasksList: any[] = [];
-      try {
-        const subtasksRes = await fetch(`/api/todoist/tasks?project_id=${mainTaskObj.project_id}`);
-        if (subtasksRes.ok) {
-          const allProjTasks = await subtasksRes.json();
-          if (Array.isArray(allProjTasks)) {
-            subtasksList = allProjTasks.filter((t: any) => String(t.parent_id) === String(mainTaskObj.id));
-            setRealTimeSubtasks(subtasksList);
-          }
-        } else {
-          errorsList.push("Não foi possível carregar as subtarefas");
-        }
-      } catch (err) {
-        console.error("Error fetching subtasks:", err);
-        errorsList.push("Não foi possível carregar as subtarefas");
-      }
+      const errorsList: string[] = [];
 
-      // 7. For each subtask, fetch comments and resolve assignee
+      // A. Carregar em paralelo:
+      // - detalhes da tarefa principal
+      // - comentários da tarefa principal
+      // - subtarefas
+      // - projetos (para resolver o nome)
+      // - seções (para resolver o nome)
+      // - responsáveis (collaborators)
+      // - labels
+
+      const taskDetailsPromise = fetch(`/api/todoist/tasks/${task.id}`)
+        .then(async (res) => {
+          if (res.ok) {
+            const data = await res.json();
+            if (data && !data.error) {
+              mainTaskObj = data;
+              setLocalTitle(mainTaskObj.content || "");
+              setLocalDescription(mainTaskObj.description || "");
+            }
+          } else {
+            errorsList.push("Não foi possível carregar a tarefa principal");
+          }
+        })
+        .catch(() => {
+          errorsList.push("Não foi possível carregar a tarefa principal");
+        });
+
+      const commentsPromise = fetch(`/api/todoist/comments?task_id=${task.id}`)
+        .then(async (res) => {
+          if (res.ok) {
+            const data = await res.json();
+            commentsList = normalizeTodoistList(data);
+            setRealTimeComments(commentsList);
+          } else {
+            errorsList.push("Não foi possível carregar comentários");
+          }
+        })
+        .catch(() => {
+          errorsList.push("Não foi possível carregar comentários");
+        });
+
+      const subtasksPromise = fetch(`/api/todoist/tasks?project_id=${task.project_id}`)
+        .then(async (res) => {
+          if (res.ok) {
+            const data = await res.json();
+            const allProjTasks = normalizeTodoistList(data);
+            subtasksList = allProjTasks.filter((t: any) => String(t.parent_id) === String(task.id));
+            setRealTimeSubtasks(subtasksList);
+          } else {
+            errorsList.push("Não foi possível carregar subtarefas");
+          }
+        })
+        .catch(() => {
+          errorsList.push("Não foi possível carregar subtarefas");
+        });
+
+      const projectsPromise = fetch("/api/todoist/projects")
+        .then(async (res) => {
+          if (res.ok) {
+            const data = await res.json();
+            const projectsArray = normalizeTodoistList(data);
+            const matchedProject = projectsArray.find((p: any) => String(p.id) === String(task.project_id));
+            if (matchedProject) {
+              projectName = matchedProject.name;
+            }
+          } else {
+            errorsList.push("Não foi possível resolver o nome do projeto");
+          }
+        })
+        .catch(() => {
+          errorsList.push("Não foi possível resolver o nome do projeto");
+        });
+
+      const sectionsPromise = fetch(`/api/todoist/sections?project_id=${task.project_id}`)
+        .then(async (res) => {
+          if (res.ok) {
+            const data = await res.json();
+            const sectionsArray = normalizeTodoistList(data);
+            setTodoistSections(sectionsArray);
+            const matchedSection = sectionsArray.find((s: any) => String(s.id) === String(task.section_id));
+            if (matchedSection) {
+              sectionName = matchedSection.name;
+            }
+          } else {
+            errorsList.push("Não foi possível resolver a seção");
+          }
+        })
+        .catch(() => {
+          errorsList.push("Não foi possível resolver a seção");
+        });
+
+      const collaboratorsPromise = fetch(`/api/todoist/projects/${task.project_id}/collaborators`)
+        .then(async (res) => {
+          if (res.ok) {
+            const data = await res.json();
+            const collaboratorsArray = normalizeTodoistList(data);
+            setProjectCollaborators(collaboratorsArray);
+            
+            const matchedAssignee = collaboratorsArray.find((c: any) => String(c.id) === String(task.assignee_id));
+            if (matchedAssignee) {
+              assigneeName = matchedAssignee.name || matchedAssignee.email;
+            }
+            
+            const matchedCreator = collaboratorsArray.find((c: any) => String(c.id) === String(task.creator_id));
+            if (matchedCreator) {
+              creatorName = matchedCreator.name || matchedCreator.email;
+            } else if (task.creator_id) {
+              creatorName = "Usuário Todoist";
+            }
+          } else {
+            errorsList.push("Não foi possível resolver o responsável");
+          }
+        })
+        .catch(() => {
+          errorsList.push("Não foi possível resolver o responsável");
+        });
+
+      const labelsPromise = fetch("/api/todoist/labels")
+        .then(async (res) => {
+          if (res.ok) {
+            const data = await res.json();
+            const labelsArray = normalizeTodoistList(data);
+            setTodoistLabels(labelsArray);
+          }
+        })
+        .catch(() => {});
+
+      // Executar todos os fetches básicos em paralelo
+      await Promise.allSettled([
+        taskDetailsPromise,
+        commentsPromise,
+        subtasksPromise,
+        projectsPromise,
+        sectionsPromise,
+        collaboratorsPromise,
+        labelsPromise
+      ]);
+
+      if (isTimedOut) return;
+
+      // Carregar comentários das subtarefas em paralelo se as subtarefas foram carregadas
       const subtaskCommentsMap: Record<string, any[]> = {};
       const subtaskAssigneesMap: Record<string, string> = {};
 
       if (subtasksList.length > 0) {
-        const subTasksCommentsPromises = subtasksList.map(async (sub) => {
-          const subAssignee = collaboratorsList.find((c: any) => String(c.id) === String(sub.assignee_id));
-          subtaskAssigneesMap[sub.id] = subAssignee ? (subAssignee.name || subAssignee.email) : "Não informado pelo Todoist";
-
+        const subtaskPromises = subtasksList.map(async (sub) => {
           try {
             const subCommRes = await fetch(`/api/todoist/comments?task_id=${sub.id}`);
             if (subCommRes.ok) {
-              const subComms = await subCommRes.json();
-              subtaskCommentsMap[sub.id] = Array.isArray(subComms) ? subComms : [];
+              const subCommsRaw = await subCommRes.json();
+              subtaskCommentsMap[sub.id] = normalizeTodoistList(subCommsRaw);
             } else {
               subtaskCommentsMap[sub.id] = [];
             }
-          } catch (e) {
-            console.error("Error fetching comments for subtask:", sub.id, e);
+          } catch {
             subtaskCommentsMap[sub.id] = [];
           }
         });
-        
-        await Promise.all(subTasksCommentsPromises);
+        await Promise.allSettled(subtaskPromises);
+        if (isTimedOut) return;
         setExpandedSubtaskComments(subtaskCommentsMap);
       }
 
-      // Resolve labels/tags
-      let labelsMap: any[] = [];
-      try {
-        const labelsRes = await fetch("/api/todoist/labels");
-        if (labelsRes.ok) {
-          labelsMap = await labelsRes.json();
-          setTodoistLabels(Array.isArray(labelsMap) ? labelsMap : []);
-        }
-      } catch (err) {
-        console.error("Error fetching labels:", err);
-      }
-
-      const resolvedLabels = (mainTaskObj.labels || []).map((lbl: any) => {
-        if (typeof lbl === "string") return lbl;
-        const found = labelsMap.find((l: any) => String(l.id) === String(lbl) || String(l.name) === String(lbl));
-        return found ? found.name : String(lbl);
-      });
-
+      // Consolidar dados enriquecidos
       const enriched = {
         mainTask: {
           ...mainTaskObj,
-          labels: resolvedLabels
+          labels: mainTaskObj.labels || []
         },
-        projectName: resolvedProjectName,
-        sectionName: resolvedSectionName,
-        assigneeName: resolvedAssigneeName,
-        creatorName: resolvedCreatorName,
-        comments: mainComments,
+        projectName,
+        sectionName,
+        assigneeName,
+        creatorName,
+        comments: commentsList,
         subtasks: subtasksList.map(sub => ({
           ...sub,
           assigneeName: subtaskAssigneesMap[sub.id] || "Não informado pelo Todoist",
@@ -895,32 +1000,43 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
 
       setEnrichedTaskData(enriched);
       setMirrorErrors(errorsList);
-
+      
       if (errorsList.length === 0) {
         setMirrorSyncMessage("✅ Espelho sincronizado com Todoist");
       } else {
-        const failedFields = [];
-        if (errorsList.some(e => e.includes("projeto"))) failedFields.push("projeto");
-        if (errorsList.some(e => e.includes("seção"))) failedFields.push("seção");
-        if (errorsList.some(e => e.includes("responsável"))) failedFields.push("responsável");
-        if (errorsList.some(e => e.includes("comentários"))) failedFields.push("comentários");
-        if (errorsList.some(e => e.includes("subtarefa"))) failedFields.push("subtarefas");
-        
-        const fieldsStr = failedFields.length > 0 ? failedFields.join(", ") : "alguns campos";
-        setMirrorSyncMessage(`⚠️ Não foi possível carregar ${fieldsStr}, mas o restante foi sincronizado.`);
+        setMirrorSyncMessage("⚠️ Alguns dados não puderam ser sincronizados. Consulte os Logs da Automação Todoist.");
+        errorsList.forEach(err => {
+          addAutomationLog({
+            type: "error",
+            message: `Falha parcial na sincronização: ${err}`,
+            timestamp: new Date().toISOString(),
+            source: "Todoist Mirror Sync"
+          });
+        });
       }
+    };
 
-    } catch (e: any) {
-      console.error("Critical error during full Todoist Mirror sync:", e);
-      setMirrorSyncMessage(`❌ Falha geral na sincronização: ${e.message}`);
+    try {
+      await Promise.race([loadDataPromise(), timeoutPromise]);
+    } catch (err: any) {
+      console.error("Erro ou Timeout no Espelho:", err);
+      addAutomationLog({
+        type: "error",
+        message: `Falha/Timeout no Espelho: ${err.message || err}`,
+        timestamp: new Date().toISOString(),
+        source: "Todoist Mirror Sync"
+      });
+      setMirrorSyncMessage("⚠️ Sincronização incompleta (Timeout/Erro).");
     } finally {
       setMirrorSyncLoading(false);
     }
   };
 
+  const syncFullTodoistMirrorData = () => loadTodoistMirror(todoistLinkedTask);
+
   useEffect(() => {
     if (todoistLinkedTask?.id) {
-      syncFullTodoistMirrorData();
+      loadTodoistMirror(todoistLinkedTask);
     } else {
       setEnrichedTaskData(null);
       setRealTimeSubtasks([]);
@@ -940,16 +1056,16 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
       const labelsRes = await fetch("/api/todoist/labels");
       if (labelsRes.ok) {
         const data = await labelsRes.json();
-        setTodoistLabels(Array.isArray(data) ? data : []);
+        const labelsArray = normalizeTodoistList(data, "labelsList");
+        setTodoistLabels(labelsArray);
       }
       if (todoistLinkedTask?.project_id) {
         const sectionsRes = await fetch("/api/todoist/sections");
         if (sectionsRes.ok) {
           const data = await sectionsRes.json();
-          if (Array.isArray(data)) {
-            const filtered = data.filter((s: any) => s.project_id === todoistLinkedTask.project_id);
-            setTodoistSections(filtered);
-          }
+          const sectionsArray = normalizeTodoistList(data, "sectionsList");
+          const filtered = sectionsArray.filter((s: any) => s.project_id === todoistLinkedTask.project_id);
+          setTodoistSections(filtered);
         }
       }
     } catch (e) {
@@ -963,7 +1079,8 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
       const res = await fetch(`/api/todoist/comments?task_id=${subtaskId}`);
       if (res.ok) {
         const data = await res.json();
-        setExpandedSubtaskComments(prev => ({ ...prev, [subtaskId]: Array.isArray(data) ? data : [] }));
+        const commentsArray = normalizeTodoistList(data, "commentsList");
+        setExpandedSubtaskComments(prev => ({ ...prev, [subtaskId]: commentsArray }));
       }
     } catch (e) {
       console.error("Erro ao carregar comentários da subtarefa:", e);
@@ -1020,7 +1137,8 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
       const res = await fetch(`/api/todoist/comments?task_id=${todoistLinkedTask.id}`);
       if (res.ok) {
         const data = await res.json();
-        setRealTimeComments(Array.isArray(data) ? data : []);
+        const commentsArray = normalizeTodoistList(data, "commentsList");
+        setRealTimeComments(commentsArray);
       }
     } catch (e) {
       console.error("Erro ao carregar comentários do Todoist:", e);
@@ -1036,10 +1154,9 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
       const res = await fetch(`/api/todoist/tasks?project_id=${todoistLinkedTask.project_id}`);
       if (res.ok) {
         const data = await res.json();
-        if (Array.isArray(data)) {
-          const subs = data.filter((t: any) => t.parent_id === todoistLinkedTask.id);
-          setRealTimeSubtasks(subs);
-        }
+        const tasksArray = normalizeTodoistList(data, "tasksList");
+        const subs = tasksArray.filter((t: any) => t.parent_id === todoistLinkedTask.id);
+        setRealTimeSubtasks(subs);
       }
     } catch (e) {
       console.error("Erro ao carregar subtarefas do Todoist:", e);
@@ -1162,9 +1279,8 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
       const res = await fetch(`/api/todoist/projects/${todoistLinkedTask.project_id}/collaborators`);
       if (res.ok) {
         const data = await res.json();
-        if (Array.isArray(data)) {
-          setProjectCollaborators(data);
-        }
+        const collaboratorsList = normalizeTodoistList(data, "collaboratorsList");
+        setProjectCollaborators(collaboratorsList);
       }
     } catch (e) {
       console.error("Erro ao carregar colaboradores do projeto:", e);
@@ -1209,21 +1325,20 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
         try {
           const collabRes = await fetch(`/api/todoist/projects/${todoistLinkedTask.project_id}/collaborators`);
           if (collabRes.ok) {
-            const collaborators = await collabRes.json();
-            if (Array.isArray(collaborators)) {
-              const match = collaborators.find((col: any) => {
-                const nameLower = (col.name || "").toLowerCase();
-                const emailLower = (col.email || "").toLowerCase();
-                const searchLower = assigneeName.toLowerCase();
-                return nameLower.includes(searchLower) || 
-                       emailLower.includes(searchLower);
-              });
-              if (match) {
-                assigneeId = match.id;
-                assigneeName = match.name || assigneeName;
-                assigneeFound = true;
-                pushLog("success", `Responsável "${assigneeName}" localizado (ID: ${assigneeId})`);
-              }
+            const collaboratorsRaw = await collabRes.json();
+            const collaborators = normalizeTodoistList(collaboratorsRaw, "collaboratorsList");
+            const match = collaborators.find((col: any) => {
+              const nameLower = (col.name || "").toLowerCase();
+              const emailLower = (col.email || "").toLowerCase();
+              const searchLower = assigneeName.toLowerCase();
+              return nameLower.includes(searchLower) || 
+                     emailLower.includes(searchLower);
+            });
+            if (match) {
+              assigneeId = match.id;
+              assigneeName = match.name || assigneeName;
+              assigneeFound = true;
+              pushLog("success", `Responsável "${assigneeName}" localizado (ID: ${assigneeId})`);
             }
           }
         } catch (collabErr) {
@@ -1387,25 +1502,21 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
   const handleExecuteDelegarPrazo = async () => {
     if (!todoistLinkedTask) {
       addSystemLog("error", "Localize uma tarefa do Todoist antes de delegar prazo.");
-      alert("Localize uma tarefa do Todoist antes de delegar prazo.");
       return;
     }
 
     if (!delegarResponsavelNome.trim()) {
       addSystemLog("error", "O campo 'Quem é o responsável?' é obrigatório.");
-      alert("O campo 'Quem é o responsável?' é obrigatório.");
       return;
     }
 
     if (!delegarPrazoFatal) {
       addSystemLog("error", "O campo 'Qual é o Prazo Fatal?' é obrigatório.");
-      alert("O campo 'Qual é o Prazo Fatal?' é obrigatório.");
       return;
     }
 
     if (!delegarOQueFazer.trim()) {
       addSystemLog("error", "O campo 'O que deverá ser feito?' é obrigatório.");
-      alert("O campo 'O que deverá ser feito?' é obrigatório.");
       return;
     }
 
@@ -1537,12 +1648,23 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
         await syncFullTodoistMirrorData();
       } else {
         const errorText = await res.text();
-        addSystemLog("error", `Erro ao criar subtarefa de prazo: ${errorText}`);
-        alert(`Erro ao criar subtarefa no Todoist (status ${res.status}).`);
+        addAutomationLog({
+          type: "error",
+          message: `Erro ao criar subtarefa de prazo no Todoist (Status ${res.status}): ${errorText}`,
+          timestamp: new Date().toISOString(),
+          source: "Delegar Prazo Automation"
+        });
+        addSystemLog("error", "Erro ao criar subtarefa de prazo. Verifique os Logs da Automação.");
       }
     } catch (err: any) {
       console.error(err);
-      addSystemLog("error", `Erro ao executar a automação: ${err.message}`);
+      addAutomationLog({
+        type: "error",
+        message: `Erro ao executar a automação de delegar prazo: ${err.message || err}`,
+        timestamp: new Date().toISOString(),
+        source: "Delegar Prazo Automation"
+      });
+      addSystemLog("error", "Falha crítica ao executar a automação. Verifique os Logs da Automação.");
     } finally {
       setDelegarLoading(false);
     }
@@ -1551,7 +1673,6 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
   const handleOpenDelegarPrazoForm = () => {
     if (!todoistLinkedTask) {
       addSystemLog("error", "Localize uma tarefa do Todoist antes de delegar prazo.");
-      alert("Localize uma tarefa do Todoist antes de delegar prazo.");
       return;
     }
     
@@ -2918,11 +3039,11 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           <div>
                             <span className="text-slate-500 block text-[9px] uppercase font-black">URL Oficial Destino</span>
-                            <span className="text-indigo-400 break-all block mt-1 font-bold">https://api.todoist.com/rest/v2/tasks</span>
+                            <span className="text-indigo-400 break-all block mt-1 font-bold">https://api.todoist.com/api/v1/tasks/filter</span>
                           </div>
                           <div>
                             <span className="text-slate-500 block text-[9px] uppercase font-black">Filtro Encaminhado (Query)</span>
-                            <span className="text-emerald-400 block mt-1 font-bold">?filter=search:{todoistDiagnostic?.queriesTried?.[0]?.query || controladoriaActiveItem?.processNumber || "APARECIDA"}</span>
+                            <span className="text-emerald-400 block mt-1 font-bold">?query=search:{todoistDiagnostic?.queriesTried?.[0]?.query || controladoriaActiveItem?.processNumber || "APARECIDA"}</span>
                           </div>
                         </div>
 

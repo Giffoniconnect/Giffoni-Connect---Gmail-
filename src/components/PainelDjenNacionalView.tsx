@@ -160,7 +160,12 @@ export function PainelDjenNacionalView({ user }: PainelDjenNacionalViewProps) {
         headers: { 'Authorization': `Bearer ${todoistToken}` }
       });
       if (res.ok) {
-        const data = await res.json();
+        const rawData = await res.json();
+        const data = Array.isArray(rawData)
+          ? rawData
+          : (rawData && Array.isArray(rawData.results)
+            ? rawData.results
+            : (rawData && Array.isArray(rawData.items) ? rawData.items : []));
         setTodoistProjects(data);
         if (data.length > 0) {
           setSelectedProjectId(data[0].id);
@@ -307,7 +312,7 @@ export function PainelDjenNacionalView({ user }: PainelDjenNacionalViewProps) {
   // Manual import to simulate receiving real publications in the conveyor belt (UX fallback if API is blocked)
   const handleManualImport = async () => {
     if (!manualText || !manualProcess) {
-      alert("Texto e Processo são obrigatórios.");
+      setSyncError("Texto e Processo são obrigatórios.");
       return;
     }
     setLoading(true);
@@ -374,7 +379,7 @@ export function PainelDjenNacionalView({ user }: PainelDjenNacionalViewProps) {
       setManualProcess('');
       setSelectedPub(savedPub);
     } catch (err: any) {
-      alert("Erro ao importar publicação: " + err.message);
+      setSyncError("Erro ao importar publicação: " + err.message);
     } finally {
       setLoading(false);
     }
@@ -470,7 +475,7 @@ export function PainelDjenNacionalView({ user }: PainelDjenNacionalViewProps) {
   const handleCreateAndDelegateTask = async () => {
     if (!selectedPub) return;
     if (!todoistToken) {
-      alert("Insira sua API Key do Todoist para delegar tarefas.");
+      setSyncError("Insira sua API Key do Todoist para delegar tarefas.");
       return;
     }
 
@@ -550,7 +555,7 @@ export function PainelDjenNacionalView({ user }: PainelDjenNacionalViewProps) {
       setIsDelegationOpen(false);
       setSelectedPub(null);
     } catch (err: any) {
-      alert("Erro ao delegar prazo processual: " + err.message);
+      setSyncError("Erro ao delegar prazo processual: " + err.message);
     } finally {
       setLoading(false);
     }
