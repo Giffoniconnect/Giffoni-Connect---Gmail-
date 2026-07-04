@@ -257,6 +257,62 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
     { id: "act-1", text: "Tarefa sincronizada em tempo real", time: new Date() }
   ]);
 
+  const [enrichedTaskData, setEnrichedTaskData] = useState<any | null>(null);
+  const [mirrorSyncLoading, setMirrorSyncLoading] = useState(false);
+  const [mirrorSyncMessage, setMirrorSyncMessage] = useState<string>("");
+  const [mirrorErrors, setMirrorErrors] = useState<string[]>([]);
+
+  const [isAutomationConfigModalOpen, setIsAutomationConfigModalOpen] = useState(false);
+  const [automationLogs, setAutomationLogs] = useState<Array<{ id: string; text: string; type: 'success' | 'alert' | 'error' | 'processing' }>>(() => {
+    const saved = localStorage.getItem("boss_todoist_automation_logs");
+    if (saved) {
+      try { return JSON.parse(saved); } catch (e) { console.error(e); }
+    }
+    return [];
+  });
+  const [automationConfig, setAutomationConfig] = useState<any>(() => {
+    const saved = localStorage.getItem("boss_todoist_automation_config");
+    if (saved) {
+      try { return JSON.parse(saved); } catch (e) { console.error(e); }
+    }
+    return {
+      actionType: "Criar subtarefa",
+      taskName: "Secretariado, por gentileza, agendar reunião com o cliente hoje",
+      description: "",
+      assignee: "giffonisecretaria",
+      dueDate: "hoje",
+      priority: 1,
+      labels: "",
+      project: "",
+      section: "",
+      parentTask: "",
+      order: 1
+    };
+  });
+
+  const clearAutomationLogs = () => {
+    setAutomationLogs([]);
+    localStorage.removeItem("boss_todoist_automation_logs");
+  };
+
+  const copyAutomationLogs = async () => {
+    const text = automationLogs.map(l => {
+      let emoji = "ℹ️";
+      if (l.type === "success") emoji = "✅";
+      if (l.type === "alert") emoji = "⚠️";
+      if (l.type === "error") emoji = "❌";
+      if (l.type === "processing") emoji = "🔄";
+      return `${emoji} ${l.text}`;
+    }).join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      addSystemLog("success", "Logs copiados para a área de transferência.");
+    } catch (e) {
+      console.error(e);
+      addSystemLog("error", "Falha ao copiar logs.");
+    }
+  };
+
   const [searchQuery, setSearchQuery] = useState("");
 
   const [copiedFrontend, setCopiedFrontend] = useState(false);
@@ -631,13 +687,214 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
     }
   }, [realTimeComments]);
 
-  // Load comments and subtasks when a linked task is active
+  // Load full enriched mirror data when a linked task is active
+  const syncFullTodoistMirrorData = async () => {
+    if (!todoistLinkedTask?.id) {
+      setEnrichedTaskData(null);
+      return;
+    }
+    setMirrorSyncLoading(true);
+    setMirrorSyncMessage("🔄 Carregando dados completos do Todoist...");
+    const errorsList: string[] = [];
+    
+    try {
+      // 1. Fetch full details of the main task
+      let mainTaskObj = todoistLinkedTask;
+      try {
+        const taskRes = await fetch(`/api/todoist/tasks/${todoistLinkedTask.id}`);
+        if (taskRes.ok) {
+          mainTaskObj = await taskRes.json();
+          setLocalTitle(mainTaskObj.content || "");
+          setLocalDescription(mainTaskObj.description || "");
+        } else {
+          errorsList.push("Não foi possível carregar a tarefa principal");
+        }
+      } catch (err) {
+        console.error("Error fetching main task details:", err);
+        errorsList.push("Não foi possível carregar a tarefa principal");
+      }
+
+      // 2. Fetch projects list to resolve project_id
+      let projectsList: any[] = [];
+      try {
+        const projRes = await fetch("/api/todoist/projects");
+        if (projRes.ok) {
+          projectsList = await projRes.json();
+        } else {
+          errorsList.push("Não foi possível resolver o nome do projeto");
+        }
+      } catch (err) {
+        console.error("Error fetching projects:", err);
+        errorsList.push("Não foi possível resolver o nome do projeto");
+      }
+
+      const matchedProject = projectsList.find((p: any) => String(p.id) === String(mainTaskObj.project_id));
+      const resolvedProjectName = matchedProject ? matchedProject.name : "Não informado pelo Todoist";
+
+      // 3. Fetch sections list to resolve section_id
+      let sectionsList: any[] = [];
+      try {
+        const sectRes = await fetch(`/api/todoist/sections?project_id=${mainTaskObj.project_id}`);
+        if (sectRes.ok) {
+          sectionsList = await sectRes.json();
+          setTodoistSections(sectionsList);
+        } else {
+          errorsList.push("Não foi possível resolver a seção");
+        }
+      } catch (err) {
+        console.error("Error fetching sections:", err);
+        errorsList.push("Não foi possível resolver a seção");
+      }
+
+      const matchedSection = sectionsList.find((s: any) => String(s.id) === String(mainTaskObj.section_id));
+      const resolvedSectionName = matchedSection ? matchedSection.name : "Não informado pelo Todoist";
+
+      // 4. Fetch collaborators to resolve assignee_id and creator_id
+      let collaboratorsList: any[] = [];
+      try {
+        const collabRes = await fetch(`/api/todoist/projects/${mainTaskObj.project_id}/collaborators`);
+        if (collabRes.ok) {
+          collaboratorsList = await collabRes.json();
+          setProjectCollaborators(collaboratorsList);
+        } else {
+          errorsList.push("Não foi possível resolver o responsável");
+        }
+      } catch (err) {
+        console.error("Error fetching collaborators:", err);
+        errorsList.push("Não foi possível resolver o responsável");
+      }
+
+      const matchedAssignee = collaboratorsList.find((c: any) => String(c.id) === String(mainTaskObj.assignee_id));
+      const resolvedAssigneeName = matchedAssignee ? (matchedAssignee.name || matchedAssignee.email) : "Não informado pelo Todoist";
+
+      const matchedCreator = collaboratorsList.find((c: any) => String(c.id) === String(mainTaskObj.creator_id));
+      const resolvedCreatorName = matchedCreator ? (matchedCreator.name || matchedCreator.email) : (mainTaskObj.creator_id ? "Usuário Todoist" : "Não informado pelo Todoist");
+
+      // 5. Fetch comments of the main task
+      let mainComments: any[] = [];
+      try {
+        const commRes = await fetch(`/api/todoist/comments?task_id=${mainTaskObj.id}`);
+        if (commRes.ok) {
+          mainComments = await commRes.json();
+          setRealTimeComments(Array.isArray(mainComments) ? mainComments : []);
+        } else {
+          errorsList.push("Não foi possível carregar os comentários da tarefa principal");
+        }
+      } catch (err) {
+        console.error("Error fetching main comments:", err);
+        errorsList.push("Não foi possível carregar os comentários da tarefa principal");
+      }
+
+      // 6. Fetch subtasks of the main task
+      let subtasksList: any[] = [];
+      try {
+        const subtasksRes = await fetch(`/api/todoist/tasks?project_id=${mainTaskObj.project_id}`);
+        if (subtasksRes.ok) {
+          const allProjTasks = await subtasksRes.json();
+          if (Array.isArray(allProjTasks)) {
+            subtasksList = allProjTasks.filter((t: any) => String(t.parent_id) === String(mainTaskObj.id));
+            setRealTimeSubtasks(subtasksList);
+          }
+        } else {
+          errorsList.push("Não foi possível carregar as subtarefas");
+        }
+      } catch (err) {
+        console.error("Error fetching subtasks:", err);
+        errorsList.push("Não foi possível carregar as subtarefas");
+      }
+
+      // 7. For each subtask, fetch comments and resolve assignee
+      const subtaskCommentsMap: Record<string, any[]> = {};
+      const subtaskAssigneesMap: Record<string, string> = {};
+
+      if (subtasksList.length > 0) {
+        const subTasksCommentsPromises = subtasksList.map(async (sub) => {
+          const subAssignee = collaboratorsList.find((c: any) => String(c.id) === String(sub.assignee_id));
+          subtaskAssigneesMap[sub.id] = subAssignee ? (subAssignee.name || subAssignee.email) : "Não informado pelo Todoist";
+
+          try {
+            const subCommRes = await fetch(`/api/todoist/comments?task_id=${sub.id}`);
+            if (subCommRes.ok) {
+              const subComms = await subCommRes.json();
+              subtaskCommentsMap[sub.id] = Array.isArray(subComms) ? subComms : [];
+            } else {
+              subtaskCommentsMap[sub.id] = [];
+            }
+          } catch (e) {
+            console.error("Error fetching comments for subtask:", sub.id, e);
+            subtaskCommentsMap[sub.id] = [];
+          }
+        });
+        
+        await Promise.all(subTasksCommentsPromises);
+        setExpandedSubtaskComments(subtaskCommentsMap);
+      }
+
+      // Resolve labels/tags
+      let labelsMap: any[] = [];
+      try {
+        const labelsRes = await fetch("/api/todoist/labels");
+        if (labelsRes.ok) {
+          labelsMap = await labelsRes.json();
+          setTodoistLabels(Array.isArray(labelsMap) ? labelsMap : []);
+        }
+      } catch (err) {
+        console.error("Error fetching labels:", err);
+      }
+
+      const resolvedLabels = (mainTaskObj.labels || []).map((lbl: any) => {
+        if (typeof lbl === "string") return lbl;
+        const found = labelsMap.find((l: any) => String(l.id) === String(lbl) || String(l.name) === String(lbl));
+        return found ? found.name : String(lbl);
+      });
+
+      const enriched = {
+        mainTask: {
+          ...mainTaskObj,
+          labels: resolvedLabels
+        },
+        projectName: resolvedProjectName,
+        sectionName: resolvedSectionName,
+        assigneeName: resolvedAssigneeName,
+        creatorName: resolvedCreatorName,
+        comments: mainComments,
+        subtasks: subtasksList.map(sub => ({
+          ...sub,
+          assigneeName: subtaskAssigneesMap[sub.id] || "Não informado pelo Todoist",
+          comments: subtaskCommentsMap[sub.id] || []
+        }))
+      };
+
+      setEnrichedTaskData(enriched);
+      setMirrorErrors(errorsList);
+
+      if (errorsList.length === 0) {
+        setMirrorSyncMessage("✅ Espelho sincronizado com Todoist");
+      } else {
+        const failedFields = [];
+        if (errorsList.some(e => e.includes("projeto"))) failedFields.push("projeto");
+        if (errorsList.some(e => e.includes("seção"))) failedFields.push("seção");
+        if (errorsList.some(e => e.includes("responsável"))) failedFields.push("responsável");
+        if (errorsList.some(e => e.includes("comentários"))) failedFields.push("comentários");
+        if (errorsList.some(e => e.includes("subtarefa"))) failedFields.push("subtarefas");
+        
+        const fieldsStr = failedFields.length > 0 ? failedFields.join(", ") : "alguns campos";
+        setMirrorSyncMessage(`⚠️ Não foi possível carregar ${fieldsStr}, mas o restante foi sincronizado.`);
+      }
+
+    } catch (e: any) {
+      console.error("Critical error during full Todoist Mirror sync:", e);
+      setMirrorSyncMessage(`❌ Falha geral na sincronização: ${e.message}`);
+    } finally {
+      setMirrorSyncLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (todoistLinkedTask?.id) {
-      fetchRealTimeComments();
-      fetchRealTimeSubtasks();
-      fetchLabelsAndSections();
+      syncFullTodoistMirrorData();
     } else {
+      setEnrichedTaskData(null);
       setRealTimeSubtasks([]);
       setRealTimeComments([]);
     }
@@ -700,7 +957,7 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
       if (res.ok) {
         addSystemLog("success", "Comentário adicionado à subtarefa!");
         setSubtaskCommentsInput(prev => ({ ...prev, [subtaskId]: "" }));
-        fetchSubtaskComments(subtaskId);
+        syncFullTodoistMirrorData();
         addActivityLog(`Comentário adicionado à subtarefa`);
       }
     } catch (e) {
@@ -798,6 +1055,7 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
         if (fields.labels !== undefined) setTodoistTaskLabels(fields.labels);
 
         addSystemLog("success", "Sincronizado instantaneamente com o Todoist!");
+        syncFullTodoistMirrorData();
       } else {
         addSystemLog("error", "Erro ao atualizar no Todoist.");
       }
@@ -825,6 +1083,7 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
         if (setTodoistLinkedTask) {
           setTodoistLinkedTask({ ...todoistLinkedTask, is_completed: isClosing });
         }
+        syncFullTodoistMirrorData();
       } else {
         addSystemLog("error", "Erro ao alterar estado da tarefa no Todoist.");
       }
@@ -854,7 +1113,7 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
       if (res.ok) {
         addSystemLog("success", `Subtarefa "${localSubtaskInput.trim()}" criada no Todoist!`);
         setLocalSubtaskInput("");
-        fetchRealTimeSubtasks();
+        syncFullTodoistMirrorData();
       } else {
         addSystemLog("error", "Erro ao criar subtarefa no Todoist.");
       }
@@ -865,82 +1124,232 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
     }
   };
 
-  const handleCreateSecretariadoSubtask = async () => {
+  const [projectCollaborators, setProjectCollaborators] = useState<any[]>([]);
+  const [loadingCollaborators, setLoadingCollaborators] = useState(false);
+
+  const fetchCollaborators = async () => {
+    if (!todoistLinkedTask?.project_id) return;
+    setLoadingCollaborators(true);
+    try {
+      const res = await fetch(`/api/todoist/projects/${todoistLinkedTask.project_id}/collaborators`);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          setProjectCollaborators(data);
+        }
+      }
+    } catch (e) {
+      console.error("Erro ao carregar colaboradores do projeto:", e);
+    } finally {
+      setLoadingCollaborators(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isAutomationConfigModalOpen && todoistLinkedTask?.project_id) {
+      fetchCollaborators();
+    }
+  }, [isAutomationConfigModalOpen, todoistLinkedTask?.project_id]);
+
+  const runTodoistAutomation = async () => {
     if (!todoistLinkedTask) {
-      addSystemLog("error", "Localize uma tarefa do Todoist antes de criar subtarefa.");
+      addSystemLog("error", "Localize uma tarefa do Todoist antes de executar a automação.");
       return;
     }
+    
+    // Clear previous logs and start new execution
+    const newLogsList: Array<{ id: string; text: string; type: 'success' | 'alert' | 'error' | 'processing' }> = [];
+    const pushLog = (type: 'success' | 'alert' | 'error' | 'processing', text: string) => {
+      const newLog = { id: Date.now() + Math.random().toString(), text, type };
+      newLogsList.push(newLog);
+      setAutomationLogs([...newLogsList]);
+      localStorage.setItem("boss_todoist_automation_logs", JSON.stringify([...newLogsList]));
+    };
+
+    setAutomationLogs([]);
+    pushLog("processing", "Executando automação...");
     setTodoistLoadingLocal(true);
+
     try {
-      // 1. Fetch collaborators of the project to find assignee "giffonisecretaria"
+      // 1. Fetch collaborators to map assignee if set
       let assigneeId: string | undefined = undefined;
+      let assigneeName = automationConfig.assignee || "";
       let assigneeFound = false;
-      try {
-        const collabRes = await fetch(`/api/todoist/projects/${todoistLinkedTask.project_id}/collaborators`);
-        if (collabRes.ok) {
-          const collaborators = await collabRes.json();
-          if (Array.isArray(collaborators)) {
-            const match = collaborators.find((col: any) => {
-              const nameLower = (col.name || "").toLowerCase();
-              const emailLower = (col.email || "").toLowerCase();
-              return nameLower.includes("giffonisecretaria") || 
-                     emailLower.includes("giffonisecretaria") ||
-                     (nameLower.includes("giffoni") && nameLower.includes("secretaria"));
-            });
-            if (match) {
-              assigneeId = match.id;
-              assigneeFound = true;
+
+      if (assigneeName) {
+        pushLog("processing", `Buscando responsável "${assigneeName}" via API do Todoist...`);
+        try {
+          const collabRes = await fetch(`/api/todoist/projects/${todoistLinkedTask.project_id}/collaborators`);
+          if (collabRes.ok) {
+            const collaborators = await collabRes.json();
+            if (Array.isArray(collaborators)) {
+              const match = collaborators.find((col: any) => {
+                const nameLower = (col.name || "").toLowerCase();
+                const emailLower = (col.email || "").toLowerCase();
+                const searchLower = assigneeName.toLowerCase();
+                return nameLower.includes(searchLower) || 
+                       emailLower.includes(searchLower);
+              });
+              if (match) {
+                assigneeId = match.id;
+                assigneeName = match.name || assigneeName;
+                assigneeFound = true;
+                pushLog("success", `Responsável "${assigneeName}" localizado (ID: ${assigneeId})`);
+              }
             }
           }
+        } catch (collabErr) {
+          console.error("Erro ao buscar colaboradores:", collabErr);
         }
-      } catch (collabErr) {
-        console.error("Erro ao buscar colaboradores do projeto:", collabErr);
       }
 
-      // 2. Format today's date in YYYY-MM-DD
-      const today = new Date();
-      const year = today.getFullYear();
-      const month = String(today.getMonth() + 1).padStart(2, '0');
-      const day = String(today.getDate()).padStart(2, '0');
-      const formattedDate = `${year}-${month}-${day}`;
+      // 2. Prepare content/title and fallback
+      let rawTitle = automationConfig.taskName || "Secretariado, por gentileza, agendar reunião com o cliente hoje";
+      let finalTitle = rawTitle;
+      
+      // Strip any existing prefix if assignee found
+      if (assigneeFound && assigneeId) {
+        if (finalTitle.startsWith("+giffonisecretaria ")) {
+          finalTitle = finalTitle.replace("+giffonisecretaria ", "");
+        }
+        if (assigneeName && finalTitle.startsWith(`+${assigneeName} `)) {
+          finalTitle = finalTitle.replace(`+${assigneeName} `, "");
+        }
+      } else if (assigneeName) {
+        // Fallback: prepend the +prefix if not already present
+        const prefix = `+${assigneeName}`;
+        if (!finalTitle.startsWith("+giffonisecretaria") && !finalTitle.startsWith(prefix)) {
+          finalTitle = `${prefix} ${finalTitle}`;
+        }
+        pushLog("alert", `Responsável não localizado via assignee_id; mantido prefixo "${prefix}" no título como fallback`);
+        addSystemLog("info", `Responsável não localizado via assignee_id; mantido prefixo "${prefix}" no título como fallback.`);
+      }
 
-      // 3. Define content and assignee field based on API search result
-      let content = "";
-      let payload: any = {
-        parent_id: todoistLinkedTask.id,
-        project_id: todoistLinkedTask.project_id,
-        due_date: formattedDate
+      // 3. Resolve due date
+      let finalDueDate: string | undefined = undefined;
+      if (automationConfig.dueDate) {
+        if (automationConfig.dueDate.trim().toLowerCase() === "hoje") {
+          const today = new Date();
+          const year = today.getFullYear();
+          const month = String(today.getMonth() + 1).padStart(2, '0');
+          const day = String(today.getDate()).padStart(2, '0');
+          finalDueDate = `${year}-${month}-${day}`;
+          pushLog("success", `Prazo definido para hoje: ${finalDueDate}`);
+        } else {
+          finalDueDate = automationConfig.dueDate;
+          pushLog("success", `Prazo definido para: ${finalDueDate}`);
+        }
+      }
+
+      // 4. Build payload
+      const payload: any = {
+        content: finalTitle,
       };
 
-      if (assigneeFound && assigneeId) {
-        content = "Secretariado, por gentileza, agendar reunião com o cliente hoje";
-        payload.content = content;
+      if (automationConfig.description) {
+        payload.description = automationConfig.description;
+      }
+      if (assigneeId) {
         payload.assignee_id = assigneeId;
-      } else {
-        content = "+giffonisecretaria Secretariado, por gentileza, agendar reunião com o cliente hoje";
-        payload.content = content;
-        addSystemLog("info", "Responsável não localizado via API; mantido prefixo no título.");
+        pushLog("success", `Responsável atribuído: ${assigneeName}`);
+      }
+      if (finalDueDate) {
+        payload.due_date = finalDueDate;
+      }
+      if (automationConfig.priority) {
+        payload.priority = Number(automationConfig.priority);
+      }
+      if (automationConfig.labels) {
+        payload.labels = automationConfig.labels.split(",").map((l: string) => l.trim()).filter(Boolean);
+      }
+      if (automationConfig.order) {
+        payload.order = Number(automationConfig.order);
       }
 
-      const res = await fetch(`/api/todoist/tasks`, {
-        method: "POST",
+      let isEdit = automationConfig.actionType === "Editar tarefa principal";
+      let isCreateMain = automationConfig.actionType === "Criar tarefa principal";
+      let isCreateSub = automationConfig.actionType === "Criar subtarefa" || !automationConfig.actionType;
+
+      let url = "/api/todoist/tasks";
+      let method = "POST";
+
+      if (isEdit) {
+        url = `/api/todoist/tasks/${todoistLinkedTask.id}`;
+        method = "POST";
+        pushLog("processing", `Enviando payload de edição para tarefa principal ${todoistLinkedTask.id}...`);
+      } else {
+        // Create task/subtask
+        payload.project_id = automationConfig.project || todoistLinkedTask.project_id;
+        if (automationConfig.section) {
+          payload.section_id = automationConfig.section;
+        }
+        if (isCreateSub) {
+          payload.parent_id = automationConfig.parentTask || todoistLinkedTask.id;
+          pushLog("processing", `Enviando payload de criação de subtarefa no Todoist...`);
+        } else {
+          if (automationConfig.parentTask) {
+            payload.parent_id = automationConfig.parentTask;
+          }
+          pushLog("processing", `Enviando payload de criação de tarefa principal no Todoist...`);
+        }
+      }
+
+      // Call API
+      const res = await fetch(url, {
+        method,
         headers: {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify(payload)
       });
+
       if (res.ok) {
-        addSystemLog("success", "Subtarefa criada para o Secretariado.");
-        fetchRealTimeSubtasks();
+        const responseData = await res.json();
+        pushLog("success", "Payload enviado ao Todoist");
+        
+        if (isEdit) {
+          pushLog("success", "Tarefa principal editada no Todoist!");
+          addSystemLog("success", "Tarefa principal editada no Todoist.");
+        } else if (isCreateSub) {
+          pushLog("success", "Subtarefa criada no Todoist!");
+          addSystemLog("success", "Subtarefa criada para o Secretariado.");
+        } else {
+          pushLog("success", "Tarefa principal criada no Todoist!");
+          addSystemLog("success", "Tarefa criada no Todoist.");
+        }
+
+        // Refresh mirror view
+        pushLog("processing", "Atualizando espelho da tarefa...");
+        await fetchRealTimeSubtasks();
+        if (typeof fetchRealTimeComments === "function") {
+          await fetchRealTimeComments();
+        }
+        pushLog("success", "Espelho da tarefa atualizado");
       } else {
-        addSystemLog("error", "Erro ao criar subtarefa para o Secretariado.");
+        const status = res.status;
+        let bodyText = "";
+        try {
+          const errData = await res.json();
+          bodyText = JSON.stringify(errData);
+        } catch {
+          bodyText = await res.text();
+        }
+        pushLog("error", "Erro ao executar automação");
+        pushLog("error", `Status HTTP: ${status}`);
+        pushLog("error", `Resposta Todoist: ${bodyText}`);
+        addSystemLog("error", `Falha ao executar automação Todoist (Status: ${status}).`);
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      addSystemLog("error", "Erro ao conectar com a API Todoist.");
+      pushLog("error", `Erro ao conectar com a API Todoist: ${e.message}`);
+      addSystemLog("error", "Erro de conexão com a API do Todoist.");
     } finally {
       setTodoistLoadingLocal(false);
     }
+  };
+
+  const handleCreateSecretariadoSubtask = async () => {
+    await runTodoistAutomation();
   };
 
   const handleCopySubtaskText = async (text: string) => {
@@ -962,7 +1371,7 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
       });
       if (res.ok) {
         addSystemLog("success", !currentCompleted ? "Subtarefa marcada como concluída!" : "Subtarefa reaberta!");
-        fetchRealTimeSubtasks();
+        syncFullTodoistMirrorData();
       } else {
         addSystemLog("error", "Erro ao atualizar subtarefa.");
       }
@@ -981,7 +1390,7 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
       });
       if (res.ok) {
         addSystemLog("success", "Subtarefa excluída do Todoist.");
-        fetchRealTimeSubtasks();
+        syncFullTodoistMirrorData();
       } else {
         addSystemLog("error", "Erro ao excluir subtarefa.");
       }
@@ -1010,7 +1419,7 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
       if (res.ok) {
         addSystemLog("success", "Comentário registrado diretamente no Todoist!");
         setLocalCommentInput("");
-        fetchRealTimeComments();
+        syncFullTodoistMirrorData();
       } else {
         addSystemLog("error", "Erro ao registrar comentário.");
       }
@@ -1029,7 +1438,7 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
       });
       if (res.ok) {
         addSystemLog("success", "Comentário removido do Todoist.");
-        fetchRealTimeComments();
+        syncFullTodoistMirrorData();
       } else {
         addSystemLog("error", "Erro ao remover comentário.");
       }
@@ -2815,21 +3224,32 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
                   <div className="flex flex-col space-y-1">
                     <span className="text-[10px] font-semibold text-slate-500">Criar subtarefa automática:</span>
                     <div className="flex items-center justify-between bg-indigo-50/50 border border-indigo-100 rounded-xl p-2.5 gap-2 group hover:bg-indigo-50 transition">
-                      <span className="text-xs font-bold text-indigo-950 leading-normal">
+                      <span className="text-xs font-bold text-indigo-950 leading-normal flex-1">
                         Agendar hoje reunião com Cliente
                       </span>
-                      <button
-                        onClick={handleCreateSecretariadoSubtask}
-                        disabled={todoistLoadingLocal || !todoistLinkedTask}
-                        className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white text-xs font-black tracking-tight p-2 rounded-lg shadow-sm shadow-indigo-100 transition flex items-center justify-center shrink-0"
-                        title="Criar subtarefa automática no Todoist"
-                      >
-                        {todoistLoadingLocal ? (
-                          <RefreshCw className="h-3 w-3 animate-spin" />
-                        ) : (
-                          <span className="text-sm">⚡</span>
-                        )}
-                      </button>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => setIsAutomationConfigModalOpen(true)}
+                          className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium p-2 rounded-lg shadow-sm border border-slate-200/60 transition flex items-center justify-center"
+                          title="Configurar automação Todoist"
+                        >
+                          <span className="text-sm">⚙️</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleCreateSecretariadoSubtask}
+                          disabled={todoistLoadingLocal || !todoistLinkedTask}
+                          className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white text-xs font-black tracking-tight p-2 rounded-lg shadow-sm shadow-indigo-100 transition flex items-center justify-center"
+                          title="Criar subtarefa automática no Todoist"
+                        >
+                          {todoistLoadingLocal ? (
+                            <RefreshCw className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <span className="text-sm">⚡</span>
+                          )}
+                        </button>
+                      </div>
                     </div>
                   </div>
                   {!todoistLinkedTask && (
@@ -2934,30 +3354,141 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
         </div>
 
         {/* Right Side: ESPELHO DA TAREFA */}
-        <div className="lg:col-span-8">
+        <div className="lg:col-span-8 space-y-4">
+          
+          {/* Logs da Automação Todoist Panel */}
+          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 shadow-xs">
+            <div className="flex items-center justify-between border-b border-slate-200/60 pb-2 mb-3">
+              <span className="text-[11px] font-black uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                <Terminal className="h-3.5 w-3.5 text-indigo-500" />
+                Logs da Automação Todoist
+              </span>
+              <div className="flex items-center gap-2">
+                {automationLogs.length > 0 && (
+                  <>
+                    <button
+                      onClick={copyAutomationLogs}
+                      className="text-[10px] font-semibold text-slate-500 hover:text-indigo-600 bg-white hover:bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-lg transition"
+                      title="Copiar Logs"
+                    >
+                      Copiar logs
+                    </button>
+                    <button
+                      onClick={clearAutomationLogs}
+                      className="text-[10px] font-semibold text-slate-500 hover:text-red-600 bg-white hover:bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-lg transition"
+                      title="Limpar Logs"
+                    >
+                      Limpar logs
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {automationLogs.length === 0 ? (
+              <div className="text-[11px] text-slate-400 italic py-1 text-center">
+                Nenhum evento registrado ainda. Execute a automação para ver os logs em tempo real.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-1.5 max-h-32 overflow-y-auto pr-1 custom-scrollbar">
+                {automationLogs.map((log) => {
+                  let emoji = "ℹ️";
+                  let bgClass = "text-slate-700";
+                  if (log.type === "success") {
+                    emoji = "✅";
+                    bgClass = "text-emerald-700 font-medium";
+                  } else if (log.type === "alert") {
+                    emoji = "⚠️";
+                    bgClass = "text-amber-700 font-medium";
+                  } else if (log.type === "error") {
+                    emoji = "❌";
+                    bgClass = "text-red-700 font-bold";
+                  } else if (log.type === "processing") {
+                    emoji = "🔄";
+                    bgClass = "text-indigo-600 animate-pulse";
+                  }
+
+                  return (
+                    <div key={log.id} className="flex items-start gap-1.5 text-[10.5px]">
+                      <span className="shrink-0">{emoji}</span>
+                      <span className={`leading-relaxed break-all ${bgClass}`}>{log.text}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
           <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col space-y-5 relative min-h-[500px]">
             
             {/* Header of Mirror View */}
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3 shrink-0">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3 shrink-0 flex-wrap gap-2">
               <span className="text-xs font-black text-slate-900 flex items-center gap-1.5">
                 <img src="https://assets.todoist.com/assets/images/dc619f7b1548651a249ccb0c79213197.svg" alt="Todoist" className="h-4 w-4" />
                 ESPELHO DA TAREFA (Mirror View)
               </span>
-              <span className="inline-flex items-center gap-1 bg-red-50 text-red-700 text-[9px] px-2 py-0.5 rounded-full font-black border border-red-100 uppercase tracking-wide animate-pulse">
-                ● Acoplamento Oficial
-              </span>
+              <div className="flex items-center gap-2">
+                {todoistLinkedTask ? (
+                  <a
+                    href={todoistLinkedTask.url || todoistLinkedTask.web_url || todoistLinkedTask.link || `https://app.todoist.com/app/task/${todoistLinkedTask.id}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 hover:text-indigo-800 text-[10px] px-2.5 py-1 rounded-lg font-bold border border-indigo-100 transition shadow-xs"
+                    title="Ver a tarefa real no painel do Todoist em nova aba"
+                  >
+                    <span>🔗 Ver Tarefa no Todoist</span>
+                  </a>
+                ) : (
+                  <button
+                    disabled
+                    className="inline-flex items-center gap-1.5 bg-slate-50 text-slate-400 text-[10px] px-2.5 py-1 rounded-lg font-bold border border-slate-100 cursor-not-allowed"
+                    title="Localize uma tarefa antes de abrir no Todoist."
+                  >
+                    <span>🔗 Ver Tarefa no Todoist</span>
+                  </button>
+                )}
+                <span className="inline-flex items-center gap-1 bg-red-50 text-red-700 text-[9px] px-2 py-0.5 rounded-full font-black border border-red-100 uppercase tracking-wide animate-pulse shrink-0">
+                  ● Acoplamento Oficial
+                </span>
+              </div>
             </div>
 
           {/* Loading state indicator */}
-          {todoistLoading ? (
+          {todoistLoading || (mirrorSyncLoading && !enrichedTaskData) ? (
             <div className="flex-1 flex flex-col items-center justify-center space-y-2.5 py-20 text-slate-400">
-              <RefreshCw className="h-6 w-6 animate-spin text-slate-500" />
-              <span className="text-xs font-medium">Buscando tarefa correspondente no Todoist...</span>
+              <RefreshCw className="h-6 w-6 animate-spin text-indigo-500" />
+              <span className="text-xs font-semibold">🔄 Carregando dados completos do Todoist...</span>
             </div>
           ) : todoistLinkedTask ? (
             // ACTIVE MIRROR VIEW LAYOUT (TASK FOUND)
             <div className="flex-1 flex flex-col space-y-5 overflow-visible">
               
+              {/* Status indicator bar */}
+              {mirrorSyncMessage && (
+                <div className={`p-3 rounded-xl border text-[11px] font-bold flex items-center justify-between gap-2 transition ${
+                  mirrorSyncLoading
+                    ? "bg-blue-50/50 border-blue-200 text-blue-700"
+                    : mirrorSyncMessage.startsWith("✅")
+                      ? "bg-emerald-50/50 border-emerald-200 text-emerald-700"
+                      : mirrorSyncMessage.startsWith("⚠️")
+                        ? "bg-amber-50/50 border-amber-200 text-amber-700"
+                        : "bg-red-50/50 border-red-200 text-red-700"
+                }`}>
+                  <div className="flex items-center gap-2">
+                    <RefreshCw className={`h-3.5 w-3.5 text-indigo-500 ${mirrorSyncLoading ? "animate-spin" : ""}`} />
+                    <span>{mirrorSyncMessage}</span>
+                  </div>
+                  {!mirrorSyncLoading && (
+                    <button 
+                      onClick={syncFullTodoistMirrorData}
+                      className="text-[9px] uppercase tracking-wider bg-white px-2 py-0.5 rounded border border-slate-200 hover:bg-slate-50 text-slate-600 font-bold transition shrink-0"
+                    >
+                      Sincronizar
+                    </button>
+                  )}
+                </div>
+              )}
+
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 
                 {/* Left Column (2/3 width) - Title, Description, Subtasks, Comments */}
@@ -3061,49 +3592,170 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
                   <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider flex items-center gap-1">
                     <CheckSquare className="h-3.5 w-3.5 text-indigo-600" /> Subtarefas do Todoist ({realTimeSubtasks.length})
                   </span>
-                  {loadingSubtasks && <RefreshCw className="h-3 w-3 animate-spin text-slate-400" />}
+                  {mirrorSyncLoading && <RefreshCw className="h-3 w-3 animate-spin text-indigo-400" />}
                 </div>
 
-                <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
-                  {realTimeSubtasks.map((sub) => (
-                    <div key={sub.id} className="flex items-start justify-between bg-slate-50/70 border border-slate-100 p-2.5 rounded-lg text-xs group gap-3">
-                      <div className="flex items-start gap-2.5 flex-1 min-w-0">
-                        <button
-                          onClick={() => handleToggleSubtask(sub.id, sub.is_completed)}
-                          className={`h-4 w-4 rounded-full border flex items-center justify-center shrink-0 mt-0.5 transition ${
-                            sub.is_completed 
-                              ? "bg-indigo-600 border-indigo-600 text-white" 
-                              : "border-slate-300 hover:border-indigo-500 text-transparent"
-                          }`}
-                        >
-                          <Check className="h-2.5 w-2.5 stroke-[3]" />
-                        </button>
-                        <span className={`whitespace-pre-wrap break-words font-medium text-slate-700 leading-relaxed flex-1 ${sub.is_completed ? "line-through text-slate-400" : ""}`}>
-                          {sub.content}
-                        </span>
+                <div className="space-y-3.5 max-h-[420px] overflow-y-auto pr-1 custom-scrollbar">
+                  {realTimeSubtasks.map((sub) => {
+                    const assigneeName = sub.assigneeName || "Não informado pelo Todoist";
+                    const dueDateText = sub.due?.date ? sub.due.date : "Não informado pelo Todoist";
+                    
+                    let priorityText = "P4 (Sem Urgência)";
+                    let priorityColor = "bg-slate-100 text-slate-700 border-slate-200";
+                    if (sub.priority === 4) {
+                      priorityText = "P1 (Urgente)";
+                      priorityColor = "bg-red-50 text-red-700 border-red-200";
+                    } else if (sub.priority === 3) {
+                      priorityText = "P2 (Alta)";
+                      priorityColor = "bg-orange-50 text-orange-700 border-orange-200";
+                    } else if (sub.priority === 2) {
+                      priorityText = "P3 (Normal)";
+                      priorityColor = "bg-blue-50 text-blue-700 border-blue-200";
+                    }
+
+                    const subComments = expandedSubtaskComments[sub.id] || [];
+
+                    return (
+                      <div key={sub.id} className="bg-slate-50/70 hover:bg-slate-50 border border-slate-200/60 p-3.5 rounded-xl text-xs space-y-3 transition">
+                        
+                        {/* Header Line */}
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-start gap-2.5 flex-1 min-w-0">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleSubtask(sub.id, sub.is_completed)}
+                              className={`h-4 w-4 rounded-full border flex items-center justify-center shrink-0 mt-0.5 transition ${
+                                sub.is_completed 
+                                  ? "bg-indigo-600 border-indigo-600 text-white" 
+                                  : "border-slate-300 hover:border-indigo-500 text-transparent"
+                              }`}
+                            >
+                              <Check className="h-2.5 w-2.5 stroke-[3]" />
+                            </button>
+                            <div className="flex-1 min-w-0">
+                              <span className={`whitespace-pre-wrap break-words font-semibold text-slate-800 leading-relaxed block ${sub.is_completed ? "line-through text-slate-400" : ""}`}>
+                                {sub.content}
+                              </span>
+                              {sub.description && (
+                                <span className="text-[10px] text-slate-500 block mt-0.5 italic">{sub.description}</span>
+                              )}
+                            </div>
+                          </div>
+                          
+                          {/* Copy/Delete buttons */}
+                          <div className="flex items-center gap-1.5 shrink-0 opacity-85">
+                            <button
+                              type="button"
+                              onClick={() => handleCopySubtaskText(sub.content)}
+                              className="text-slate-400 hover:text-indigo-600 p-1 rounded transition"
+                              title="Copiar texto da subtarefa"
+                            >
+                              <Copy className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteSubtask(sub.id)}
+                              className="text-slate-400 hover:text-red-600 p-1 rounded transition"
+                              title="Remover subtarefa"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Metadata Row */}
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 border-t border-slate-100 text-[10px] text-slate-500">
+                          <div>
+                            <span className="font-bold text-slate-400 block uppercase text-[8px] tracking-wider">Status</span>
+                            <span className={`inline-flex items-center px-1.5 py-0.5 rounded-md font-bold text-[9px] mt-0.5 border ${
+                              sub.is_completed 
+                                ? "bg-emerald-50 text-emerald-700 border-emerald-200" 
+                                : "bg-amber-50 text-amber-700 border-amber-200"
+                            }`}>
+                              {sub.is_completed ? "Concluída" : "Em aberto"}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="font-bold text-slate-400 block uppercase text-[8px] tracking-wider">Prioridade</span>
+                            <span className={`inline-flex items-center px-1.5 py-0.5 rounded-md font-bold text-[9px] mt-0.5 border ${priorityColor}`}>
+                              {priorityText}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="font-bold text-slate-400 block uppercase text-[8px] tracking-wider">Vencimento</span>
+                            <span className="font-medium text-slate-700 block mt-0.5">
+                              {dueDateText}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="font-bold text-slate-400 block uppercase text-[8px] tracking-wider">Responsável</span>
+                            <span className="font-bold text-indigo-600 block mt-0.5 truncate" title={assigneeName}>
+                              👤 {assigneeName}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Subtask Comments Feed Area */}
+                        <div className="bg-white border border-slate-150 p-2.5 rounded-xl space-y-2 mt-2">
+                          <span className="text-[8.5px] font-black text-slate-400 uppercase tracking-wider flex items-center gap-1 border-b border-slate-100 pb-1">
+                            💬 Comentários da Subtarefa ({subComments.length})
+                          </span>
+                          
+                          <div className="space-y-2 max-h-28 overflow-y-auto custom-scrollbar">
+                            {subComments.map((comm: any) => (
+                              <div key={comm.id} className="bg-slate-50/50 p-2 rounded-lg text-[10.5px] border border-slate-100 relative group">
+                                <div className="flex justify-between items-center text-[8.5px] mb-1">
+                                  <span className="font-bold text-indigo-900">Advogado Integrado (Todoist)</span>
+                                  <div className="flex items-center gap-1">
+                                    <span className="text-slate-400">
+                                      {comm.posted_at ? new Date(comm.posted_at).toLocaleString('pt-BR') : ""}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteComment(comm.id)}
+                                      className="text-slate-400 hover:text-red-600 transition opacity-0 group-hover:opacity-100"
+                                      title="Remover comentário"
+                                    >
+                                      <Trash2 className="h-2.5 w-2.5" />
+                                    </button>
+                                  </div>
+                                </div>
+                                <p className="text-slate-600 leading-relaxed whitespace-pre-wrap select-text">{comm.content}</p>
+                              </div>
+                            ))}
+                            {subComments.length === 0 && (
+                              <p className="text-[9.5px] text-slate-400 italic py-1">
+                                Nenhum comentário nesta subtarefa.
+                              </p>
+                            )}
+                          </div>
+
+                          {/* Add comment input for this subtask */}
+                          <form 
+                            onSubmit={(e) => handleAddSubtaskComment(sub.id, e)}
+                            className="flex gap-1.5 pt-1.5 border-t border-slate-100"
+                          >
+                            <input
+                              type="text"
+                              value={subtaskCommentsInput[sub.id] || ""}
+                              onChange={(e) => setSubtaskCommentsInput(prev => ({ ...prev, [sub.id]: e.target.value }))}
+                              placeholder="Adicionar instrução à subtarefa..."
+                              className="flex-1 bg-slate-50 hover:bg-slate-100/50 focus:bg-white border border-slate-200 rounded-lg px-2 py-1 text-[10px] focus:outline-none focus:ring-1 focus:ring-indigo-400 transition"
+                            />
+                            <button
+                              type="submit"
+                              className="p-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition shadow-sm"
+                            >
+                              <Plus className="h-3 w-3" />
+                            </button>
+                          </form>
+                        </div>
+
                       </div>
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => handleCopySubtaskText(sub.content)}
-                          className="text-slate-400 hover:text-indigo-600 p-1 rounded transition opacity-0 group-hover:opacity-100"
-                          title="Copiar texto da subtarefa"
-                        >
-                          <Copy className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteSubtask(sub.id)}
-                          className="text-slate-400 hover:text-red-600 p-1 rounded transition opacity-0 group-hover:opacity-100"
-                          title="Remover subtarefa"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                  {realTimeSubtasks.length === 0 && !loadingSubtasks && (
-                    <p className="text-[10px] text-slate-400 italic text-center py-2 border border-dashed border-slate-200 rounded-lg">
+                    );
+                  })}
+                  {realTimeSubtasks.length === 0 && (
+                    <p className="text-[10px] text-slate-400 italic text-center py-2.5 border border-dashed border-slate-200 rounded-lg">
                       Nenhuma subtarefa criada. Planeje subtarefas de revisão operacional abaixo.
                     </p>
                   )}
@@ -3194,7 +3846,18 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
                     </span>
                     <div className="w-full bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 font-bold text-slate-700 truncate text-[11px] flex items-center gap-1.5">
                       <span className="h-2 w-2 rounded-full bg-indigo-500"></span>
-                      Teste Automação (Giffoni Connect)
+                      {enrichedTaskData?.projectName || "Não informado pelo Todoist"}
+                    </div>
+                  </div>
+
+                  {/* Seção */}
+                  <div className="space-y-1">
+                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                      <Folder className="h-3.5 w-3.5 text-indigo-500" /> Seção
+                    </span>
+                    <div className="w-full bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 font-bold text-slate-700 truncate text-[11px] flex items-center gap-1.5">
+                      <span className="h-2 w-2 rounded-full bg-indigo-400"></span>
+                      {enrichedTaskData?.sectionName || "Não informado pelo Todoist"}
                     </div>
                   </div>
 
@@ -3209,10 +3872,27 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
                       className="w-full bg-slate-50 hover:bg-slate-100/70 border border-slate-200/80 rounded-xl p-2.5 font-bold text-slate-700 focus:ring-1 focus:ring-indigo-400 text-xs"
                     >
                       <option value="">Não atribuído</option>
-                      <option value="direito.rgr@gmail.com">Você (direito.rgr@gmail.com)</option>
-                      <option value="controladoria@giffoni.adv.br">controladoria@giffoni.adv.br</option>
-                      <option value="prazos@giffoni.adv.br">prazos@giffoni.adv.br</option>
+                      {projectCollaborators.map((c: any) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name || c.email} ({c.email})
+                        </option>
+                      ))}
+                      {todoistLinkedTask.assignee_id && !projectCollaborators.some(c => String(c.id) === String(todoistLinkedTask.assignee_id)) && (
+                        <option value={todoistLinkedTask.assignee_id}>
+                          {enrichedTaskData?.assigneeName || todoistLinkedTask.assignee_id}
+                        </option>
+                      )}
                     </select>
+                  </div>
+
+                  {/* Criador da Tarefa */}
+                  <div className="space-y-1">
+                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                      <User className="h-3.5 w-3.5 text-indigo-500" /> Criador da Tarefa
+                    </span>
+                    <div className="w-full bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 font-bold text-slate-700 truncate text-[11px]">
+                      {enrichedTaskData?.creatorName || "Não informado pelo Todoist"}
+                    </div>
                   </div>
 
                   {/* Data de Vencimento */}
@@ -3251,17 +3931,17 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
                       <Tag className="h-3.5 w-3.5 text-indigo-500" /> Etiquetas
                     </span>
                     <div className="flex flex-wrap gap-1.5">
-                      {todoistLinkedTask.labels?.map((lbl: string, i: number) => (
+                      {(enrichedTaskData?.mainTask?.labels || todoistLinkedTask.labels || []).map((lbl: string, i: number) => (
                         <span
                           key={i}
                           className="inline-flex items-center gap-1 bg-indigo-50 text-indigo-700 border border-indigo-100 text-[10px] px-2.5 py-1 rounded-full font-bold hover:bg-rose-50 hover:text-rose-700 hover:border-rose-100 transition cursor-pointer"
-                          onClick={() => handleUpdateProperty({ labels: todoistLinkedTask.labels.filter((l: string) => l !== lbl) })}
+                          onClick={() => handleUpdateProperty({ labels: (enrichedTaskData?.mainTask?.labels || todoistLinkedTask.labels || []).filter((l: string) => l !== lbl) })}
                           title="Clique para remover"
                         >
                           {lbl} <span className="text-[8px]">×</span>
                         </span>
                       ))}
-                      {(!todoistLinkedTask.labels || todoistLinkedTask.labels.length === 0) && (
+                      {(!(enrichedTaskData?.mainTask?.labels || todoistLinkedTask.labels) || (enrichedTaskData?.mainTask?.labels || todoistLinkedTask.labels).length === 0) && (
                         <span className="text-[10px] text-slate-400 italic">Sem etiquetas.</span>
                       )}
                     </div>
@@ -3270,7 +3950,7 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
                         onSubmit={(e) => {
                           e.preventDefault();
                           if (labelInput.trim()) {
-                            const current = todoistLinkedTask.labels || [];
+                            const current = enrichedTaskData?.mainTask?.labels || todoistLinkedTask.labels || [];
                             if (!current.includes(labelInput.trim())) {
                               handleUpdateProperty({ labels: [...current, labelInput.trim()] });
                             }
@@ -3898,6 +4578,282 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
                   </div>
                 );
               })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Todoist Automation Configuration Modal */}
+      {isAutomationConfigModalOpen && (
+        <div className="fixed inset-0 bg-slate-950/75 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl text-slate-100 overflow-hidden font-sans animate-fade-in">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-slate-800 p-5 bg-slate-950/40">
+              <div className="flex items-center gap-2.5">
+                <Settings className="h-5 w-5 text-indigo-400 animate-spin-slow" />
+                <div>
+                  <h3 className="text-sm font-black text-white tracking-wider uppercase">
+                    Configurações da Automação Todoist
+                  </h3>
+                  <p className="text-[10px] text-slate-400 font-semibold mt-0.5">
+                    Configure os parâmetros para a execução automática de tarefas/subtarefas.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsAutomationConfigModalOpen(false)}
+                className="text-slate-400 hover:text-white hover:bg-slate-800 p-2 rounded-xl transition"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Form Scroll Area */}
+            <div className="overflow-y-auto p-6 space-y-5 flex-1 custom-scrollbar">
+              {/* Action Type */}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+                  Tipo de Ação
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {["Criar subtarefa", "Criar tarefa principal", "Editar tarefa principal"].map((type) => (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => setAutomationConfig({ ...automationConfig, actionType: type })}
+                      className={`py-2 px-3 rounded-xl border text-xs font-bold transition text-center ${
+                        automationConfig.actionType === type
+                          ? "bg-indigo-600 border-indigo-500 text-white shadow-md shadow-indigo-900/40"
+                          : "bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-800/40"
+                      }`}
+                    >
+                      {type}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Task Name & Description */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                    Nome da tarefa / subtarefa
+                  </label>
+                  <input
+                    type="text"
+                    value={automationConfig.taskName}
+                    onChange={(e) => setAutomationConfig({ ...automationConfig, taskName: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                    placeholder="Ex: Agendar hoje reunião com Cliente"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                    Prazo (Due Date)
+                  </label>
+                  <input
+                    type="text"
+                    value={automationConfig.dueDate}
+                    onChange={(e) => setAutomationConfig({ ...automationConfig, dueDate: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                    placeholder="Ex: hoje ou YYYY-MM-DD"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                  Descrição (Opcional)
+                </label>
+                <textarea
+                  value={automationConfig.description || ""}
+                  onChange={(e) => setAutomationConfig({ ...automationConfig, description: e.target.value })}
+                  rows={2}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500 resize-none"
+                  placeholder="Instruções adicionais da tarefa..."
+                />
+              </div>
+
+              {/* Assignee & Collaborators */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                    Responsável (Assignee)
+                  </label>
+                  <input
+                    type="text"
+                    value={automationConfig.assignee}
+                    onChange={(e) => setAutomationConfig({ ...automationConfig, assignee: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                    placeholder="Ex: giffonisecretaria ou ID"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                    Prioridade
+                  </label>
+                  <select
+                    value={automationConfig.priority || 1}
+                    onChange={(e) => setAutomationConfig({ ...automationConfig, priority: Number(e.target.value) })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                  >
+                    <option value={1}>P4 (Baixa/Cinza)</option>
+                    <option value={2}>P3 (Média/Azul)</option>
+                    <option value={3}>P2 (Alta/Laranja)</option>
+                    <option value={4}>P1 (Urgente/Vermelho)</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Collaborators list if available */}
+              <div className="space-y-1.5">
+                <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                  Colaboradores do Projeto no Todoist
+                </span>
+                {loadingCollaborators ? (
+                  <div className="text-[10px] text-slate-400 flex items-center gap-1.5 font-medium py-1">
+                    <RefreshCw className="h-3 w-3 animate-spin text-indigo-400" />
+                    Buscando colaboradores da API...
+                  </div>
+                ) : projectCollaborators.length > 0 ? (
+                  <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 space-y-1.5 max-h-32 overflow-y-auto custom-scrollbar grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {projectCollaborators.map((col) => (
+                      <button
+                        key={col.id}
+                        type="button"
+                        onClick={() => {
+                          setAutomationConfig({ ...automationConfig, assignee: col.name || col.id });
+                          addSystemLog("info", `Responsável definido para: ${col.name || col.id}`);
+                        }}
+                        className="text-left text-[10.5px] text-indigo-300 hover:text-white hover:bg-slate-800/80 p-1.5 rounded-lg border border-slate-800 hover:border-slate-700 transition flex items-center justify-between"
+                      >
+                        <span className="truncate pr-2">👤 {col.name || "Sem Nome"}</span>
+                        <span className="text-[8.5px] text-slate-500 font-mono shrink-0">ID: {col.id}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-[10px] text-amber-500/90 font-medium py-1 bg-amber-950/20 border border-amber-900/30 p-2.5 rounded-lg">
+                    Vincule um acoplamento de tarefa primeiro para carregar a lista de colaboradores deste projeto do Todoist em tempo real.
+                  </div>
+                )}
+              </div>
+
+              {/* Advanced Parameters */}
+              <div className="border-t border-slate-800/80 pt-4 space-y-3">
+                <span className="text-[11px] font-bold text-indigo-400 uppercase tracking-wider block">
+                  Ajustar Parâmetros Avançados (Opcional)
+                </span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                      Etiquetas (Labels)
+                    </label>
+                    <input
+                      type="text"
+                      value={automationConfig.labels || ""}
+                      onChange={(e) => setAutomationConfig({ ...automationConfig, labels: e.target.value })}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500"
+                      placeholder="Ex: urgente, secretaria"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                      Projeto ID Override
+                    </label>
+                    <input
+                      type="text"
+                      value={automationConfig.project || ""}
+                      onChange={(e) => setAutomationConfig({ ...automationConfig, project: e.target.value })}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500 font-mono"
+                      placeholder="ID do Projeto"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                      Seção ID Override
+                    </label>
+                    <input
+                      type="text"
+                      value={automationConfig.section || ""}
+                      onChange={(e) => setAutomationConfig({ ...automationConfig, section: e.target.value })}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500 font-mono"
+                      placeholder="ID da Seção"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                      Parent ID Override
+                    </label>
+                    <input
+                      type="text"
+                      value={automationConfig.parentTask || ""}
+                      onChange={(e) => setAutomationConfig({ ...automationConfig, parentTask: e.target.value })}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500 font-mono"
+                      placeholder="ID Pai"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                      Ordem (Order)
+                    </label>
+                    <input
+                      type="number"
+                      value={automationConfig.order || 1}
+                      onChange={(e) => setAutomationConfig({ ...automationConfig, order: Number(e.target.value) })}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="bg-slate-950 border-t border-slate-800 px-6 py-4 flex justify-between items-center">
+              <button
+                type="button"
+                onClick={() => {
+                  setAutomationConfig({
+                    actionType: "Criar subtarefa",
+                    taskName: "Secretariado, por gentileza, agendar reunião com o cliente hoje",
+                    description: "",
+                    assignee: "giffonisecretaria",
+                    dueDate: "hoje",
+                    priority: 1,
+                    labels: "",
+                    project: "",
+                    section: "",
+                    parentTask: "",
+                    order: 1
+                  });
+                  addSystemLog("info", "Configurações da automação redefinidas para o padrão.");
+                }}
+                className="text-[11px] font-bold text-rose-400 hover:text-rose-300 transition"
+              >
+                Redefinir Padrão
+              </button>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsAutomationConfigModalOpen(false)}
+                  className="bg-slate-850 hover:bg-slate-800 text-slate-300 font-bold text-xs px-4 py-2 rounded-xl transition border border-slate-800"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    localStorage.setItem("boss_todoist_automation_config", JSON.stringify(automationConfig));
+                    addSystemLog("success", "Configurações da automação salvas com sucesso!");
+                    setIsAutomationConfigModalOpen(false);
+                  }}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-5 py-2 rounded-xl transition shadow-md shadow-indigo-900/40"
+                >
+                  Salvar Configurações
+                </button>
+              </div>
             </div>
           </div>
         </div>

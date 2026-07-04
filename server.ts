@@ -2105,8 +2105,13 @@ app.get("/api/todoist/projects/:id/collaborators", async (req: any, res) => {
 });
 
 app.get("/api/todoist/sections", async (req: any, res) => {
+  const { project_id } = req.query;
+  let url = "https://api.todoist.com/api/v1/sections";
+  if (project_id) {
+    url += `?project_id=${project_id}`;
+  }
   try {
-    const apiRes = await fetch("https://api.todoist.com/api/v1/sections", {
+    const apiRes = await fetch(url, {
       headers: { Authorization: `Bearer ${req.todoistToken}` }
     });
     if (!apiRes.ok) throw new Error(`Todoist API error: ${apiRes.status}`);
@@ -2333,6 +2338,29 @@ app.post("/api/todoist/tasks", async (req: any, res) => {
         "Content-Type": "application/json"
       },
       body: JSON.stringify(req.body)
+    });
+    if (!apiRes.ok) {
+      const errText = await apiRes.text();
+      return res.status(apiRes.status).json({
+        error: "Todoist API error",
+        todoistStatus: apiRes.status,
+        todoistBody: errText,
+        endpointCalled,
+        querySent: ""
+      });
+    }
+    const data = await apiRes.json();
+    res.json(data);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/todoist/tasks/:id", async (req: any, res) => {
+  const endpointCalled = `https://api.todoist.com/api/v1/tasks/${req.params.id}`;
+  try {
+    const apiRes = await fetch(endpointCalled, {
+      headers: { Authorization: `Bearer ${req.todoistToken}` }
     });
     if (!apiRes.ok) {
       const errText = await apiRes.text();
