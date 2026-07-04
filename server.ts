@@ -2019,6 +2019,20 @@ app.post("/api/gmail-messages-details", async (req, res) => {
 });
 
 // --- TODOIST PROXY ENDPOINTS ---
+function normalizeTodoistSearchQuery(raw: any): string {
+  const value = String(raw || "").trim();
+
+  if (!value) return "";
+
+  const withoutDuplicate = value.replace(/^search:\s*search:/i, "search:");
+
+  if (/^search:/i.test(withoutDuplicate)) {
+    return withoutDuplicate;
+  }
+
+  return `search:${withoutDuplicate}`;
+}
+
 app.get("/api/todoist/health", (req: any, res) => {
   const token = process.env.TODOIST_API_KEY;
   const tokenSource = token && token !== "env_secret" ? "SECRET" : "AUSENTE";
@@ -2062,7 +2076,7 @@ app.use("/api/todoist", (req: any, res, next) => {
 
 app.get("/api/todoist/projects", async (req: any, res) => {
   try {
-    const apiRes = await fetch("https://api.todoist.com/rest/v2/projects", {
+    const apiRes = await fetch("https://api.todoist.com/api/v1/projects", {
       headers: { Authorization: `Bearer ${req.todoistToken}` }
     });
     if (!apiRes.ok) throw new Error(`Todoist API error: ${apiRes.status}`);
@@ -2075,7 +2089,7 @@ app.get("/api/todoist/projects", async (req: any, res) => {
 
 app.get("/api/todoist/sections", async (req: any, res) => {
   try {
-    const apiRes = await fetch("https://api.todoist.com/rest/v2/sections", {
+    const apiRes = await fetch("https://api.todoist.com/api/v1/sections", {
       headers: { Authorization: `Bearer ${req.todoistToken}` }
     });
     if (!apiRes.ok) throw new Error(`Todoist API error: ${apiRes.status}`);
@@ -2088,7 +2102,7 @@ app.get("/api/todoist/sections", async (req: any, res) => {
 
 app.get("/api/todoist/labels", async (req: any, res) => {
   try {
-    const apiRes = await fetch("https://api.todoist.com/rest/v2/labels", {
+    const apiRes = await fetch("https://api.todoist.com/api/v1/labels", {
       headers: { Authorization: `Bearer ${req.todoistToken}` }
     });
     if (!apiRes.ok) throw new Error(`Todoist API error: ${apiRes.status}`);
@@ -2106,18 +2120,31 @@ app.get("/api/todoist/search-all", async (req: any, res) => {
   }
 
   const cleanCnj = cnj.replace(/\s+/g, '');
+  const querySent = normalizeTodoistSearchQuery(cleanCnj);
+  const endpointCalled = `https://api.todoist.com/api/v1/tasks/filter?query=${encodeURIComponent(querySent)}`;
 
   try {
-    // 1. Fetch active tasks with search filter
-    const activeUrl = `https://api.todoist.com/rest/v2/tasks?filter=${encodeURIComponent(`search:${cleanCnj}`)}`;
-    const activeRes = await fetch(activeUrl, {
+    // 1. Fetch active tasks with search filter using V1 API
+    const activeRes = await fetch(endpointCalled, {
       headers: { Authorization: `Bearer ${req.todoistToken}` }
     });
     
-    let activeTasks: any[] = [];
-    if (activeRes.ok) {
-      activeTasks = await activeRes.json();
+    if (!activeRes.ok) {
+      const errText = await activeRes.text();
+      console.error(`[Todoist API Error] endpoint: ${endpointCalled}, status: ${activeRes.status}, error: ${errText}`);
+      return res.status(activeRes.status).json({
+        error: "Todoist API error",
+        todoistStatus: activeRes.status,
+        todoistBody: errText,
+        endpointCalled,
+        querySent
+      });
     }
+
+    const data = await activeRes.json();
+    const activeTasks = data.results || data;
+    const dataResultsLength = data.results ? data.results.length : (Array.isArray(data) ? data.length : "N/A");
+    console.log(`[Todoist Logs] Endpoint antigo: proibido | Endpoint atual: /api/v1/tasks/filter | Query enviada: ${querySent} | Payload bruto recebido: ${JSON.stringify(data).slice(0, 300)}... | data.results.length: ${dataResultsLength}`);
 
     // 2. Fetch completed tasks (last 100) and filter by CNJ
     const completedUrl = "https://api.todoist.com/sync/v9/completed/get_all?limit=100";
@@ -2139,8 +2166,8 @@ app.get("/api/todoist/search-all", async (req: any, res) => {
 
     // Combine them with is_completed flag properly set
     const combinedTasks = [
-      ...activeTasks.map(t => ({ ...t, is_completed: false })),
-      ...completedTasks.map(t => ({
+      ...activeTasks.map((t: any) => ({ ...t, is_completed: false })),
+      ...completedTasks.map((t: any) => ({
         id: t.task_id || t.id,
         content: t.content,
         description: t.description || "",
@@ -2166,7 +2193,7 @@ app.get("/api/todoist/search-all", async (req: any, res) => {
     // Fetch comments for each task
     const detailsPromises = uniqueTasks.map(async (task: any) => {
       try {
-        const commentsUrl = `https://api.todoist.com/rest/v2/comments?task_id=${task.id}`;
+        const commentsUrl = `https://api.todoist.com/api/v1/comments?task_id=${task.id}`;
         const commentsRes = await fetch(commentsUrl, {
           headers: { Authorization: `Bearer ${req.todoistToken}` }
         });
@@ -2196,27 +2223,93 @@ app.get("/api/todoist/search-all", async (req: any, res) => {
 
 app.get("/api/todoist/tasks", async (req: any, res) => {
   const { filter, project_id } = req.query;
-  let url = "https://api.todoist.com/rest/v2/tasks";
-  const params = new URLSearchParams();
-  if (filter) params.append("filter", filter as string);
-  if (project_id) params.append("project_id", project_id as string);
-  if (params.toString()) url += `?${params.toString()}`;
 
-  try {
-    const apiRes = await fetch(url, {
-      headers: { Authorization: `Bearer ${req.todoistToken}` }
-    });
-    if (!apiRes.ok) throw new Error(`Todoist API error: ${apiRes.status}`);
-    const data = await apiRes.json();
-    res.json(data);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
+  if (filter) {
+    const querySent = normalizeTodoistSearchQuery(filter);
+    const endpointCalled = `https://api.todoist.com/api/v1/tasks/filter?query=${encodeURIComponent(querySent)}`;
+
+    try {
+      const apiRes = await fetch(endpointCalled, {
+        headers: { Authorization: `Bearer ${req.todoistToken}` }
+      });
+      
+      if (!apiRes.ok) {
+        const errText = await apiRes.text();
+        console.error(`[Todoist API Error] endpoint: ${endpointCalled}, status: ${apiRes.status}, error: ${errText}`);
+        return res.status(apiRes.status).json({
+          error: "Todoist API error",
+          todoistStatus: apiRes.status,
+          todoistBody: errText,
+          endpointCalled,
+          querySent
+        });
+      }
+
+      const data = await apiRes.json();
+      const tasks = data.results || data;
+      const dataResultsLength = data.results ? data.results.length : (Array.isArray(data) ? data.length : "N/A");
+      console.log(`[Todoist Logs] Endpoint antigo: proibido | Endpoint atual: /api/v1/tasks/filter | Query enviada: ${querySent} | Payload bruto recebido: ${JSON.stringify(data).slice(0, 300)}... | data.results.length: ${dataResultsLength}`);
+      return res.json(tasks);
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  } else {
+    // List active tasks with limit=200 and pagination
+    let baseEndpoint = "https://api.todoist.com/api/v1/tasks?limit=200";
+    if (project_id) {
+      baseEndpoint += `&project_id=${project_id}`;
+    }
+    
+    let allTasks: any[] = [];
+    let nextCursor: string | null = null;
+    let pagesCount = 0;
+    
+    try {
+      do {
+        const currentUrl = nextCursor 
+          ? `${baseEndpoint}&cursor=${encodeURIComponent(nextCursor)}`
+          : baseEndpoint;
+        
+        const apiRes = await fetch(currentUrl, {
+          headers: { Authorization: `Bearer ${req.todoistToken}` }
+        });
+        
+        if (!apiRes.ok) {
+          const errText = await apiRes.text();
+          console.error(`[Todoist API Error] endpoint: ${currentUrl}, status: ${apiRes.status}, error: ${errText}`);
+          return res.status(apiRes.status).json({
+            error: "Todoist API error",
+            todoistStatus: apiRes.status,
+            todoistBody: errText,
+            endpointCalled: currentUrl,
+            querySent: ""
+          });
+        }
+        
+        const data = await apiRes.json() as any;
+        const tasks = data.results || data;
+        if (Array.isArray(tasks)) {
+          allTasks = allTasks.concat(tasks);
+        }
+        
+        const dataResultsLength = data.results ? data.results.length : (Array.isArray(data) ? data.length : "N/A");
+        console.log(`[Todoist Logs] Endpoint antigo: proibido | Endpoint atual: /api/v1/tasks | Query enviada: N/A | Payload bruto recebido: ${JSON.stringify(data).slice(0, 300)}... | data.results.length: ${dataResultsLength}`);
+        
+        nextCursor = data.next_cursor || null;
+        pagesCount++;
+      } while (nextCursor && pagesCount < 10);
+      
+      return res.json(allTasks);
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
   }
 });
 
 app.post("/api/todoist/tasks", async (req: any, res) => {
+  const endpointCalled = "https://api.todoist.com/api/v1/tasks";
   try {
-    const apiRes = await fetch("https://api.todoist.com/rest/v2/tasks", {
+    const apiRes = await fetch(endpointCalled, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${req.todoistToken}`,
@@ -2226,7 +2319,13 @@ app.post("/api/todoist/tasks", async (req: any, res) => {
     });
     if (!apiRes.ok) {
       const errText = await apiRes.text();
-      throw new Error(`Todoist API error: ${apiRes.status} - ${errText}`);
+      return res.status(apiRes.status).json({
+        error: "Todoist API error",
+        todoistStatus: apiRes.status,
+        todoistBody: errText,
+        endpointCalled,
+        querySent: ""
+      });
     }
     const data = await apiRes.json();
     res.json(data);
@@ -2236,8 +2335,9 @@ app.post("/api/todoist/tasks", async (req: any, res) => {
 });
 
 app.post("/api/todoist/tasks/:id", async (req: any, res) => {
+  const endpointCalled = `https://api.todoist.com/api/v1/tasks/${req.params.id}`;
   try {
-    const apiRes = await fetch(`https://api.todoist.com/rest/v2/tasks/${req.params.id}`, {
+    const apiRes = await fetch(endpointCalled, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${req.todoistToken}`,
@@ -2247,7 +2347,13 @@ app.post("/api/todoist/tasks/:id", async (req: any, res) => {
     });
     if (!apiRes.ok) {
       const errText = await apiRes.text();
-      throw new Error(`Todoist API error: ${apiRes.status} - ${errText}`);
+      return res.status(apiRes.status).json({
+        error: "Todoist API error",
+        todoistStatus: apiRes.status,
+        todoistBody: errText,
+        endpointCalled,
+        querySent: ""
+      });
     }
     const data = await apiRes.json();
     res.json(data);
@@ -2257,12 +2363,22 @@ app.post("/api/todoist/tasks/:id", async (req: any, res) => {
 });
 
 app.delete("/api/todoist/tasks/:id", async (req: any, res) => {
+  const endpointCalled = `https://api.todoist.com/api/v1/tasks/${req.params.id}`;
   try {
-    const apiRes = await fetch(`https://api.todoist.com/rest/v2/tasks/${req.params.id}`, {
+    const apiRes = await fetch(endpointCalled, {
       method: "DELETE",
       headers: { Authorization: `Bearer ${req.todoistToken}` }
     });
-    if (!apiRes.ok) throw new Error(`Todoist API error: ${apiRes.status}`);
+    if (!apiRes.ok) {
+      const errText = await apiRes.text();
+      return res.status(apiRes.status).json({
+        error: "Todoist API error",
+        todoistStatus: apiRes.status,
+        todoistBody: errText,
+        endpointCalled,
+        querySent: ""
+      });
+    }
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -2270,12 +2386,22 @@ app.delete("/api/todoist/tasks/:id", async (req: any, res) => {
 });
 
 app.post("/api/todoist/tasks/:id/close", async (req: any, res) => {
+  const endpointCalled = `https://api.todoist.com/api/v1/tasks/${req.params.id}/close`;
   try {
-    const apiRes = await fetch(`https://api.todoist.com/rest/v2/tasks/${req.params.id}/close`, {
+    const apiRes = await fetch(endpointCalled, {
       method: "POST",
       headers: { Authorization: `Bearer ${req.todoistToken}` }
     });
-    if (!apiRes.ok) throw new Error(`Todoist API error: ${apiRes.status}`);
+    if (!apiRes.ok) {
+      const errText = await apiRes.text();
+      return res.status(apiRes.status).json({
+        error: "Todoist API error",
+        todoistStatus: apiRes.status,
+        todoistBody: errText,
+        endpointCalled,
+        querySent: ""
+      });
+    }
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -2283,12 +2409,22 @@ app.post("/api/todoist/tasks/:id/close", async (req: any, res) => {
 });
 
 app.post("/api/todoist/tasks/:id/reopen", async (req: any, res) => {
+  const endpointCalled = `https://api.todoist.com/api/v1/tasks/${req.params.id}/reopen`;
   try {
-    const apiRes = await fetch(`https://api.todoist.com/rest/v2/tasks/${req.params.id}/reopen`, {
+    const apiRes = await fetch(endpointCalled, {
       method: "POST",
       headers: { Authorization: `Bearer ${req.todoistToken}` }
     });
-    if (!apiRes.ok) throw new Error(`Todoist API error: ${apiRes.status}`);
+    if (!apiRes.ok) {
+      const errText = await apiRes.text();
+      return res.status(apiRes.status).json({
+        error: "Todoist API error",
+        todoistStatus: apiRes.status,
+        todoistBody: errText,
+        endpointCalled,
+        querySent: ""
+      });
+    }
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -2297,7 +2433,7 @@ app.post("/api/todoist/tasks/:id/reopen", async (req: any, res) => {
 
 app.get("/api/todoist/comments", async (req: any, res) => {
   const { task_id, project_id } = req.query;
-  let url = "https://api.todoist.com/rest/v2/comments";
+  let url = "https://api.todoist.com/api/v1/comments";
   if (task_id) url += `?task_id=${task_id}`;
   else if (project_id) url += `?project_id=${project_id}`;
 
@@ -2315,7 +2451,7 @@ app.get("/api/todoist/comments", async (req: any, res) => {
 
 app.post("/api/todoist/comments", async (req: any, res) => {
   try {
-    const apiRes = await fetch("https://api.todoist.com/rest/v2/comments", {
+    const apiRes = await fetch("https://api.todoist.com/api/v1/comments", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${req.todoistToken}`,
@@ -2336,7 +2472,7 @@ app.post("/api/todoist/comments", async (req: any, res) => {
 
 app.delete("/api/todoist/comments/:id", async (req: any, res) => {
   try {
-    const apiRes = await fetch(`https://api.todoist.com/rest/v2/comments/${req.params.id}`, {
+    const apiRes = await fetch(`https://api.todoist.com/api/v1/comments/${req.params.id}`, {
       method: "DELETE",
       headers: { Authorization: `Bearer ${req.todoistToken}` }
     });

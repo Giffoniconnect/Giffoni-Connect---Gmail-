@@ -4,7 +4,8 @@ import {
   ArrowLeft, ArrowRight, Save, Trash2, Check, Plus, ExternalLink, 
   AlertTriangle, User, Calendar, Tag, ChevronDown, Download, Copy, 
   Inbox, Flame, Target, Sparkles, Keyboard, Key, MessageSquare, Search, Terminal,
-  Folder, Flag, X, FileText, CheckSquare, Bug, AlertCircle, Cpu
+  Folder, Flag, X, FileText, CheckSquare, Bug, AlertCircle, Cpu,
+  Hash, Bell, MapPin, Paperclip, Upload, Activity, GitBranch, ChevronRight
 } from "lucide-react";
 
 interface Publication {
@@ -220,6 +221,22 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
   const [todoistLoadingLocal, setTodoistLoadingLocal] = useState(false);
   const [isAddingLabel, setIsAddingLabel] = useState(false);
   const [labelInput, setLabelInput] = useState("");
+
+  // States for High-fidelity Mirror View replica
+  const [taskNavigationStack, setTaskNavigationStack] = useState<any[]>([]);
+  const [todoistLabels, setTodoistLabels] = useState<any[]>([]);
+  const [todoistSections, setTodoistSections] = useState<any[]>([]);
+  const [expandedSubtaskComments, setExpandedSubtaskComments] = useState<Record<string, any[]>>({});
+  const [loadingSubtaskComments, setLoadingSubtaskComments] = useState<Record<string, boolean>>({});
+  const [subtaskCommentsInput, setSubtaskCommentsInput] = useState<Record<string, string>>({});
+  const [reminders, setReminders] = useState<any[]>([
+    { id: "rem-1", type: "email", text: "Alerta de prazo 1 dia antes", active: true }
+  ]);
+  const [locationValue, setLocationValue] = useState<string>("");
+  const [attachmentsList, setAttachmentsList] = useState<any[]>([]);
+  const [activityLogs, setActivityLogs] = useState<any[]>([
+    { id: "act-1", text: "Tarefa sincronizada em tempo real", time: new Date() }
+  ]);
 
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -573,16 +590,124 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
     }
   }, [todoistLinkedTask]);
 
+  // Sync comments attachments to attachmentsList
+  useEffect(() => {
+    if (realTimeComments.length > 0) {
+      const list: any[] = [];
+      realTimeComments.forEach((c: any) => {
+        if (c.attachment) {
+          list.push({
+            id: c.id,
+            name: c.attachment.file_name,
+            url: c.attachment.file_url,
+            type: c.attachment.file_type || "file",
+            size: c.attachment.file_size || 0,
+            posted_at: c.posted_at
+          });
+        }
+      });
+      setAttachmentsList(list);
+    } else {
+      setAttachmentsList([]);
+    }
+  }, [realTimeComments]);
+
   // Load comments and subtasks when a linked task is active
   useEffect(() => {
     if (todoistLinkedTask?.id) {
       fetchRealTimeComments();
       fetchRealTimeSubtasks();
+      fetchLabelsAndSections();
     } else {
       setRealTimeSubtasks([]);
       setRealTimeComments([]);
     }
   }, [todoistLinkedTask?.id]);
+
+  const addActivityLog = (text: string) => {
+    setActivityLogs(prev => [
+      { id: `act-${Date.now()}`, text, time: new Date() },
+      ...prev
+    ]);
+  };
+
+  const fetchLabelsAndSections = async () => {
+    try {
+      const labelsRes = await fetch("/api/todoist/labels");
+      if (labelsRes.ok) {
+        const data = await labelsRes.json();
+        setTodoistLabels(Array.isArray(data) ? data : []);
+      }
+      if (todoistLinkedTask?.project_id) {
+        const sectionsRes = await fetch("/api/todoist/sections");
+        if (sectionsRes.ok) {
+          const data = await sectionsRes.json();
+          if (Array.isArray(data)) {
+            const filtered = data.filter((s: any) => s.project_id === todoistLinkedTask.project_id);
+            setTodoistSections(filtered);
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Erro ao carregar labels e seções:", e);
+    }
+  };
+
+  const fetchSubtaskComments = async (subtaskId: string) => {
+    setLoadingSubtaskComments(prev => ({ ...prev, [subtaskId]: true }));
+    try {
+      const res = await fetch(`/api/todoist/comments?task_id=${subtaskId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setExpandedSubtaskComments(prev => ({ ...prev, [subtaskId]: Array.isArray(data) ? data : [] }));
+      }
+    } catch (e) {
+      console.error("Erro ao carregar comentários da subtarefa:", e);
+    } finally {
+      setLoadingSubtaskComments(prev => ({ ...prev, [subtaskId]: false }));
+    }
+  };
+
+  const handleAddSubtaskComment = async (subtaskId: string, e: React.FormEvent) => {
+    e.preventDefault();
+    const text = subtaskCommentsInput[subtaskId]?.trim();
+    if (!text) return;
+    try {
+      const res = await fetch(`/api/todoist/comments`, {
+        method: "POST",
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task_id: subtaskId, content: text })
+      });
+      if (res.ok) {
+        addSystemLog("success", "Comentário adicionado à subtarefa!");
+        setSubtaskCommentsInput(prev => ({ ...prev, [subtaskId]: "" }));
+        fetchSubtaskComments(subtaskId);
+        addActivityLog(`Comentário adicionado à subtarefa`);
+      }
+    } catch (e) {
+      console.error("Erro ao adicionar comentário à subtarefa:", e);
+    }
+  };
+
+  const handleOpenSubtaskDetails = (subtask: any) => {
+    if (!todoistLinkedTask) return;
+    setTaskNavigationStack(prev => [...prev, todoistLinkedTask]);
+    if (setTodoistLinkedTask) {
+      setTodoistLinkedTask(subtask);
+    }
+    addActivityLog(`Navegou para subtarefa: ${subtask.content}`);
+  };
+
+  const handleNavigateBackToParent = () => {
+    if (taskNavigationStack.length === 0) return;
+    const prevStack = [...taskNavigationStack];
+    const parentTask = prevStack.pop();
+    setTaskNavigationStack(prevStack);
+    if (setTodoistLinkedTask && parentTask) {
+      setTodoistLinkedTask(parentTask);
+    }
+    addActivityLog(`Voltou para tarefa pai: ${parentTask?.content}`);
+  };
 
   const fetchRealTimeComments = async () => {
     if (!todoistLinkedTask?.id) return;
