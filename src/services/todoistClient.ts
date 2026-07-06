@@ -131,10 +131,9 @@ export async function callTodoistAPI(
 ): Promise<any> {
   const method = options.method || "GET";
   
-  // If provider is SDK and SDK has first-class support for it, we can use it.
-  // However, since we want absolute consistency and to use exactly rest/v2 or the designated working method,
-  // we will map them directly. If provider is "rest" or "sdk", we call the rest/v2 URL.
-  const useBase = provider === "sync" ? "https://api.todoist.com/sync/v9" : TODOIST_API_BASE;
+  // The Sync API does not support standard REST endpoints (like /tasks, /projects, etc.).
+  // Therefore, we must always use the REST API v2 base URL for all REST resource endpoints.
+  const useBase = TODOIST_API_BASE;
   
   let url = `${useBase}${endpoint}`;
   if (options.query) {

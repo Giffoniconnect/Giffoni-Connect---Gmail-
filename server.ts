@@ -2497,38 +2497,13 @@ app.all("/api/todoist/search-all", async (req: any, res) => {
   try {
     const provider = await getWorkingProvider(req.todoistToken);
 
-    // GET /api/v1/tasks/filter?query={CNJ}
+    // Fetch all active tasks directly to filter in memory, completely avoiding the deprecated 'filter' query parameter which returns 410.
     let allTasks: any[] = [];
-    let filterSuccess = false;
-
-    // Build standard Todoist search filter to find the CNJ as a literal string safely
-    let filterExpr = "";
-    if (matchCnjDigits && matchCnjDigits.length === 20 && matchCnjMasked) {
-      filterExpr = `search:"${matchCnjMasked}" | search:"${matchCnjDigits}"`;
-    } else if (matchCnjMasked) {
-      filterExpr = `search:"${matchCnjMasked}"`;
-    } else if (matchCnjDigits) {
-      filterExpr = `search:"${matchCnjDigits}"`;
-    }
-
-    if (filterExpr) {
-      try {
-        const res = await callTodoistAPI(req.todoistToken, provider, "/tasks", {
-          query: { filter: filterExpr }
-        });
-        if (Array.isArray(res)) {
-          allTasks = res;
-          filterSuccess = true;
-        }
-      } catch (err) {
-        console.warn("Filtro direto de tarefas falhou, usando fallback seguro.", err);
-      }
-    }
-
-    if (!filterSuccess || allTasks.length === 0) {
-      // Safely fetch all active tasks without 'limit' parameter which causes 400/500 Bad Request
+    try {
       const res = await todoistClient.getTasks(req.todoistToken, {}, provider);
       allTasks = Array.isArray(res) ? res : [];
+    } catch (err: any) {
+      console.error("Erro ao carregar tarefas do Todoist:", err);
     }
 
     const totalSubtasks = allTasks.filter((t: any) => t.parent_id).length;
