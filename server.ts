@@ -2284,7 +2284,7 @@ app.use("/api/todoist", (req: any, res, next) => {
 
 app.get("/api/todoist/projects", async (req: any, res) => {
   try {
-    const apiRes = await fetch("https://api.todoist.com/api/v1/projects", {
+    const apiRes = await fetch("https://api.todoist.com/rest/v2/projects", {
       headers: { Authorization: `Bearer ${req.todoistToken}` }
     });
     if (!apiRes.ok) throw new Error(`Todoist API error: ${apiRes.status}`);
@@ -2297,7 +2297,7 @@ app.get("/api/todoist/projects", async (req: any, res) => {
 
 app.get("/api/todoist/projects/:id/collaborators", async (req: any, res) => {
   try {
-    const apiRes = await fetch(`https://api.todoist.com/api/v1/projects/${req.params.id}/collaborators`, {
+    const apiRes = await fetch(`https://api.todoist.com/rest/v2/projects/${req.params.id}/collaborators`, {
       headers: { Authorization: `Bearer ${req.todoistToken}` }
     });
     if (!apiRes.ok) {
@@ -2314,7 +2314,7 @@ app.get("/api/todoist/projects/:id/collaborators", async (req: any, res) => {
 
 app.get("/api/todoist/sections", async (req: any, res) => {
   const { project_id } = req.query;
-  let url = "https://api.todoist.com/api/v1/sections";
+  let url = "https://api.todoist.com/rest/v2/sections";
   if (project_id) {
     url += `?project_id=${project_id}`;
   }
@@ -2332,7 +2332,7 @@ app.get("/api/todoist/sections", async (req: any, res) => {
 
 app.get("/api/todoist/labels", async (req: any, res) => {
   try {
-    const apiRes = await fetch("https://api.todoist.com/api/v1/labels", {
+    const apiRes = await fetch("https://api.todoist.com/rest/v2/labels", {
       headers: { Authorization: `Bearer ${req.todoistToken}` }
     });
     if (!apiRes.ok) throw new Error(`Todoist API error: ${apiRes.status}`);
@@ -2343,246 +2343,384 @@ app.get("/api/todoist/labels", async (req: any, res) => {
   }
 });
 
-app.get("/api/todoist/search-all", async (req: any, res) => {
-  const { cnj } = req.query;
-  if (!cnj) {
-    return res.status(400).json({ error: "Parâmetro cnj não fornecido." });
+app.all("/api/todoist/search-all", async (req: any, res) => {
+  if (!req.todoistToken) {
+    return res.status(401).json({ error: "Token do Todoist ausente na requisição." });
   }
 
-  const cleanCnj = cnj.replace(/\s+/g, '');
-  const query = `search:${cleanCnj}`;
-  const endpointCalled = "https://api.todoist.com/api/v1/tasks/filter";
+  const params = req.method === "POST" ? req.body : req.query;
+  const cnj = params.cnj || params.query || "";
+  const route = params.route || "";
+  const emailSubject = params.emailSubject || "";
+  const emailBody = params.emailBody || "";
+  const autor = params.autor || "";
+  const reu = params.reu || "";
+  const tribunal = params.tribunal || "";
+  const assunto = params.assunto || "";
+
+  // Regular expression to extract standard 20-digit CNJs
+  const cnjRegex = /\b\d{7}[-.\s]?\d{2}[-.\s]?\d{4}[-.\s]?\d[-.\s]?\d{2}[-.\s]?\d{4}\b/g;
+  let extractedCnj = "";
+  if (cnj) {
+    const match = cnj.match(cnjRegex);
+    if (match) {
+      extractedCnj = match[0].replace(/[^0-9]/g, "");
+    } else {
+      extractedCnj = cnj.replace(/[^0-9]/g, "");
+    }
+  }
+  if (!extractedCnj && emailSubject) {
+    const match = emailSubject.match(cnjRegex);
+    if (match) extractedCnj = match[0].replace(/[^0-9]/g, "");
+  }
+  if (!extractedCnj && emailBody) {
+    const match = emailBody.match(cnjRegex);
+    if (match) extractedCnj = match[0].replace(/[^0-9]/g, "");
+  }
+
+  let matchCnjDigits = extractedCnj || "";
+  let matchCnjMasked = "";
+  if (extractedCnj && extractedCnj.length === 20) {
+    matchCnjMasked = `${extractedCnj.substring(0, 7)}-${extractedCnj.substring(7, 9)}.${extractedCnj.substring(9, 13)}.${extractedCnj.substring(13, 14)}.${extractedCnj.substring(14, 16)}.${extractedCnj.substring(16, 20)}`;
+  } else {
+    matchCnjMasked = cnj || "";
+  }
 
   try {
-    let allActiveTasks: any[] = [];
-    let isFilterSuccessful = false;
+    // 1. Fetch ALL active tasks in a single resilient API call
+    const tasksUrl = "https://api.todoist.com/rest/v2/tasks";
+    const tasksRes = await fetch(tasksUrl, {
+      headers: { Authorization: `Bearer ${req.todoistToken}` }
+    });
 
-    try {
-      const activeRes = await fetch(`${endpointCalled}?query=${encodeURIComponent(query)}`, {
-        headers: { Authorization: `Bearer ${req.todoistToken}` }
-      });
-      if (activeRes.ok) {
-        const data = await activeRes.json();
-        allActiveTasks = Array.isArray(data) ? data : (data.results || data.items || []);
-        isFilterSuccessful = true;
-        console.log(`[Todoist Logs] API v1 Search-All Filter | Endpoint: ${endpointCalled} | Query: "${query}" | Count: ${allActiveTasks.length}`);
-      } else {
-        const errText = await activeRes.text();
-        console.warn(`[Todoist API Warning] search-all filter failed (Status: ${activeRes.status}): ${errText}. Falling back to /api/v1/tasks.`);
-      }
-    } catch (err: any) {
-      console.warn(`[Todoist API Warning] search-all filter error: ${err.message}. Falling back to /api/v1/tasks.`);
-    }
-
-    if (!isFilterSuccessful) {
-      const fallbackUrl = "https://api.todoist.com/api/v1/tasks";
-      const activeRes = await fetch(fallbackUrl, {
-        headers: { Authorization: `Bearer ${req.todoistToken}` }
-      });
-      if (!activeRes.ok) {
-        const errText = await activeRes.text();
-        console.error(`[Todoist API Error] search-all fallback failed: ${fallbackUrl}, status: ${activeRes.status}, error: ${errText}`);
-        return res.status(activeRes.status).json({
-          error: "Todoist API error",
-          todoistStatus: activeRes.status,
-          todoistBody: errText,
-          endpointCalled: fallbackUrl,
-          querySent: cleanCnj
-        });
-      }
-      const data = await activeRes.json();
-      allActiveTasks = Array.isArray(data) ? data : (data.results || data.items || []);
-      console.log(`[Todoist Logs] API v1 Search-All Fallback | Endpoint: ${fallbackUrl} | Count: ${allActiveTasks.length}`);
-    }
-
-    // Filter active tasks in-memory by cnj (highly resilient)
-    const activeTasks = allActiveTasks.filter((task: any) => {
-      const content = (task.content || "").replace(/\s+/g, "");
-      const description = (task.description || "").replace(/\s+/g, "");
-      const stripSpecial = (str: string) => str.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
-      const cnjStripped = stripSpecial(cleanCnj);
+    if (!tasksRes.ok) {
+      const errText = await tasksRes.text();
+      console.error(`[Todoist Search-All Error] Tasks fetch failed: ${tasksRes.status} | ${errText}`);
+      const status = tasksRes.status;
+      const message = status === 410 
+        ? "Endpoint Todoist descontinuado. Atualizar integração para REST v2." 
+        : `Falha ao consultar Todoist REST v2: ${errText || tasksRes.statusText || 'Erro de comunicação'}`;
       
-      if (content.includes(cleanCnj) || description.includes(cleanCnj)) return true;
-      if (cnjStripped && (stripSpecial(task.content).includes(cnjStripped) || stripSpecial(task.description || "").includes(cnjStripped))) return true;
+      return res.status(status).json({
+        success: false,
+        errorType: "TODOIST_API_ERROR",
+        status: status,
+        message: message,
+        chosenTask: null,
+        tasks: []
+      });
+    }
+
+    const allTasks = await tasksRes.json();
+    if (!Array.isArray(allTasks)) {
+      return res.status(500).json({ error: "Resposta inválida da API Todoist (deve ser array de tarefas)." });
+    }
+
+    const totalSubtasks = allTasks.filter((t: any) => t.parent_id).length;
+
+    // 2. Identify potential candidates to fetch comments for (optimizes API rate limits)
+    const candidatesPool = allTasks.filter((task: any) => {
+      const content = (task.content || "").toLowerCase();
+      const description = (task.description || "").toLowerCase();
+
+      if (matchCnjDigits && (content.includes(matchCnjDigits) || description.includes(matchCnjDigits))) return true;
+      if (matchCnjMasked && (content.includes(matchCnjMasked.toLowerCase()) || description.includes(matchCnjMasked.toLowerCase()))) return true;
+      if (autor && content.includes(autor.toLowerCase())) return true;
+      if (reu && content.includes(reu.toLowerCase())) return true;
+      if (assunto && content.includes(assunto.toLowerCase())) return true;
+
       return false;
     });
 
-    console.log(`[Todoist Logs] API v1 In-Memory Filter | Endpoint: /api/todoist/search-all | CNJ query: ${cleanCnj} | matched active tasks length: ${activeTasks.length}`);
+    // Limit comments fetch to top 15 candidate tasks
+    const candidatesToFetch = candidatesPool.slice(0, 15);
+    const commentsMap = new Map<string, any[]>();
+    let totalComments = 0;
 
-    // No sync/v9 calls allowed in search-all. We keep completedTasks as empty array to avoid calling deprecated completed sync endpoint.
-    const completedTasks: any[] = [];
-
-    // Combine them with is_completed flag properly set
-    const combinedTasks = [
-      ...activeTasks.map((t: any) => ({ ...t, is_completed: false })),
-      ...completedTasks.map((t: any) => ({
-        id: t.task_id || t.id,
-        content: t.content,
-        description: t.description || "",
-        is_completed: true,
-        completed_at: t.completed_at,
-        project_id: t.project_id,
-        labels: t.labels || [],
-        priority: t.priority || 1,
-        due: t.due || null,
-        assignee_id: t.assignee_id || null
-      }))
-    ];
-
-    // Deduplicate combinedTasks by id
-    const uniqueTasksMap = new Map<string, any>();
-    for (const t of combinedTasks) {
-      if (t.id) {
-        uniqueTasksMap.set(t.id, t);
-      }
-    }
-    const uniqueTasks = Array.from(uniqueTasksMap.values());
-
-    // Fetch comments for each task using API v1 (not rest/v2)
-    const detailsPromises = uniqueTasks.map(async (task: any) => {
+    await Promise.all(candidatesToFetch.map(async (task: any) => {
       try {
-        const commentsUrl = `https://api.todoist.com/api/v1/comments?task_id=${task.id}`;
+        const commentsUrl = `https://api.todoist.com/rest/v2/comments?task_id=${task.id}`;
         const commentsRes = await fetch(commentsUrl, {
           headers: { Authorization: `Bearer ${req.todoistToken}` }
         });
-        let comments: any[] = [];
         if (commentsRes.ok) {
-          comments = await commentsRes.json();
+          const comments = await commentsRes.json();
+          if (Array.isArray(comments)) {
+            commentsMap.set(task.id, comments);
+            totalComments += comments.length;
+          }
         }
-        return {
-          ...task,
-          comments
-        };
       } catch (err) {
-        return {
+        console.error(`[Todoist Search-All] Error fetching comments for task ${task.id}:`, err);
+      }
+    }));
+
+    // Helper for normalizing text comparison
+    const cleanCompare = (text: string): string => {
+      if (!text) return "";
+      return text
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/\bx\b/gi, " ")
+        .replace(/[()]/g, " ")
+        .replace(/-/g, " ")
+        .replace(/[.,\/#!$%\^&\*;:{}=\_`~\[\]]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    };
+
+    // 3. Compute precise scores for all tasks
+    const candidatesWithScores = allTasks.map((task: any) => {
+      let score = 0;
+      const details: string[] = [];
+      let matchType: "cnj_exact" | "cnj_digits" | "comment_match" | "subtask_match" | "fallback_name" | "not_found" = "not_found";
+
+      const title = task.content || "";
+      const titleClean = cleanCompare(title);
+      const description = task.description || "";
+      const descriptionClean = cleanCompare(description);
+      const isCompleted = !!task.is_completed;
+      const isSubtask = !!task.parent_id;
+
+      const taskComments = commentsMap.get(task.id) || [];
+
+      // Manual Query Scoring
+      if (cnj) {
+        const mqClean = cleanCompare(cnj);
+        const mqDigits = cnj.replace(/[^0-9]/g, "");
+        if (title.includes(cnj) || description.includes(cnj)) {
+          score += 150;
+          matchType = "cnj_exact";
+          details.push("Correspondência exata do termo de busca manual (+150 pts)");
+        } else if (mqClean && (titleClean.includes(mqClean) || descriptionClean.includes(mqClean))) {
+          score += 120;
+          matchType = "cnj_exact";
+          details.push("Correspondência do termo de busca manual normalizado (+120 pts)");
+        } else if (mqDigits && mqDigits.length > 3 && (titleClean.replace(/[^0-9]/g, "").includes(mqDigits) || descriptionClean.replace(/[^0-9]/g, "").includes(mqDigits))) {
+          score += 100;
+          matchType = "cnj_digits";
+          details.push("Correspondência numérica do termo de busca manual (+100 pts)");
+        }
+      }
+
+      // CNJ-specific priority scoring (Rule 5)
+      if (extractedCnj) {
+        // +100 se CNJ mascarado bater exatamente no título
+        if (matchCnjMasked && title.includes(matchCnjMasked)) {
+          score += 100;
+          matchType = "cnj_exact";
+          details.push("CNJ mascarado encontrado no título (+100 pts)");
+        }
+        // +95 se CNJ somente dígitos bater no título normalizado
+        else if (matchCnjDigits && titleClean.replace(/[^0-9]/g, "").includes(matchCnjDigits)) {
+          score += 95;
+          matchType = "cnj_digits";
+          details.push("CNJ somente dígitos encontrado no título (+95 pts)");
+        }
+
+        // +90 se CNJ bater na descrição
+        if (description.includes(matchCnjMasked) || (matchCnjDigits && descriptionClean.replace(/[^0-9]/g, "").includes(matchCnjDigits))) {
+          score += 90;
+          if (matchType === "not_found") matchType = "cnj_exact";
+          details.push("CNJ encontrado na descrição (+90 pts)");
+        }
+
+        // +85 se CNJ bater em comentário
+        const hasCnjInComment = taskComments.some((c: any) => {
+          const cBody = (c.content || "").toLowerCase();
+          return cBody.includes(matchCnjMasked.toLowerCase()) || (matchCnjDigits && cBody.replace(/[^0-9]/g, "").includes(matchCnjDigits));
+        });
+        if (hasCnjInComment) {
+          score += 85;
+          if (matchType === "not_found") matchType = "comment_match";
+          details.push("CNJ encontrado em comentário (+85 pts)");
+        }
+
+        // +80 se CNJ bater em subtarefa
+        const isSubtaskMatch = isSubtask && (title.includes(matchCnjMasked) || title.includes(matchCnjDigits));
+        if (isSubtaskMatch) {
+          score += 80;
+          if (matchType === "not_found") matchType = "subtask_match";
+          details.push("Tarefa é subtarefa e contém o CNJ (+80 pts)");
+        }
+      }
+
+      // Fallback Criteria (Rule 3 & 5)
+      // +60 se nome da parte bater no título (Autor ou Réu)
+      if (autor && autor.length > 2 && titleClean.includes(cleanCompare(autor))) {
+        score += 60;
+        if (matchType === "not_found") matchType = "fallback_name";
+        details.push(`Nome do Autor "${autor}" encontrado no título (+60 pts)`);
+      }
+      if (reu && reu.length > 2 && titleClean.includes(cleanCompare(reu))) {
+        score += 60;
+        if (matchType === "not_found") matchType = "fallback_name";
+        details.push(`Nome do Réu "${reu}" encontrado no título (+60 pts)`);
+      }
+
+      // +40 se assunto/tribunal bater
+      if (assunto && titleClean.includes(cleanCompare(assunto))) {
+        score += 40;
+        details.push(`Assunto "${assunto}" encontrado no título (+40 pts)`);
+      }
+      if (tribunal && titleClean.includes(cleanCompare(tribunal))) {
+        score += 40;
+        details.push(`Tribunal "${tribunal}" encontrado no título (+40 pts)`);
+      }
+
+      // -100 se tarefa estiver concluída
+      if (isCompleted) {
+        score -= 100;
+        details.push("Tarefa concluída (-100 pts)");
+      }
+
+      return {
+        task: {
           ...task,
-          comments: []
-        };
+          comments: taskComments
+        },
+        score,
+        matchType,
+        details
+      };
+    });
+
+    // Filter and sort candidates
+    const rankedCandidates = candidatesWithScores
+      .filter((c: any) => c.score > 0)
+      .sort((a: any, b: any) => b.score - a.score);
+
+    let chosenTask: any = null;
+    let chosenReason = "";
+    let success = false;
+
+    if (rankedCandidates.length > 0) {
+      const topScore = rankedCandidates[0].score;
+      const topMatches = rankedCandidates.filter((c: any) => c.score === topScore);
+
+      if (topMatches.length === 1) {
+        chosenTask = rankedCandidates[0].task;
+        chosenReason = rankedCandidates[0].details.join(", ");
+        success = true;
+      } else {
+        chosenTask = null;
+        chosenReason = `Múltiplos candidatos com pontuação idêntica de ${topScore} pts. Seleção manual necessária.`;
+        success = true;
+      }
+    } else {
+      chosenReason = `Não localizei tarefa no Todoist correspondente. Foram analisadas ${allTasks.length} tarefas, ${totalSubtasks} subtarefas e ${totalComments} comentários. Nenhum item continha o CNJ ${matchCnjMasked || "não identificado"} em título, descrição, comentários ou subtarefas.`;
+    }
+
+    // Standard properties required by Rule 6 & Rule 7
+    return res.json({
+      success,
+      total_tasks_received: allTasks.length,
+      total_subtasks_received: totalSubtasks,
+      total_comments_received: totalComments,
+      cnj_detected: extractedCnj,
+      cnj_pesquisado: matchCnjMasked,
+      quantidade_de_candidatos: rankedCandidates.length,
+      tarefa_escolhida: chosenTask,
+      motivo_da_escolha: chosenReason,
+
+      // Frontend backwards compatibility props
+      count: rankedCandidates.length,
+      task: chosenTask,
+      matchType: chosenTask ? rankedCandidates[0].matchType : "not_found",
+      searchedCNJ: matchCnjMasked,
+      candidatesChecked: allTasks.length,
+      candidates: rankedCandidates.map((c: any) => ({
+        id: c.task.id,
+        content: c.task.content,
+        score: c.score,
+        matchType: c.matchType,
+        reason: c.details.join(", ")
+      })),
+      reason: chosenReason,
+      debug: {
+        totalTasks: allTasks.length,
+        totalSubtasks,
+        totalComments,
+        searchedCNJ: matchCnjMasked,
+        matchCnjDigits
       }
     });
 
-    const tasksWithComments = await Promise.all(detailsPromises);
-    res.json(tasksWithComments);
   } catch (err: any) {
-    console.error("Erro ao buscar tarefas no Todoist:", err);
+    console.error("Erro interno no search-all:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
 app.get("/api/todoist/tasks", async (req: any, res) => {
   const { filter, project_id } = req.query;
+  let url = "https://api.todoist.com/rest/v2/tasks";
+  if (project_id) {
+    url += `?project_id=${project_id}`;
+  }
 
-  if (filter) {
-    const query = normalizeTodoistSearchQuery(filter);
-    const endpointCalled = "https://api.todoist.com/api/v1/tasks/filter";
+  try {
+    const apiRes = await fetch(url, {
+      headers: { Authorization: `Bearer ${req.todoistToken}` }
+    });
 
-    try {
-      const apiRes = await fetch(`${endpointCalled}?query=${encodeURIComponent(query)}`, {
-        headers: { Authorization: `Bearer ${req.todoistToken}` }
+    if (!apiRes.ok) {
+      const errText = await apiRes.text();
+      console.error(`[Todoist API Error] endpoint: ${url}, status: ${apiRes.status}, error: ${errText}`);
+      return res.status(apiRes.status).json({
+        error: "Todoist API error",
+        todoistStatus: apiRes.status,
+        todoistBody: errText,
+        endpointCalled: url,
+        querySent: filter || ""
       });
-      
-      if (!apiRes.ok) {
-        // Fallback: If filter endpoint fails, fetch all tasks and filter in memory
-        const fallbackUrl = "https://api.todoist.com/api/v1/tasks";
-        console.warn(`[Todoist API Warning] Filter endpoint failed with status ${apiRes.status}. Falling back to ${fallbackUrl}.`);
-        
-        const fallbackRes = await fetch(fallbackUrl, {
-          headers: { Authorization: `Bearer ${req.todoistToken}` }
-        });
-        
-        if (!fallbackRes.ok) {
-          const errText = await fallbackRes.text();
-          return res.status(fallbackRes.status).json({
-            error: "Todoist API error",
-            todoistStatus: fallbackRes.status,
-            todoistBody: errText,
-            endpointCalled: fallbackUrl,
-            querySent: query
-          });
-        }
-        
-        const data = await fallbackRes.json();
-        const allTasksRaw = Array.isArray(data) ? data : (data.results || data.items || []);
-        
-        const allTasks = project_id 
-          ? allTasksRaw.filter((task: any) => String(task.project_id) === String(project_id))
-          : allTasksRaw;
+    }
 
-        let searchTerm = query;
-        if (query.toLowerCase().startsWith("search:")) {
-          searchTerm = query.substring(7);
-        }
-        const cleanSearchTerm = searchTerm.replace(/\s+/g, "").toLowerCase();
+    const data = await apiRes.json();
+    const allTasksRaw = Array.isArray(data) ? data : (data.results || data.items || []);
 
-        const filteredTasks = allTasks.filter((task: any) => {
-          const content = (task.content || "").toLowerCase();
-          const description = (task.description || "").toLowerCase();
-          const contentClean = content.replace(/\s+/g, "");
-          const descriptionClean = description.replace(/\s+/g, "");
-
-          if (content.includes(searchTerm.toLowerCase()) || description.includes(searchTerm.toLowerCase())) return true;
-          if (contentClean.includes(cleanSearchTerm) || descriptionClean.includes(cleanSearchTerm)) return true;
-          
-          const stripSpecial = (str: string) => str.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
-          const termStripped = stripSpecial(searchTerm);
-          if (termStripped) {
-            const contentStripped = stripSpecial(task.content || "");
-            const descriptionStripped = stripSpecial(task.description || "");
-            if (contentStripped.includes(termStripped) || descriptionStripped.includes(termStripped)) return true;
-          }
-          return false;
-        });
-
-        console.log(`[Todoist Logs] API v1 Tasks Fallback Filter | Endpoint: ${fallbackUrl} | Search term: "${searchTerm}" | Fetched: ${allTasks.length} | Matches: ${filteredTasks.length}`);
-        
-        res.setHeader("X-Todoist-Endpoint-Called", fallbackUrl);
-        return res.json(filteredTasks);
+    if (filter) {
+      const query = normalizeTodoistSearchQuery(filter);
+      let searchTerm = query;
+      if (query.toLowerCase().startsWith("search:")) {
+        searchTerm = query.substring(7);
       }
+      const cleanSearchTerm = searchTerm.replace(/\s+/g, "").toLowerCase();
 
-      const data = await apiRes.json();
-      const filteredTasks = Array.isArray(data) ? data : (data.results || data.items || []);
-      
-      console.log(`[Todoist Logs] API v1 Tasks Filter | Endpoint: ${endpointCalled} | Query: "${query}" | Matches: ${filteredTasks.length}`);
-      res.setHeader("X-Todoist-Endpoint-Called", endpointCalled);
+      const filteredTasks = allTasksRaw.filter((task: any) => {
+        const content = (task.content || "").toLowerCase();
+        const description = (task.description || "").toLowerCase();
+        const contentClean = content.replace(/\s+/g, "");
+        const descriptionClean = description.replace(/\s+/g, "");
+
+        if (content.includes(searchTerm.toLowerCase()) || description.includes(searchTerm.toLowerCase())) return true;
+        if (contentClean.includes(cleanSearchTerm) || descriptionClean.includes(cleanSearchTerm)) return true;
+        
+        const stripSpecial = (str: string) => str.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+        const termStripped = stripSpecial(searchTerm);
+        if (termStripped) {
+          const contentStripped = stripSpecial(task.content || "");
+          const descriptionStripped = stripSpecial(task.description || "");
+          if (contentStripped.includes(termStripped) || descriptionStripped.includes(termStripped)) return true;
+        }
+        return false;
+      });
+
+      console.log(`[Todoist Logs] API REST v2 Tasks Filter | Search term: "${searchTerm}" | Fetched: ${allTasksRaw.length} | Matches: ${filteredTasks.length}`);
+      res.setHeader("X-Todoist-Endpoint-Called", "https://api.todoist.com/rest/v2/tasks");
       return res.json(filteredTasks);
-    } catch (err: any) {
-      return res.status(500).json({ error: err.message });
     }
-  } else {
-    // List active tasks with /api/v1/tasks
-    let url = "https://api.todoist.com/api/v1/tasks";
-    if (project_id) {
-      url += `?project_id=${project_id}`;
-    }
-    
-    try {
-      const apiRes = await fetch(url, {
-        headers: { Authorization: `Bearer ${req.todoistToken}` }
-      });
-      
-      if (!apiRes.ok) {
-        const errText = await apiRes.text();
-        console.error(`[Todoist API Error] endpoint: ${url}, status: ${apiRes.status}, error: ${errText}`);
-        return res.status(apiRes.status).json({
-          error: "Todoist API error",
-          todoistStatus: apiRes.status,
-          todoistBody: errText,
-          endpointCalled: url,
-          querySent: ""
-        });
-      }
-      
-      const data = await apiRes.json();
-      res.setHeader("X-Todoist-Endpoint-Called", "https://api.todoist.com/api/v1/tasks");
-      return res.json(data);
-    } catch (err: any) {
-      return res.status(500).json({ error: err.message });
-    }
+
+    res.setHeader("X-Todoist-Endpoint-Called", "https://api.todoist.com/rest/v2/tasks");
+    return res.json(allTasksRaw);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
   }
 });
 
 app.post("/api/todoist/tasks", async (req: any, res) => {
-  const endpointCalled = "https://api.todoist.com/api/v1/tasks";
+  const endpointCalled = "https://api.todoist.com/rest/v2/tasks";
   try {
     const apiRes = await fetch(endpointCalled, {
       method: "POST",
@@ -2610,7 +2748,7 @@ app.post("/api/todoist/tasks", async (req: any, res) => {
 });
 
 app.get("/api/todoist/tasks/:id", async (req: any, res) => {
-  const endpointCalled = `https://api.todoist.com/api/v1/tasks/${req.params.id}`;
+  const endpointCalled = `https://api.todoist.com/rest/v2/tasks/${req.params.id}`;
   try {
     const apiRes = await fetch(endpointCalled, {
       headers: { Authorization: `Bearer ${req.todoistToken}` }
@@ -2633,7 +2771,7 @@ app.get("/api/todoist/tasks/:id", async (req: any, res) => {
 });
 
 app.post("/api/todoist/tasks/:id", async (req: any, res) => {
-  const endpointCalled = `https://api.todoist.com/api/v1/tasks/${req.params.id}`;
+  const endpointCalled = `https://api.todoist.com/rest/v2/tasks/${req.params.id}`;
   try {
     const apiRes = await fetch(endpointCalled, {
       method: "POST",
@@ -2661,7 +2799,7 @@ app.post("/api/todoist/tasks/:id", async (req: any, res) => {
 });
 
 app.delete("/api/todoist/tasks/:id", async (req: any, res) => {
-  const endpointCalled = `https://api.todoist.com/api/v1/tasks/${req.params.id}`;
+  const endpointCalled = `https://api.todoist.com/rest/v2/tasks/${req.params.id}`;
   try {
     const apiRes = await fetch(endpointCalled, {
       method: "DELETE",
@@ -2684,7 +2822,7 @@ app.delete("/api/todoist/tasks/:id", async (req: any, res) => {
 });
 
 app.post("/api/todoist/tasks/:id/close", async (req: any, res) => {
-  const endpointCalled = `https://api.todoist.com/api/v1/tasks/${req.params.id}/close`;
+  const endpointCalled = `https://api.todoist.com/rest/v2/tasks/${req.params.id}/close`;
   try {
     const apiRes = await fetch(endpointCalled, {
       method: "POST",
@@ -2707,7 +2845,7 @@ app.post("/api/todoist/tasks/:id/close", async (req: any, res) => {
 });
 
 app.post("/api/todoist/tasks/:id/reopen", async (req: any, res) => {
-  const endpointCalled = `https://api.todoist.com/api/v1/tasks/${req.params.id}/reopen`;
+  const endpointCalled = `https://api.todoist.com/rest/v2/tasks/${req.params.id}/reopen`;
   try {
     const apiRes = await fetch(endpointCalled, {
       method: "POST",
@@ -2731,7 +2869,7 @@ app.post("/api/todoist/tasks/:id/reopen", async (req: any, res) => {
 
 app.get("/api/todoist/comments", async (req: any, res) => {
   const { task_id, project_id } = req.query;
-  let url = "https://api.todoist.com/api/v1/comments";
+  let url = "https://api.todoist.com/rest/v2/comments";
   if (task_id) url += `?task_id=${task_id}`;
   else if (project_id) url += `?project_id=${project_id}`;
 
@@ -2749,7 +2887,7 @@ app.get("/api/todoist/comments", async (req: any, res) => {
 
 app.post("/api/todoist/comments", async (req: any, res) => {
   try {
-    const apiRes = await fetch("https://api.todoist.com/api/v1/comments", {
+    const apiRes = await fetch("https://api.todoist.com/rest/v2/comments", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${req.todoistToken}`,
@@ -2770,7 +2908,7 @@ app.post("/api/todoist/comments", async (req: any, res) => {
 
 app.delete("/api/todoist/comments/:id", async (req: any, res) => {
   try {
-    const apiRes = await fetch(`https://api.todoist.com/api/v1/comments/${req.params.id}`, {
+    const apiRes = await fetch(`https://api.todoist.com/rest/v2/comments/${req.params.id}`, {
       method: "DELETE",
       headers: { Authorization: `Bearer ${req.todoistToken}` }
     });

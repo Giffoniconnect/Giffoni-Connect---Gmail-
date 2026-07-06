@@ -405,9 +405,8 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
   };
 
   const getTodoistPayload = () => {
-    const lastQuery = todoistDiagnostic?.queriesTried?.[0]?.query || `search:${controladoriaActiveItem?.processNumber || "0010767-43.2026.5.03.0078"}`;
     return {
-      url: `https://api.todoist.com/api/v1/tasks/filter?query=${encodeURIComponent(lastQuery)}`,
+      url: `https://api.todoist.com/rest/v2/tasks`,
       method: "GET",
       headers: {
         "Authorization": "Bearer d8f4************************************",
@@ -546,12 +545,11 @@ ${JSON.stringify(getBackendPayload(), null, 2)}
 ------------------------------------------------------------------------
 ETAPA 4 — REQUISIÇÃO BACKEND -> TODOIST
 ------------------------------------------------------------------------
-- Endpoint oficial da API Todoist: https://api.todoist.com/api/v1/tasks/filter
+- Endpoint oficial da API Todoist: https://api.todoist.com/rest/v2/tasks
 - Método HTTP: GET
 - Headers enviados (com autenticação mascarada):
 ${JSON.stringify(getTodoistPayload().headers, null, 2)}
-- Query Parameters enviados ao Todoist:
-  ?query=search:${diag?.queriesTried?.[0]?.query || item?.processNumber || ""}
+- Query Parameters enviados ao Todoist: None (In-memory search)
 - Body enviado ao Todoist: null
 
 ------------------------------------------------------------------------
@@ -623,17 +621,17 @@ ETAPA 9 — CONCLUSÃO DO FLUXO (RESULTADO FINAL)
 - Tempo total da cadeia de rede: 220ms
 - Causa da Interrupção / Diagnóstico:
   ${diag?.queriesTried?.[0]?.status === 410 ? `
-  Fluxo interrompido entre: BACKEND ↓ TODOIST
-  Motivo: HTTP 410 (Gone) - O endpoint solicitado deixou de existir ou foi removido pela API do Todoist.
-  Significado: A aplicação está chamando uma rota descontinuada. É necessário revisar as URLs da API v2 no server.ts.
+  Busca não executada: endpoint Todoist descontinuado. Nenhuma tarefa pôde ser analisada.
   ` : diag?.queriesTried?.[0]?.status === 401 ? `
   Fluxo interrompido entre: BACKEND ↓ TODOIST
   Motivo: HTTP 401 (Unauthorized) - Chave TODOIST_API_KEY incorreta nos secrets do servidor.
   ` : diag?.localFilterResults?.length === 0 ? `
   Fluxo interrompido entre: TODOIST ↓ PROCESSAMENTO LOCAL
   Motivo: Nenhuma tarefa correspondente atendeu aos critérios de ranqueamento (pontuação zero).
-  ` : `
+  ` : diag?.chosenTask ? `
   Fluxo concluído com sucesso! A tarefa correspondente foi devidamente identificada, ranqueada e acoplada.
+  ` : `
+  Busca concluída: Nenhuma correspondência encontrada ou seleção manual necessária.
   `}
 ========================================================================`;
 
@@ -3039,11 +3037,11 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           <div>
                             <span className="text-slate-500 block text-[9px] uppercase font-black">URL Oficial Destino</span>
-                            <span className="text-indigo-400 break-all block mt-1 font-bold">https://api.todoist.com/api/v1/tasks/filter</span>
+                            <span className="text-indigo-400 break-all block mt-1 font-bold">https://api.todoist.com/rest/v2/tasks</span>
                           </div>
                           <div>
                             <span className="text-slate-500 block text-[9px] uppercase font-black">Filtro Encaminhado (Query)</span>
-                            <span className="text-emerald-400 block mt-1 font-bold">?query=search:{todoistDiagnostic?.queriesTried?.[0]?.query || controladoriaActiveItem?.processNumber || "APARECIDA"}</span>
+                            <span className="text-emerald-400 block mt-1 font-bold">Nenhum (Pesquisa em Memória após obter tarefas)</span>
                           </div>
                         </div>
 
@@ -3729,69 +3727,6 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
         {/* Right Side: ESPELHO DA TAREFA */}
         <div className="lg:col-span-8 space-y-4">
           
-          {/* Logs da Automação Todoist Panel */}
-          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 shadow-xs">
-            <div className="flex items-center justify-between border-b border-slate-200/60 pb-2 mb-3">
-              <span className="text-[11px] font-black uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
-                <Terminal className="h-3.5 w-3.5 text-indigo-500" />
-                Logs da Automação Todoist
-              </span>
-              <div className="flex items-center gap-2">
-                {automationLogs.length > 0 && (
-                  <>
-                    <button
-                      onClick={copyAutomationLogs}
-                      className="text-[10px] font-semibold text-slate-500 hover:text-indigo-600 bg-white hover:bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-lg transition"
-                      title="Copiar Logs"
-                    >
-                      Copiar logs
-                    </button>
-                    <button
-                      onClick={clearAutomationLogs}
-                      className="text-[10px] font-semibold text-slate-500 hover:text-red-600 bg-white hover:bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-lg transition"
-                      title="Limpar Logs"
-                    >
-                      Limpar logs
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
-
-            {automationLogs.length === 0 ? (
-              <div className="text-[11px] text-slate-400 italic py-1 text-center">
-                Nenhum evento registrado ainda. Execute a automação para ver os logs em tempo real.
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-1.5 max-h-32 overflow-y-auto pr-1 custom-scrollbar">
-                {automationLogs.map((log) => {
-                  let emoji = "ℹ️";
-                  let bgClass = "text-slate-700";
-                  if (log.type === "success") {
-                    emoji = "✅";
-                    bgClass = "text-emerald-700 font-medium";
-                  } else if (log.type === "alert") {
-                    emoji = "⚠️";
-                    bgClass = "text-amber-700 font-medium";
-                  } else if (log.type === "error") {
-                    emoji = "❌";
-                    bgClass = "text-red-700 font-bold";
-                  } else if (log.type === "processing") {
-                    emoji = "🔄";
-                    bgClass = "text-indigo-600 animate-pulse";
-                  }
-
-                  return (
-                    <div key={log.id} className="flex items-start gap-1.5 text-[10.5px]">
-                      <span className="shrink-0">{emoji}</span>
-                      <span className={`leading-relaxed break-all ${bgClass}`}>{log.text}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
           <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col space-y-5 relative min-h-[500px]">
             
             {/* Header of Mirror View */}
@@ -4481,6 +4416,69 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
             </div>
           )}
 
+        </div>
+
+        {/* Logs da Automação Todoist Panel */}
+        <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 shadow-xs">
+          <div className="flex items-center justify-between border-b border-slate-200/60 pb-2 mb-3">
+            <span className="text-[11px] font-black uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+              <Terminal className="h-3.5 w-3.5 text-indigo-500" />
+              Logs da Automação Todoist
+            </span>
+            <div className="flex items-center gap-2">
+              {automationLogs.length > 0 && (
+                <>
+                  <button
+                    onClick={copyAutomationLogs}
+                    className="text-[10px] font-semibold text-slate-500 hover:text-indigo-600 bg-white hover:bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-lg transition"
+                    title="Copiar Logs"
+                  >
+                    Copiar logs
+                  </button>
+                  <button
+                    onClick={clearAutomationLogs}
+                    className="text-[10px] font-semibold text-slate-500 hover:text-red-600 bg-white hover:bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-lg transition"
+                    title="Limpar Logs"
+                  >
+                    Limpar logs
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+
+          {automationLogs.length === 0 ? (
+            <div className="text-[11px] text-slate-400 italic py-1 text-center">
+              Nenhum evento registrado ainda. Execute a automação para ver os logs em tempo real.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-1.5 max-h-32 overflow-y-auto pr-1 custom-scrollbar">
+              {automationLogs.map((log) => {
+                let emoji = "ℹ️";
+                let bgClass = "text-slate-700";
+                if (log.type === "success") {
+                  emoji = "✅";
+                  bgClass = "text-emerald-700 font-medium";
+                } else if (log.type === "alert") {
+                  emoji = "⚠️";
+                  bgClass = "text-amber-700 font-medium";
+                } else if (log.type === "error") {
+                  emoji = "❌";
+                  bgClass = "text-red-700 font-bold";
+                } else if (log.type === "processing") {
+                  emoji = "🔄";
+                  bgClass = "text-indigo-600 animate-pulse";
+                }
+
+                return (
+                  <div key={log.id} className="flex items-start gap-1.5 text-[10.5px]">
+                    <span className="shrink-0">{emoji}</span>
+                    <span className={`leading-relaxed break-all ${bgClass}`}>{log.text}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
       </div>

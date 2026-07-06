@@ -678,28 +678,18 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
     setIsTodoistSelectionModalOpen(false);
     setTodoistMultipleTasksFound([]);
 
-    // Initialize diagnostic report object
-    const queriesTriedLog: any[] = [];
-    let localFilterRun = false;
-    let localFilterResults: any[] = [];
-    let chosenTask: string | null = null;
-    let chosenTaskScore: number | null = null;
-    let failureReason: string | null = null;
-    let finalResult = "nenhuma encontrada";
     let detectedTokenSource = "AUSENTE";
     let detectedTokenLoaded = false;
 
     try {
-      // 1. Extrair do push
       const cnj = (item.processNumber || '').trim();
       const autor = (item.autor || '').trim();
       const reu = (item.reu || '').trim();
       const vara = (item.vara || '').trim();
       const tribunal = (item.tribunal || '').trim();
+      const assunto = (item.assunto || item.subject || '').trim();
 
       const isCnjValid = cnj && cnj !== 'Não identificado' && cnj !== 'Nãoidentificado';
-      const isAutorValid = autor && autor !== 'Não identificado' && autor !== 'Nãoidentificado';
-      const isReuValid = reu && reu !== 'Não identificado' && reu !== 'Nãoidentificado';
 
       // First check if there is a saved link for this CNJ
       const cleanCnjForSaved = isCnjValid ? cnj.replace(/\s+/g, '') : '';
@@ -740,499 +730,193 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
         }
       }
 
-      // Normalization function matching instructions exactly
-      const normalizeForDiagnostic = (text: string): string => {
-        if (!text) return "";
-        let clean = text.toLowerCase();
-        // remover acentos
-        clean = clean.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-        // transformar "X" em espaço neutro
-        clean = clean.replace(/\bx\b/gi, " ");
-        // remover parênteses
-        clean = clean.replace(/[()]/g, " ");
-        // remover hífens
-        clean = clean.replace(/-/g, " ");
-        // remover pontuação (como pontos, vírgulas, colchetes, etc)
-        clean = clean.replace(/[.,\/#!$%\^&\*;:{}=\_`~\[\]]/g, " ");
-        // remover múltiplos espaços
-        clean = clean.replace(/\s+/g, " ");
-        return clean.trim();
-      };
+      // Single, highly controlled backend POST request
+      addSystemLog('info', `🕵️‍♂️ Buscador: Realizando chamada de busca unificada ao backend...`, 'gmail_sync');
 
-      const digitsCnj = isCnjValid ? cnj.replace(/[^0-9]/g, '') : '';
-      const spacedCnj = isCnjValid ? cnj.replace(/[^0-9]/g, ' ').replace(/\s+/g, ' ').trim() : '';
-
-      // 2. BUSCAS OBRIGATÓRIAS DE TESTE + buscas dinâmicas baseadas no item ativo
-      const searchTerms: string[] = [];
-
-      // Se houver busca manual (pelo botão "Buscar"), adicioná-la com altíssima prioridade
-      if (manualQuery && manualQuery.trim()) {
-        const mq = manualQuery.trim();
-        searchTerms.push(mq);
-        const digitsMq = mq.replace(/[^0-9]/g, '');
-        if (digitsMq && digitsMq !== mq && digitsMq.length > 3) {
-          searchTerms.push(digitsMq);
-        }
-      }
-
-      // Sempre colocar em prioridade as buscas baseadas no processo ativamente selecionado
-      if (isCnjValid) {
-        searchTerms.push(cnj);
-        if (digitsCnj && digitsCnj !== cnj) {
-          searchTerms.push(digitsCnj);
-        }
-      }
-      if (isAutorValid && autor.length > 2) {
-        searchTerms.push(autor);
-        const autorWords = autor.split(/\s+/).filter(w => w.length > 2 && !["de", "do", "da", "dos", "das", "e"].includes(w.toLowerCase()));
-        if (autorWords.length > 0) {
-          searchTerms.push(autorWords[0]);
-        }
-      }
-      if (isReuValid && reu.length > 2) {
-        searchTerms.push(reu);
-        const reuWords = reu.split(/\s+/).filter(w => w.length > 2 && !["de", "do", "da", "dos", "das", "e"].includes(w.toLowerCase()));
-        if (reuWords.length > 0) {
-          searchTerms.push(reuWords[0]);
-        }
-      }
-
-      // Incluir obrigatoriamente a lista de termos solicitada no enunciado para o debug
-      const mandatoryDebugTerms = [
-        "0010767-43.2026.5.03.0078",
-        "APARECIDA",
-        "APARECIDA DO CARMO BARBOSA",
-        "PIF PAF",
-        "Controladoria trabalhista",
-        "APARECIDA PIF PAF",
-        "00107674320265030078"
-      ];
-
-      for (const term of mandatoryDebugTerms) {
-        if (!searchTerms.includes(term)) {
-          searchTerms.push(term);
-        }
-      }
-
-      addSystemLog('info', `🕵️‍♂️ Investigador: Iniciando buscas sequenciais (${searchTerms.length} termos)...`, 'gmail_sync');
-
-      const fetchedTasksMap = new Map<string, any>();
-
-      // Executar buscas sequenciais e registrar o diagnóstico detalhado para cada uma
-      for (const term of searchTerms) {
-        // Normalizar para evitar search:search:
-        let cleanTerm = term.trim();
-        while (/^search:\s*/i.test(cleanTerm)) {
-          cleanTerm = cleanTerm.replace(/^search:\s*/i, "").trim();
-        }
-        const query = `search:${cleanTerm}`;
-        const endpoint = `/api/todoist/tasks?filter=${encodeURIComponent(query)}`;
-        let status = 0;
-        let rawResponse = "";
-        let totalReturned = 0;
-        let titles: string[] = [];
-        let loggedEndpoint = "https://api.todoist.com/api/v1/tasks/filter";
-
-        try {
-          const response = await fetch(endpoint);
-          status = response.status;
-          const sourceHeader = response.headers.get("X-Todoist-Token-Source");
-          const loadedHeader = response.headers.get("X-Todoist-Token-Loaded");
-          const extCalled = response.headers.get("X-Todoist-Endpoint-Called");
-          if (sourceHeader) detectedTokenSource = sourceHeader;
-          if (loadedHeader) detectedTokenLoaded = loadedHeader === "SIM";
-          if (extCalled) loggedEndpoint = extCalled;
-
-          if (response.ok) {
-            const tasks = await response.json();
-            rawResponse = JSON.stringify(tasks);
-            if (Array.isArray(tasks)) {
-              totalReturned = tasks.length;
-              titles = tasks.map(t => t.content);
-              for (const t of tasks) {
-                if (t && t.id) {
-                  fetchedTasksMap.set(t.id, t);
-                }
-              }
-            }
-          } else {
-            rawResponse = await response.text();
-          }
-        } catch (err: any) {
-          rawResponse = err.message || "Erro de conexão";
-        }
-
-        queriesTriedLog.push({
-          query,
-          endpoint: loggedEndpoint,
-          status,
-          totalReturned,
-          titles,
-          rawResponse: rawResponse.substring(0, 500) // Truncar para legibilidade do painel
-        });
-      }
-
-      // Se todas as buscas sequenciais falharem (retornarem 0 resultados no map), executar fallback bruto
-      if (fetchedTasksMap.size === 0) {
-        localFilterRun = true;
-        const fallbackEndpoint = `/api/todoist/tasks`;
-        let status = 0;
-        let rawResponse = "";
-        let totalReturned = 0;
-        let titles: string[] = [];
-        let loggedFallbackEndpoint = "https://api.todoist.com/api/v1/tasks";
-
-        addSystemLog('warning', `🕵️‍♂️ Buscas parciais falharam. Executando fallback bruto (GET /tasks)...`, 'gmail_sync');
-
-        try {
-          const response = await fetch(fallbackEndpoint);
-          status = response.status;
-          const sourceHeader = response.headers.get("X-Todoist-Token-Source");
-          const loadedHeader = response.headers.get("X-Todoist-Token-Loaded");
-          const extCalled = response.headers.get("X-Todoist-Endpoint-Called");
-          if (sourceHeader) detectedTokenSource = sourceHeader;
-          if (loadedHeader) detectedTokenLoaded = loadedHeader === "SIM";
-          if (extCalled) loggedFallbackEndpoint = extCalled;
-
-          if (response.ok) {
-            const tasks = await response.json();
-            rawResponse = JSON.stringify(tasks);
-            if (Array.isArray(tasks)) {
-              totalReturned = tasks.length;
-              titles = tasks.map(t => t.content);
-              for (const t of tasks) {
-                if (t && t.id) {
-                  fetchedTasksMap.set(t.id, t);
-                }
-              }
-            }
-          } else {
-            rawResponse = await response.text();
-          }
-        } catch (err: any) {
-          rawResponse = err.message || "Erro de fallback";
-        }
-
-        queriesTriedLog.push({
-          query: "FALLBACK BRUTO (Todas as tarefas)",
-          endpoint: loggedFallbackEndpoint,
-          status,
-          totalReturned,
-          titles,
-          rawResponse: rawResponse.substring(0, 500)
-        });
-      }
-
-      // 3. Filtragem e pontuação local detalhada de todas as tarefas encontradas
-      const allTasks = Array.from(fetchedTasksMap.values());
-      const rankedTasks = allTasks.map(task => {
-        let score = 0;
-        const normContent = normalizeForDiagnostic(task.content);
-        const normDesc = normalizeForDiagnostic(task.description || "");
-        const fullText = normContent + " " + normDesc;
-
-        const breakdown = {
-          hasCnjWithPunctuation: false,
-          hasCnjWithoutPunctuation: false,
-          hasAutor: false,
-          hasReu: false,
-          hasControladoria: false,
-          hasTrabalhista: false,
-          hasPastaFisica: false
-        };
-
-        const reasonDetails: string[] = [];
-
-        // - termo de busca manual (pelo botão Buscar)
-        if (manualQuery && manualQuery.trim()) {
-          const mqNormalized = normalizeForDiagnostic(manualQuery);
-          const mqDigits = manualQuery.replace(/[^0-9]/g, '');
-          if (task.content.includes(manualQuery) || (task.description || "").includes(manualQuery)) {
-            score += 150;
-            reasonDetails.push("Correspondência exata do termo de busca manual (+150 pts)");
-          } else if (mqNormalized && fullText.includes(mqNormalized)) {
-            score += 120;
-            reasonDetails.push("Correspondência do termo de busca manual normalizado (+120 pts)");
-          } else if (mqDigits && mqDigits.length > 3 && fullText.replace(/[^0-9]/g, '').includes(mqDigits)) {
-            score += 100;
-            reasonDetails.push("Correspondência numérica do termo de busca manual (+100 pts)");
-          }
-        }
-
-        // - CNJ com pontuação (ex: 0010767-43.2026.5.03.0078)
-        if (isCnjValid) {
-          if (task.content.includes(cnj) || (task.description || "").includes(cnj)) {
-            score += 100;
-            breakdown.hasCnjWithPunctuation = true;
-            reasonDetails.push("CNJ com pontuação exata (+100 pts)");
-          }
-        }
-
-        // - CNJ sem pontuação (ex: 00107674320265030078)
-        if (isCnjValid) {
-          const cleanFullTextDigits = fullText.replace(/[^0-9]/g, '');
-          if (digitsCnj && cleanFullTextDigits.includes(digitsCnj)) {
-            score += 100;
-            breakdown.hasCnjWithoutPunctuation = true;
-            reasonDetails.push("Dígitos sequenciais do CNJ (+100 pts)");
-          } else if (spacedCnj && fullText.includes(normalizeForDiagnostic(spacedCnj))) {
-            score += 100;
-            breakdown.hasCnjWithoutPunctuation = true;
-            reasonDetails.push("CNJ espaçado sem pontuação (+100 pts)");
-          }
-        }
-
-        // - autor (ex: APARECIDA DO CARMO BARBOSA)
-        if (isAutorValid) {
-          const normAutor = normalizeForDiagnostic(autor);
-          if (normAutor && fullText.includes(normAutor)) {
-            score += 80;
-            breakdown.hasAutor = true;
-            reasonDetails.push("Autor completo (+80 pts)");
-          } else {
-            const autorParts = normAutor.split(" ").filter(w => w.length > 2 && !["de", "do", "da", "dos", "das", "e"].includes(w));
-            let partsFound = 0;
-            for (const part of autorParts) {
-              if (fullText.includes(part)) {
-                partsFound++;
-              }
-            }
-            if (partsFound > 0) {
-              const partScore = Math.min(60, partsFound * 20);
-              score += partScore;
-              reasonDetails.push(`${partsFound} partes do nome do Autor (+${partScore} pts)`);
-            }
-          }
-        }
-
-        // - réu (ex: PIF PAF)
-        if (isReuValid) {
-          const normReu = normalizeForDiagnostic(reu);
-          if (normReu && fullText.includes(normReu)) {
-            score += 80;
-            breakdown.hasReu = true;
-            reasonDetails.push("Réu completo (+80 pts)");
-          } else {
-            const reuParts = normReu.split(" ").filter(w => w.length > 2 && !["de", "do", "da", "dos", "das", "e"].includes(w));
-            let partsFound = 0;
-            for (const part of reuParts) {
-              if (fullText.includes(part)) {
-                partsFound++;
-              }
-            }
-            if (partsFound > 0) {
-              const partScore = Math.min(60, partsFound * 20);
-              score += partScore;
-              reasonDetails.push(`${partsFound} partes do nome do Réu (+${partScore} pts)`);
-            }
-          }
-        }
-
-        // - Controladoria
-        if (fullText.includes("controladoria")) {
-          score += 50;
-          breakdown.hasControladoria = true;
-          reasonDetails.push("Termo 'Controladoria' (+50 pts)");
-        }
-
-        // - trabalhista
-        if (fullText.includes("trabalhista")) {
-          score += 50;
-          breakdown.hasTrabalhista = true;
-          reasonDetails.push("Termo 'trabalhista' (+50 pts)");
-        }
-
-        // - pasta física 1.434
-        if (fullText.includes("pasta fisica") || fullText.includes("pasta física") || fullText.includes("1.434") || fullText.includes("1434") || fullText.includes("1 434")) {
-          score += 30;
-          breakdown.hasPastaFisica = true;
-          reasonDetails.push("Pasta física ou número 1.434 (+30 pts)");
-        }
-
-        const decision = score > 0 
-          ? `Aceito com score ${score}. Detalhes: ${reasonDetails.join(", ")}` 
-          : `Rejeitado (score 0). Sem correspondência com CNJ, Autor, Réu, Controladoria ou pasta física.`;
-
-        localFilterResults.push({
-          taskTitle: task.content,
-          score,
-          breakdown,
-          decision
-        });
-
-        return {
-          ...task,
-          score,
-          decision
-        };
+      const response = await fetch("/api/todoist/search-all", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          cnj: manualQuery || cnj,
+          route: window.location.pathname,
+          emailSubject: item.subject || item.title || "",
+          emailBody: item.description || item.text || item.publicationText || "",
+          autor,
+          reu,
+          tribunal,
+          assunto
+        })
       });
 
-      // Filtrar apenas tarefas aceitas com score > 0 e ordenar de forma decrescente
-      const sortedTasks = rankedTasks
-        .filter(t => t.score > 0)
-        .sort((a, b) => b.score - a.score);
+      const sourceHeader = response.headers.get("X-Todoist-Token-Source");
+      const loadedHeader = response.headers.get("X-Todoist-Token-Loaded");
+      if (sourceHeader) detectedTokenSource = sourceHeader;
+      if (loadedHeader) detectedTokenLoaded = loadedHeader === "SIM";
 
-      // Determinar resultado final e escolha
-      if (sortedTasks.length > 0) {
-        const topTask = sortedTasks[0];
-        let isClearlySuperior = false;
-
-        if (sortedTasks.length === 1) {
-          isClearlySuperior = true;
-        } else {
-          const secondTask = sortedTasks[1];
-          // Considerar claramente superior se score superior a 80 e pelo menos 40 pontos de diferença, ou se a segunda tem score muito baixo (<30)
-          if (topTask.score >= 80 && (topTask.score - secondTask.score >= 40 || secondTask.score < 30)) {
-            isClearlySuperior = true;
-          }
+      if (!response.ok) {
+        let errJson: any = {};
+        let errText = "";
+        try {
+          errText = await response.text();
+          errJson = JSON.parse(errText);
+        } catch (e) {
+          // not json
         }
 
-        if (isClearlySuperior) {
-          chosenTask = topTask.content;
-          chosenTaskScore = topTask.score;
-          finalResult = "encontrada";
-        } else {
-          finalResult = "múltiplas encontradas";
-        }
-      } else {
-        finalResult = "nenhuma encontrada";
-        failureReason = "Nenhuma das tarefas do Todoist atendeu aos critérios de ranqueamento (pontuação final = 0).";
+        const diagReport = {
+          tokenLoaded: detectedTokenLoaded,
+          tokenSource: detectedTokenSource,
+          queriesTried: [
+            {
+              query: `search:${manualQuery || cnj}`,
+              endpoint: "https://api.todoist.com/rest/v2/tasks",
+              status: response.status,
+              totalReturned: 0,
+              titles: [],
+              rawResponse: JSON.stringify(errJson || { error: errText || response.statusText }).substring(0, 500)
+            }
+          ],
+          localFilterRun: false,
+          localFilterResults: [],
+          chosenTask: null,
+          chosenTaskScore: null,
+          failureReason: errJson.message || `HTTP ${response.status}: ${errText || response.statusText}`,
+          finalResult: "erro de api",
+          debug: {}
+        };
+        setTodoistDiagnostic(diagReport);
+
+        const errorMsg = errJson.message || `Erro na API Todoist (HTTP ${response.status})`;
+        addSystemLog('error', `Falha na consulta Todoist: ${errorMsg}`, 'gmail_sync');
+        setTodoistLoading(false);
+        return { success: false, count: 0, error: errorMsg };
       }
 
-      // Detectar possíveis falhas na API ou autenticação do Todoist
-      const failedStep = queriesTriedLog.find(q => q.status !== 200 && q.status !== 0);
-      if (failedStep) {
-        if (failedStep.status === 401 || failedStep.status === 403) {
-          finalResult = "erro de autenticação";
-          failureReason = `O servidor retornou erro de credenciais (Status HTTP ${failedStep.status}). Verifique seu token.`;
-        } else if (failedStep.status >= 400 && failedStep.status < 500) {
-          finalResult = "erro de filtro";
-          failureReason = `Filtro de busca inválido ou rejeitado pelo Todoist (Status HTTP ${failedStep.status}).`;
-        } else {
-          finalResult = "erro de API";
-          failureReason = `Erro geral na API do Todoist (Status HTTP ${failedStep.status}).`;
-        }
+      const result = await response.json();
+
+      if (result.success === false && result.errorType === "TODOIST_API_ERROR") {
+        const diagReport = {
+          tokenLoaded: detectedTokenLoaded,
+          tokenSource: detectedTokenSource,
+          queriesTried: [
+            {
+              query: `search:${manualQuery || cnj}`,
+              endpoint: "https://api.todoist.com/rest/v2/tasks",
+              status: result.status || 410,
+              totalReturned: 0,
+              titles: [],
+              rawResponse: JSON.stringify(result).substring(0, 500)
+            }
+          ],
+          localFilterRun: false,
+          localFilterResults: [],
+          chosenTask: null,
+          chosenTaskScore: null,
+          failureReason: result.message,
+          finalResult: "erro de api",
+          debug: result.debug || {}
+        };
+        setTodoistDiagnostic(diagReport);
+
+        addSystemLog('error', `Falha na consulta Todoist: ${result.message}`, 'gmail_sync');
+        setTodoistLoading(false);
+        return { success: false, count: 0, error: result.message };
       }
 
-      // Salvar diagnóstico completo no estado do React para exibição no painel
+      // Log results cleanly to console
+      console.log(`
+========================================================================
+🕵️‍♂️ INVESTIGADOR TODOIST - DIAGNÓSTICO UNIFICADO 🕵️‍♂️
+========================================================================
+1. Token Todoist Carregado: ${detectedTokenLoaded ? "SIM" : "NÃO"} (Fonte: ${detectedTokenSource})
+2. Parâmetros de Entrada:
+   - CNJ Principal: "${cnj}"
+   - CNJ Pesquisado: "${result.cnj_pesquisado || "N/A"}"
+   - Autor: "${autor}" | Réu: "${reu}"
+3. Métricas de Busca:
+   - Total de Tarefas Ativas Recebidas: ${result.total_tasks_received}
+   - Total de Subtarefas: ${result.total_subtasks_received}
+   - Total de Comentários analisados: ${result.total_comments_received}
+   - Quantidade de Candidatos qualificados: ${result.quantidade_de_candidatos}
+4. Conclusão da correspondência:
+   - Sucesso: ${result.success ? "SIM" : "NÃO"}
+   - Tarefa Escolhida: ${result.tarefa_escolhida ? `"${result.tarefa_escolhida.content}"` : "Nenhuma (Seleção manual necessária ou não encontrada)"}
+   - Motivo da escolha: ${result.motivo_da_escolha}
+========================================================================
+      `);
+
+      // Update Diagnostic State
       const diagReport = {
         tokenLoaded: detectedTokenLoaded,
         tokenSource: detectedTokenSource,
-        queriesTried: queriesTriedLog,
-        localFilterRun,
-        localFilterResults: localFilterResults.sort((a, b) => b.score - a.score),
-        chosenTask,
-        chosenTaskScore,
-        failureReason,
-        finalResult
+        queriesTried: [
+          {
+            query: `search:${manualQuery || cnj}`,
+            endpoint: "https://api.todoist.com/rest/v2/tasks",
+            status: response.status,
+            totalReturned: result.total_tasks_received,
+            titles: result.candidates?.map((c: any) => c.content) || [],
+            rawResponse: JSON.stringify(result).substring(0, 500)
+          }
+        ],
+        localFilterRun: true,
+        localFilterResults: result.candidates?.map((c: any) => ({
+          taskTitle: c.content,
+          score: c.score,
+          breakdown: {},
+          decision: c.reason
+        })) || [],
+        chosenTask: result.tarefa_escolhida?.content || null,
+        chosenTaskScore: result.tarefa_escolhida ? result.candidates?.find((c: any) => c.id === result.tarefa_escolhida.id)?.score : null,
+        failureReason: !result.success ? result.motivo_da_escolha : null,
+        finalResult: result.tarefa_escolhida ? "encontrada" : (result.quantidade_de_candidatos > 0 ? "múltiplas encontradas" : "nenhuma encontrada"),
+        debug: result.debug
       };
 
       setTodoistDiagnostic(diagReport);
 
-      // MANDATORY INVESTIGATOR LOG IN CONSOLE
-      console.log(`
-========================================================================
-🕵️‍♂️ INVESTIGADOR TODOIST - DIAGNÓSTICO DETALHADO DE DEBUG 🕵️‍♂️
-========================================================================
-1. Token Todoist Carregado: ${detectedTokenLoaded ? "SIM" : "NÃO"}
-1.5 Fonte do token: ${detectedTokenSource}
-2. Endpoint principal chamado: /api/todoist/tasks
-3. Buscas sequenciais executadas:
-${queriesTriedLog.map((q, idx) => `
-[Passo ${idx + 1}]
-- Query: ${q.query}
-- Endpoint: ${q.endpoint}
-- Status HTTP: ${q.status}
-- Total retornado: ${q.totalReturned}
-- Títulos: ${q.titles.join(" | ") || "(vazio)"}
-- Resposta Parcial: ${q.rawResponse.substring(0, 200)}...
-`).join("\n")}
-
-4. Critério de comparação usado:
-- Lowercase, sem acentos, sem pontuação, sem hífens ou parênteses.
-- Letra "X" substituída por espaço neutro.
-- Validação com: CNJ ("${cnj}"), Autor ("${autor}"), Réu ("${reu}"), termos fixos "Controladoria", "trabalhista" e "pasta física 1.434".
-
-5. Por que cada tarefa foi aceita ou rejeitada (Relação de Scores):
-${localFilterResults.map((r, idx) => `
-* Tarefa ${idx + 1}: "${r.taskTitle}"
-  - Pontuação: ${r.score} pts
-  - Detalhamento: ${r.decision}
-`).join("\n") || "Nenhuma tarefa ativa no Todoist para analisar."}
-
-6. Conclusão do Investigador:
-- Resultado Final: ${finalResult.toUpperCase()}
-- Tarefa Escolhida: ${chosenTask || "Nenhuma"}
-- Melhor Pontuação: ${chosenTaskScore || "N/A"}
-- Detalhes / Motivo: ${failureReason || "Processo de correspondência concluído com sucesso."}
-========================================================================
-      `);
-
-      // Se obtivemos resultados válidos, atualizar UI
-      if (sortedTasks.length > 0) {
-        const topTask = sortedTasks[0];
-        let isClearlySuperior = false;
-
-        if (sortedTasks.length === 1) {
-          isClearlySuperior = true;
+      if (result.success && result.tarefa_escolhida) {
+        const topTask = result.tarefa_escolhida;
+        setTodoistLinkedTask(topTask);
+        setTodoistTaskTitle(topTask.content);
+        setTodoistTaskDescription(topTask.description || '');
+        setTodoistTaskPriority(topTask.priority || 1);
+        if (topTask.due) {
+          setTodoistTaskDate(topTask.due.date || '');
         } else {
-          const secondTask = sortedTasks[1];
-          if (topTask.score >= 80 && (topTask.score - secondTask.score >= 40 || secondTask.score < 30)) {
-            isClearlySuperior = true;
-          }
+          setTodoistTaskDate('');
         }
+        setTodoistTaskLabels(topTask.labels || []);
+        setTodoistMultipleTasksFound([]);
+        setIsTodoistSelectionModalOpen(false);
+        setTodoistNotFoundForCnj(false);
+        addSystemLog('success', `Tarefa vinculada com sucesso: "${topTask.content}".`, 'gmail_sync');
+        setTodoistLoading(false);
+        return { success: true, count: 1, task: topTask };
+      } else if (result.quantidade_de_candidatos > 0) {
+        // Multiple matches
+        const candidateTasks = result.candidates.map((c: any) => {
+          return {
+            id: c.id,
+            content: c.content,
+            score: c.score,
+            description: c.description || "",
+            comments: c.comments || [],
+            priority: c.priority || 1,
+            due: c.due || null,
+            labels: c.labels || []
+          };
+        });
 
-        if (isClearlySuperior) {
-          // Buscar comentários da tarefa selecionada
-          try {
-            const commentsRes = await fetch(`/api/todoist/comments?task_id=${topTask.id}`);
-            if (commentsRes.ok) {
-              const comments = await commentsRes.json();
-              topTask.comments = Array.isArray(comments) ? comments : [];
-            }
-          } catch (err) {
-            console.error("Erro ao carregar comentários:", err);
-          }
-
-          setTodoistLinkedTask(topTask);
-          setTodoistTaskTitle(topTask.content);
-          setTodoistTaskDescription(topTask.description || '');
-          setTodoistTaskPriority(topTask.priority || 1);
-          if (topTask.due) {
-            setTodoistTaskDate(topTask.due.date || '');
-          } else {
-            setTodoistTaskDate('');
-          }
-          setTodoistTaskLabels(topTask.labels || []);
-          setTodoistMultipleTasksFound([]);
-          setIsTodoistSelectionModalOpen(false);
-          setTodoistNotFoundForCnj(false);
-          addSystemLog('success', `Tarefa vinculada automaticamente: "${topTask.content}" (Pontuação: ${topTask.score}).`, 'gmail_sync');
-          setTodoistLoading(false);
-          return { success: true, count: 1, task: topTask };
-        } else {
-          // Mais de uma tarefa plausível
-          const enrichPromises = sortedTasks.slice(0, 5).map(async (task) => {
-            try {
-              const commentsRes = await fetch(`/api/todoist/comments?task_id=${task.id}`);
-              if (commentsRes.ok) {
-                const comments = await commentsRes.json();
-                task.comments = Array.isArray(comments) ? comments : [];
-              }
-            } catch (err) {
-              task.comments = [];
-            }
-          });
-          await Promise.all(enrichPromises);
-
-          setTodoistMultipleTasksFound(sortedTasks);
-          setIsTodoistSelectionModalOpen(true);
-          setTodoistLinkedTask(null);
-          setTodoistNotFoundForCnj(false);
-          addSystemLog('info', `Encontramos ${sortedTasks.length} tarefas possíveis para esta publicação. Seleção necessária.`, 'gmail_sync');
-          setTodoistLoading(false);
-          return { success: true, count: sortedTasks.length, tasks: sortedTasks };
-        }
+        setTodoistMultipleTasksFound(candidateTasks);
+        setIsTodoistSelectionModalOpen(true);
+        setTodoistLinkedTask(null);
+        setTodoistNotFoundForCnj(false);
+        addSystemLog('info', `Encontramos ${candidateTasks.length} tarefas possíveis para este processo. Seleção necessária.`, 'gmail_sync');
+        setTodoistLoading(false);
+        return { success: true, count: candidateTasks.length, tasks: candidateTasks };
       } else {
         setTodoistLinkedTask(null);
         setTodoistMultipleTasksFound([]);
@@ -1242,9 +926,10 @@ ${localFilterResults.map((r, idx) => `
         setTodoistLoading(false);
         return { success: false, count: 0 };
       }
+
     } catch (err: any) {
-      console.error("Erro no investigador:", err);
-      addSystemLog('error', `Falha grave na investigação inteligente com o Todoist.`, 'gmail_sync');
+      console.error("Erro no investigador unificado:", err);
+      addSystemLog('error', `Falha grave na investigação unificada com o Todoist.`, 'gmail_sync');
       setTodoistLoading(false);
       return { success: false, count: 0, error: err.message || err };
     } finally {
