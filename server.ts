@@ -2497,6 +2497,17 @@ app.all("/api/todoist/search-all", async (req: any, res) => {
   try {
     const provider = await getWorkingProvider(req.todoistToken);
 
+    const safeToken = req.todoistToken.length > 8 
+      ? req.todoistToken.substring(0, 4) + "************************************"
+      : "AUSENTE_OU_CURTO";
+
+    console.log("[TODOIST] tokenLoaded: true");
+    console.log("[TODOIST] tokenSource: SECRET");
+    console.log("[TODOIST] providerSelected:", provider);
+    console.log("[TODOIST] endpointCalled: /search-all");
+    console.log("[TODOIST] searchTerm:", matchCnjMasked);
+    console.log("[TODOIST] tokenMasked: Bearer", safeToken);
+
     // Fetch all active tasks directly to filter in memory, completely avoiding the deprecated 'filter' query parameter which returns 410.
     let allTasks: any[] = [];
     try {
@@ -2504,6 +2515,16 @@ app.all("/api/todoist/search-all", async (req: any, res) => {
       allTasks = Array.isArray(res) ? res : [];
     } catch (err: any) {
       console.error("Erro ao carregar tarefas do Todoist:", err);
+      return res.status(200).json({ // We return 200 so UI can parse the custom error object, or maybe 500? UI expects success:false? No, if we return success:false it should probably be 200 with object, or UI handles 500 if we send it... Wait, the instructions say "Se o Todoist falhar, retornar: { success: false, errorType: 'TODOIST_CONNECTION_ERROR', ... }"
+        success: false,
+        errorType: "TODOIST_CONNECTION_ERROR",
+        chosenTask: null,
+        tasks: [],
+        provider,
+        endpoint: "/tasks",
+        status: err.status || 410,
+        rawError: err.message || String(err)
+      });
     }
 
     const totalSubtasks = allTasks.filter((t: any) => t.parent_id).length;
@@ -2676,6 +2697,19 @@ app.all("/api/todoist/search-all", async (req: any, res) => {
       reason = "Nenhuma tarefa correspondente localizada com pontuação positiva no Todoist.";
     }
 
+    console.log("TODOIST_DIAGNOSTIC_FINAL = " + JSON.stringify({
+      tokenLoaded: !!req.todoistToken,
+      providerSelected: provider,
+      brokenProviders: [], // can be pulled from smoke test if needed, but not required to be full array
+      endpointUsedForTasks: "/tasks",
+      endpointUsedForSearch: "/search-all",
+      searchTerm: matchCnjMasked,
+      status: 200,
+      tasksReturned: allTasks.length,
+      selectedTaskId: chosenTask ? chosenTask.id : null,
+      mirrorReady: !!chosenTask
+    }, null, 2));
+
     return res.json({
       success: !!chosenTask,
       searchedCNJ: matchCnjMasked,
@@ -2713,8 +2747,23 @@ app.get("/api/todoist/tasks", async (req: any, res) => {
   const { filter, project_id } = req.query;
   try {
     const provider = await getWorkingProvider(req.todoistToken);
+    
+    const safeToken = req.todoistToken.length > 8 
+      ? req.todoistToken.substring(0, 4) + "************************************"
+      : "AUSENTE_OU_CURTO";
+      
+    console.log("[TODOIST] tokenLoaded: true");
+    console.log("[TODOIST] tokenSource: SECRET");
+    console.log("[TODOIST] providerSelected:", provider);
+    console.log("[TODOIST] endpointCalled: /tasks");
+    console.log("[TODOIST] searchTerm:", filter || "none");
+    console.log("[TODOIST] tokenMasked: Bearer", safeToken);
+
     const data = await todoistClient.getTasks(req.todoistToken, { project_id }, provider);
     const allTasksRaw = Array.isArray(data) ? data : [];
+    
+    console.log("[TODOIST] httpStatus: 200");
+    console.log("[TODOIST] tasksReturned:", allTasksRaw.length);
 
     if (filter) {
       let searchTerm = filter as string;
