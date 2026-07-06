@@ -1,4 +1,6 @@
 import express from "express";
+const TODOIST_MIRROR_IMPLEMENTATION_VERSION = "todoist-mirror-search-scope-v4";
+
 import path from "path";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
@@ -2357,6 +2359,9 @@ app.get("/api/todoist/health", (req: any, res) => {
   if (token && token !== "env_secret") {
     return res.json({
       enabled: true,
+      implementationVersion: TODOIST_MIRROR_IMPLEMENTATION_VERSION,
+      debug: { completedTasksError: req._completedTasksError },
+      provider: "sdk",
       tokenLoaded: true,
       tokenSource,
       status: "connected"
@@ -2452,297 +2457,341 @@ app.get("/api/todoist/labels", async (req: any, res) => {
 });
 
 app.all("/api/todoist/search-all", async (req: any, res) => {
-  if (!req.todoistToken) {
-    return res.status(401).json({ error: "Token do Todoist ausente na requisição." });
+  console.log("[TODOIST MIRROR] endpointUsed: /api/todoist/search-all");
+  const cnj = req.body?.cnj || req.query?.cnj || "";
+  const autor = req.body?.autor || req.query?.autor || "";
+  const reu = req.body?.reu || req.query?.reu || "";
+  
+  function normalizeCNJ(val: string): string {
+    if (!val) return "";
+    return val.replace(/[^\d]/g, "");
+  }
+  
+  function normalizeText(val: string): string {
+    if (!val) return "";
+    return val
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
   }
 
-  const params = req.method === "POST" ? req.body : req.query;
-  const cnj = params.cnj || params.query || "";
-  const route = params.route || "";
-  const emailSubject = params.emailSubject || "";
-  const emailBody = params.emailBody || "";
-  const autor = params.autor || "";
-  const reu = params.reu || "";
-  const tribunal = params.tribunal || "";
-  const assunto = params.assunto || "";
+  const normalizedCNJ = normalizeCNJ(cnj);
+  const normalizedAutor = normalizeText(autor);
+  const normalizedReu = normalizeText(reu);
 
-  // Regular expression to extract standard 20-digit CNJs
-  const cnjRegex = /\b\d{7}[-.\s]?\d{2}[-.\s]?\d{4}[-.\s]?\d[-.\s]?\d{2}[-.\s]?\d{4}\b/g;
-  let extractedCnj = "";
-  if (cnj) {
-    const match = cnj.match(cnjRegex);
-    if (match) {
-      extractedCnj = match[0].replace(/[^0-9]/g, "");
-    } else {
-      extractedCnj = cnj.replace(/[^0-9]/g, "");
-    }
-  }
-  if (!extractedCnj && emailSubject) {
-    const match = emailSubject.match(cnjRegex);
-    if (match) extractedCnj = match[0].replace(/[^0-9]/g, "");
-  }
-  if (!extractedCnj && emailBody) {
-    const match = emailBody.match(cnjRegex);
-    if (match) extractedCnj = match[0].replace(/[^0-9]/g, "");
-  }
-
-  let matchCnjDigits = extractedCnj || "";
-  let matchCnjMasked = "";
-  if (extractedCnj && extractedCnj.length === 20) {
-    matchCnjMasked = `${extractedCnj.substring(0, 7)}-${extractedCnj.substring(7, 9)}.${extractedCnj.substring(9, 13)}.${extractedCnj.substring(13, 14)}.${extractedCnj.substring(14, 16)}.${extractedCnj.substring(16, 20)}`;
-  } else {
-    matchCnjMasked = cnj || "";
+  if (!normalizedCNJ) {
+    return res.status(400).json({ success: false, error: "CNJ is required" });
   }
 
   try {
-    const provider = await getWorkingProvider(req.todoistToken);
-
-    const safeToken = req.todoistToken.length > 8 
-      ? req.todoistToken.substring(0, 4) + "************************************"
-      : "AUSENTE_OU_CURTO";
-
-    console.log("[TODOIST] tokenLoaded: true");
-    console.log("[TODOIST] tokenSource: SECRET");
-    console.log("[TODOIST] providerSelected:", provider);
-    console.log("[TODOIST] endpointCalled: /search-all");
-    console.log("[TODOIST] searchTerm:", matchCnjMasked);
-    console.log("[TODOIST] tokenMasked: Bearer", safeToken);
-
-    // Fetch all active tasks directly to filter in memory, completely avoiding the deprecated 'filter' query parameter which returns 410.
-    let allTasks: any[] = [];
-    try {
-      const res = await todoistClient.getTasks(req.todoistToken, {}, provider);
-      allTasks = Array.isArray(res) ? res : [];
-    } catch (err: any) {
-      console.error("Erro ao carregar tarefas do Todoist:", err);
-      return res.status(200).json({ // We return 200 so UI can parse the custom error object, or maybe 500? UI expects success:false? No, if we return success:false it should probably be 200 with object, or UI handles 500 if we send it... Wait, the instructions say "Se o Todoist falhar, retornar: { success: false, errorType: 'TODOIST_CONNECTION_ERROR', ... }"
+    const selectedProvider = await getWorkingProvider(req.todoistToken);
+    const tokenLoaded = !!req.todoistToken;
+    const tokenSource = req.todoistToken === process.env.TODOIST_API_KEY ? "SECRET" : "REQUEST";
+    const error = "";
+    
+    if (!tokenLoaded || !selectedProvider) {
+      return res.status(400).json({
         success: false,
-        errorType: "TODOIST_CONNECTION_ERROR",
-        chosenTask: null,
-        tasks: [],
-        provider,
-        endpoint: "/tasks",
-        status: err.status || 410,
-        rawError: err.message || String(err)
+        found: false,
+        result: "connection_error",
+        errorType: "TODOIST_API_ERROR",
+        message: error || "Todoist token not configured."
       });
     }
 
-    const totalSubtasks = allTasks.filter((t: any) => t.parent_id).length;
-
-    // Identify candidates for fetching comments
-    const candidatesPool = allTasks.filter((task: any) => {
-      const content = (task.content || "").toLowerCase();
-      const description = (task.description || "").toLowerCase();
-
-      if (matchCnjDigits && (content.includes(matchCnjDigits) || description.includes(matchCnjDigits))) return true;
-      if (matchCnjMasked && (content.includes(matchCnjMasked.toLowerCase()) || description.includes(matchCnjMasked.toLowerCase()))) return true;
-      if (autor && content.includes(autor.toLowerCase())) return true;
-      if (reu && content.includes(reu.toLowerCase())) return true;
-      if (assunto && content.includes(assunto.toLowerCase())) return true;
-
-      return false;
-    });
-
-    const candidatesToFetch = candidatesPool.slice(0, 15);
-    const commentsMap = new Map<string, any[]>();
-    let totalComments = 0;
-
-    await Promise.all(candidatesToFetch.map(async (task: any) => {
-      try {
-        const comments = await todoistClient.getComments(req.todoistToken, { task_id: task.id }, provider);
-        if (Array.isArray(comments)) {
-          commentsMap.set(task.id, comments);
-          totalComments += comments.length;
-        }
-      } catch (err) {
-        console.error(`Error fetching comments for task ${task.id}:`, err);
-      }
-    }));
-
-    const cleanCompare = (text: string): string => {
-      if (!text) return "";
-      return text
-        .toLowerCase()
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .replace(/\bx\b/gi, " ")
-        .replace(/[()]/g, " ")
-        .replace(/-/g, " ")
-        .replace(/[.,\/#!$%\^&\*;:{}=\_`~\[\]]/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
+    let tasksRetrieved = 0;
+    let tasksProcessed = 0;
+    let commentsAttempted = 0;
+    let commentsChecked = 0;
+    let commentsFailed = 0;
+    let subtasksChecked = 0;
+    let pagesProcessed = 0;
+    let candidatesFound: any[] = [];
+    
+    const searchScope = {
+      activeTasksCompleted: false,
+      completedTasksCompleted: false,
+      commentsCompleted: false,
+      subtasksCompleted: false
     };
 
-    const candidatesWithScores = allTasks.map((task: any) => {
+    // Helper to evaluate a task/subtask/comment
+    function evaluateText(text: string): number {
+      if (!text) return 0;
       let score = 0;
-      const details: string[] = [];
-      let matchType: "cnj_exact" | "cnj_digits" | "comment_match" | "subtask_match" | "fallback_name" | "not_found" = "not_found";
-
-      const title = task.content || "";
-      const titleClean = cleanCompare(title);
-      const description = task.description || "";
-      const descriptionClean = cleanCompare(description);
-      const isCompleted = !!task.is_completed;
-      const isSubtask = !!task.parent_id;
-
-      const taskComments = commentsMap.get(task.id) || [];
-
-      // +150 CNJ exato no título
-      if (matchCnjMasked && title.includes(matchCnjMasked)) {
-        score += 150;
-        matchType = "cnj_exact";
-        details.push("CNJ mascarado exato no título (+150 pts)");
+      const normText = normalizeText(text);
+      if (normalizeCNJ(text).includes(normalizedCNJ) || text.replace(/[\D]/g, '').includes(normalizedCNJ)) {
+        score += 200; // base score for finding CNJ
       }
-      // +130 CNJ sem máscara no título
-      else if (matchCnjDigits && titleClean.replace(/[^0-9]/g, "").includes(matchCnjDigits)) {
-        score += 130;
-        matchType = "cnj_digits";
-        details.push("CNJ sem máscara no título (+130 pts)");
-      }
-
-      // +120 CNJ exato na descrição
-      if (matchCnjMasked && description.includes(matchCnjMasked)) {
-        score += 120;
-        if (matchType === "not_found") matchType = "cnj_exact";
-        details.push("CNJ exato na descrição (+120 pts)");
-      } else if (matchCnjDigits && descriptionClean.replace(/[^0-9]/g, "").includes(matchCnjDigits)) {
-        score += 120;
-        if (matchType === "not_found") matchType = "cnj_digits";
-        details.push("CNJ sem máscara na descrição (+120 pts)");
-      }
-
-      // +100 CNJ em comentário
-      const hasCnjInComment = taskComments.some((c: any) => {
-        const cBody = (c.content || "").toLowerCase();
-        return cBody.includes(matchCnjMasked.toLowerCase()) || (matchCnjDigits && cBody.replace(/[^0-9]/g, "").includes(matchCnjDigits));
-      });
-      if (hasCnjInComment) {
-        score += 100;
-        if (matchType === "not_found") matchType = "comment_match";
-        details.push("CNJ encontrado em comentário (+100 pts)");
-      }
-
-      // +90 CNJ em subtarefa
-      if (isSubtask && (title.includes(matchCnjMasked) || title.includes(matchCnjDigits))) {
-        score += 90;
-        if (matchType === "not_found") matchType = "subtask_match";
-        details.push("CNJ encontrado em subtarefa (+90 pts)");
-      }
-
-      // +60 autor/réu no título
-      if (autor && autor.length > 2 && titleClean.includes(cleanCompare(autor))) {
-        score += 60;
-        if (matchType === "not_found") matchType = "fallback_name";
-        details.push(`Nome do Autor "${autor}" no título (+60 pts)`);
-      }
-      if (reu && reu.length > 2 && titleClean.includes(cleanCompare(reu))) {
-        score += 60;
-        if (matchType === "not_found") matchType = "fallback_name";
-        details.push(`Nome do Réu "${reu}" no título (+60 pts)`);
-      }
-
-      // +40 autor/réu na descrição
-      if (autor && autor.length > 2 && descriptionClean.includes(cleanCompare(autor))) {
-        score += 40;
-        details.push(`Nome do Autor "${autor}" na descrição (+40 pts)`);
-      }
-      if (reu && reu.length > 2 && descriptionClean.includes(cleanCompare(reu))) {
-        score += 40;
-        details.push(`Nome do Réu "${reu}" na descrição (+40 pts)`);
-      }
-
-      // -200 tarefa concluída, salvo se modo incluir concluídas estiver ativo
-      if (isCompleted) {
-        score -= 200;
-        details.push("Tarefa concluída (-200 pts)");
-      }
-
-      return {
-        task: {
-          ...task,
-          comments: taskComments
-        },
-        score,
-        matchType,
-        details
-      };
-    });
-
-    const rankedCandidates = candidatesWithScores
-      .filter((c: any) => c.score > 0)
-      .sort((a: any, b: any) => b.score - a.score);
-
-    let chosenTask: any = null;
-    let confidence: "high" | "medium" | "low" | "none" = "none";
-    let reason = "";
-
-    if (rankedCandidates.length > 0) {
-      const first = rankedCandidates[0];
-      const second = rankedCandidates[1];
-
-      const hasSingleOver100 = rankedCandidates.filter(c => c.score > 100).length === 1;
-      const has50PointLead = second ? (first.score - second.score >= 50) : true;
-
-      if (hasSingleOver100 || has50PointLead) {
-        chosenTask = first.task;
-        confidence = "high";
-        reason = `Tarefa escolhida automaticamente: "${first.task.content}" com ${first.score} pontos.`;
-      } else {
-        chosenTask = null;
-        confidence = "medium";
-        reason = `Múltiplos candidatos detectados com pontuações próximas (${first.score} vs ${second?.score}). Seleção manual recomendada.`;
-      }
-    } else {
-      confidence = "none";
-      reason = "Nenhuma tarefa correspondente localizada com pontuação positiva no Todoist.";
+      return score;
     }
 
-    console.log("TODOIST_DIAGNOSTIC_FINAL = " + JSON.stringify({
-      tokenLoaded: !!req.todoistToken,
-      providerSelected: provider,
-      brokenProviders: [], // can be pulled from smoke test if needed, but not required to be full array
-      endpointUsedForTasks: "/tasks",
-      endpointUsedForSearch: "/search-all",
-      searchTerm: matchCnjMasked,
-      status: 200,
-      tasksReturned: allTasks.length,
-      selectedTaskId: chosenTask ? chosenTask.id : null,
-      mirrorReady: !!chosenTask
-    }, null, 2));
+    function calculateScore(item: any, isComment = false, isSubtask = false, isCompleted = false): number {
+      let score = 0;
+      
+      const normContent = normalizeText(item.content || "");
+      const normDesc = normalizeText(item.description || "");
+      const normCNJContent = normalizeCNJ(item.content || "");
+      const normCNJDesc = normalizeCNJ(item.description || "");
+      
+      if (isComment) {
+        if (normCNJContent.includes(normalizedCNJ)) score += 200;
+      } else if (isSubtask) {
+        if (normCNJContent.includes(normalizedCNJ)) score += 190;
+        if (normCNJDesc.includes(normalizedCNJ)) score += 190;
+      } else {
+        if (normCNJContent.includes(normalizedCNJ)) score += 250;
+        if (normCNJDesc.includes(normalizedCNJ)) score += 220;
+      }
 
-    return res.json({
-      success: !!chosenTask,
-      searchedCNJ: matchCnjMasked,
-      provider,
-      tasksChecked: allTasks.length,
-      commentsChecked: totalComments,
-      subtasksChecked: totalSubtasks,
-      candidates: rankedCandidates.map((c: any) => ({
-        id: c.task.id,
-        content: c.task.content,
-        score: c.score,
-        matchType: c.matchType,
-        reason: c.details.join(", ")
-      })),
+      if (normalizedAutor && normContent.includes(normalizedAutor)) score += 100;
+      if (normalizedReu && normContent.includes(normalizedReu)) score += 100;
+      if (normalizedAutor && normDesc.includes(normalizedAutor)) score += 70;
+      if (normalizedReu && normDesc.includes(normalizedReu)) score += 70;
+
+      if (normalizedAutor) {
+        const autorWords = normalizedAutor.split(" ");
+        let wordScore = 0;
+        for (const w of autorWords) {
+          if (w.length > 3 && (normContent.includes(w) || normDesc.includes(w))) {
+            wordScore += 20;
+          }
+        }
+        score += Math.min(wordScore, 60);
+      }
+
+      if (normalizedReu) {
+        const reuWords = normalizedReu.split(" ");
+        let wordScore = 0;
+        for (const w of reuWords) {
+          if (w.length > 3 && (normContent.includes(w) || normDesc.includes(w))) {
+            wordScore += 20;
+          }
+        }
+        score += Math.min(wordScore, 60);
+      }
+      
+      if (isCompleted) {
+        score -= 100;
+      }
+
+      return score;
+    }
+
+    // A. Buscar tarefas ativas
+    // TODOIST REST V2 API /tasks doesn't support pagination, it returns all active tasks at once.
+    let activeTasks: any[] = [];
+    try {
+      activeTasks = await todoistClient.getTasks(req.todoistToken, {}, selectedProvider);
+      pagesProcessed = 1;
+      tasksRetrieved = activeTasks.length;
+      searchScope.activeTasksCompleted = true;
+    } catch (e: any) {
+      console.error("Erro buscando active tasks", e);
+      return res.status(200).json({
+        success: false,
+        found: false,
+        result: "partial_search_scope",
+        reason: "A busca ativa não pôde ser concluída em todas as páginas.",
+        tasksRetrieved,
+        tasksProcessed,
+        pagesProcessed,
+        searchScope
+      });
+    }
+
+    let allTasksMap = new Map();
+    activeTasks.forEach(t => allTasksMap.set(t.id, t));
+
+    // Processar ativas
+    for (const task of activeTasks) {
+      tasksProcessed++;
+      const score = calculateScore(task, false, false, false);
+      if (score >= 200) {
+        candidatesFound.push({ task, score, reason: "Matches CNJ in active task title/description" });
+      }
+    }
+
+    // B. Comentários
+    searchScope.commentsCompleted = true;
+        // Usar concorrência limitada de no máximo 4 requisições simultâneas para comentários
+    const maxConcurrency = 4;
+    let activeTasksQueue = [...activeTasks];
+    
+    async function processCommentsWorker() {
+      while (activeTasksQueue.length > 0) {
+        const task = activeTasksQueue.shift();
+        if (!task) continue;
+        commentsAttempted++;
+        try {
+          const comments = await todoistClient.getComments(req.todoistToken, { task_id: task.id }, selectedProvider);
+          commentsChecked += comments.length;
+          for (const c of comments) {
+            const cScore = calculateScore(c, true, false, false);
+            if (cScore >= 200) {
+              const parentTask = allTasksMap.get(c.task_id || task.id);
+              if (parentTask) {
+                candidatesFound.push({ task: parentTask, score: cScore, reason: "Matches CNJ in comment" });
+              }
+            }
+          }
+        } catch (e) {
+          commentsFailed++;
+          searchScope.commentsCompleted = false;
+        }
+      }
+    }
+    
+    const workers = [];
+    for (let i = 0; i < maxConcurrency; i++) {
+      workers.push(processCommentsWorker());
+    }
+    await Promise.all(workers);
+
+    // C. Subtarefas
+    searchScope.subtasksCompleted = true;
+    for (const task of activeTasks) {
+      if (task.parent_id) {
+        subtasksChecked++;
+        const sScore = calculateScore(task, false, true, false);
+        if (sScore >= 190) {
+           const parentTask = allTasksMap.get(task.parent_id);
+           if (parentTask) {
+             candidatesFound.push({ task: parentTask, score: sScore, reason: "Matches CNJ in subtask" });
+           }
+        }
+      }
+    }
+
+    // D. Tarefas Concluídas
+    // If not found in active tasks, we search completed tasks via sdk's getAllCompletedTasks if possible
+    if (candidatesFound.length === 0) {
+      try {
+        if (selectedProvider === 'sdk') {
+                    const syncUrl = "https://api.todoist.com/api/v1/tasks/completed?limit=100&offset=0";
+          const res = await fetch(syncUrl, {
+            headers: { "Authorization": `Bearer ${req.todoistToken}` }
+          });
+          if (!res.ok) {
+             throw new Error(`Failed to fetch completed tasks: ${res.status} ${res.statusText}`);
+          }
+          const completedRes = await res.json();
+          if (completedRes && completedRes.items) {
+             pagesProcessed++;
+             tasksRetrieved += completedRes.items.length;
+             for (const task of completedRes.items) {
+               tasksProcessed++;
+               // Map task object shape since it might slightly differ
+               const mappedTask = {
+                 ...task,
+                 id: String(task.id),
+                 content: task.content || "",
+                 description: task.description || "",
+                 is_completed: true
+               };
+               const cScore = calculateScore(mappedTask, false, false, true);
+               if (cScore >= 100) { // completed score is -100, so base 200 becomes 100
+                 candidatesFound.push({ task: mappedTask, score: cScore, reason: "Matches CNJ in completed task" });
+               }
+             }
+          }
+          searchScope.completedTasksCompleted = true;
+        }
+      } catch (e) {
+        console.error("Failed to check completed tasks", e);
+        req._completedTasksError = e.message || String(e);
+      }
+    } else {
+      searchScope.completedTasksCompleted = true; // We skipped it intentionally because we found active
+    }
+
+    // Dedup candidates by task id
+    const uniqueCandidates = new Map();
+    candidatesFound.forEach(c => {
+      if (!uniqueCandidates.has(c.task.id) || uniqueCandidates.get(c.task.id).score < c.score) {
+        uniqueCandidates.set(c.task.id, c);
+      }
+    });
+    
+    let finalCandidates = Array.from(uniqueCandidates.values());
+    finalCandidates.sort((a, b) => b.score - a.score);
+
+    let result = "not_found";
+    let found = false;
+    let chosenTask = null;
+    let chosenTaskScore = null;
+    let confidence = "none";
+    let mirrorReady = false;
+
+    if (finalCandidates.length === 1) {
+      found = true;
+      result = "found";
+      chosenTask = finalCandidates[0].task;
+      chosenTaskScore = finalCandidates[0].score;
+      confidence = "high";
+      mirrorReady = true;
+    } else if (finalCandidates.length > 1) {
+      found = true; // actually it's ambiguous, but we found something
+      if (finalCandidates[0].score - finalCandidates[1].score >= 50) {
+        result = "found";
+        chosenTask = finalCandidates[0].task;
+        chosenTaskScore = finalCandidates[0].score;
+        confidence = "medium";
+        mirrorReady = true;
+      } else {
+        result = "ambiguous_match";
+        confidence = "medium";
+      }
+    } else {
+       if (!searchScope.activeTasksCompleted || !searchScope.commentsCompleted) {
+         result = "partial_search_scope";
+       } else {
+         result = "not_found_active_scope"; // Because we might not have completed tasks
+       }
+    }
+
+    return res.status(200).json({
+      success: true,
+      found,
+      result,
+      provider: selectedProvider,
+      searchedCNJ: cnj,
+      normalizedCNJ,
+      searchScope,
+      pagesProcessed,
+      tasksRetrieved,
+      tasksProcessed,
+      commentsAttempted,
+      commentsChecked,
+      commentsFailed,
+      subtasksChecked,
+      candidates: finalCandidates.map((c:any) => ({ ...c.task, score: c.score })),
       chosenTask,
+      chosenTaskScore,
       confidence,
-      mirrorReady: !!chosenTask,
-      reason
+      mirrorReady,
+      reason: result === "not_found" || result === "not_found_active_scope" ? "Nenhuma tarefa ativa correspondente foi localizada após processar todas as tarefas recebidas." : (result === "ambiguous_match" ? "Múltiplas tarefas com mesma pontuação encontradas." : "Tarefa encontrada com sucesso."),
+      implementationVersion: TODOIST_MIRROR_IMPLEMENTATION_VERSION,
+      debug: { completedTasksError: req._completedTasksError }
     });
 
   } catch (err: any) {
     console.error("Erro interno no search-all:", err);
-    res.status(500).json({
+    return res.status(200).json({
       success: false,
+      found: false,
+      result: "connection_error",
       errorType: "TODOIST_CONNECTION_ERROR",
-      provider: cachedProvider || "none",
-      testedMethods: ["rest_v2_projects", "sdk_get_projects", "sync_v9_api"],
-      message: err.message || "Erro desconhecido de conexão com Todoist",
-      mirrorReady: false
+      provider: "sdk",
+      endpoint: "/tasks",
+      message: err.message || "Erro desconhecido",
+      debug: { error: err.message }
     });
   }
 });
-
 app.get("/api/todoist/tasks", async (req: any, res) => {
   const { filter, project_id } = req.query;
   try {
@@ -2801,6 +2850,13 @@ app.get("/api/todoist/tasks", async (req: any, res) => {
 });
 
 app.post("/api/todoist/tasks", async (req: any, res) => {
+  if (req.body && req.body.cnj && !req.body.content) {
+    return res.status(400).json({
+      success: false,
+      errorType: "SEARCH_ROUTE_REQUIRED",
+      message: "A pesquisa inteligente deve utilizar POST /api/todoist/search-all."
+    });
+  }
   try {
     const provider = await getWorkingProvider(req.todoistToken);
     const data = await todoistClient.createTask(req.todoistToken, req.body, provider);

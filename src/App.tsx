@@ -795,7 +795,7 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
       }
 
       const result = await response.json();
-
+      
       if (result.success === false && result.errorType === "TODOIST_API_ERROR") {
         const diagReport = {
           tokenLoaded: detectedTokenLoaded,
@@ -819,36 +819,14 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
           debug: result.debug || {}
         };
         setTodoistDiagnostic(diagReport);
-
         addSystemLog('error', `Falha na consulta Todoist: ${result.message}`, 'gmail_sync');
         setTodoistLoading(false);
         return { success: false, count: 0, error: result.message };
       }
 
-      // Log results cleanly to console
-      console.log(`
-========================================================================
-🕵️‍♂️ INVESTIGADOR TODOIST - DIAGNÓSTICO UNIFICADO 🕵️‍♂️
-========================================================================
-1. Token Todoist Carregado: ${detectedTokenLoaded ? "SIM" : "NÃO"} (Fonte: ${detectedTokenSource})
-2. Parâmetros de Entrada:
-   - CNJ Principal: "${cnj}"
-   - CNJ Pesquisado: "${result.searchedCNJ || "N/A"}"
-   - Autor: "${autor}" | Réu: "${reu}"
-3. Métricas de Busca:
-   - Total de Tarefas Ativas Recebidas: ${result.tasksChecked}
-   - Total de Subtarefas: ${result.subtasksChecked}
-   - Total de Comentários analisados: ${result.commentsChecked}
-   - Quantidade de Candidatos qualificados: ${result.candidates?.length || 0}
-4. Conclusão da correspondência:
-   - Sucesso: ${result.success ? "SIM" : "NÃO"}
-   - Tarefa Escolhida: ${result.chosenTask ? `"${result.chosenTask.content}"` : "Nenhuma (Seleção manual necessária ou não encontrada)"}
-   - Motivo da escolha: ${result.reason}
-========================================================================
-      `);
-
-      // Update Diagnostic State
+      // Update Diagnostic State to match backend contract exactly
       const diagReport = {
+        implementationVersion: result.implementationVersion || "unknown",
         tokenLoaded: detectedTokenLoaded,
         tokenSource: detectedTokenSource,
         queriesTried: [
@@ -856,7 +834,7 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
             query: `search:${manualQuery || cnj}`,
             endpoint: result.provider ? `https://api.todoist.com/rest/v2/tasks (Provider: ${result.provider})` : "https://api.todoist.com/rest/v2/tasks",
             status: response.status,
-            totalReturned: result.tasksChecked || 0,
+            totalReturned: result.tasksRetrieved || 0,
             titles: result.candidates?.map((c: any) => c.content) || [],
             rawResponse: JSON.stringify(result).substring(0, 500)
           }
@@ -866,18 +844,18 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
           taskTitle: c.content,
           score: c.score,
           breakdown: {},
-          decision: c.reason
+          decision: result.reason || c.reason
         })) || [],
         chosenTask: result.chosenTask?.content || null,
-        chosenTaskScore: result.chosenTask ? result.candidates?.find((c: any) => c.id === result.chosenTask.id)?.score : null,
-        failureReason: !result.success ? result.reason : null,
-        finalResult: result.chosenTask ? "encontrada" : ((result.candidates?.length || 0) > 0 ? "múltiplas encontradas" : "nenhuma encontrada"),
+        chosenTaskScore: result.chosenTaskScore,
+        failureReason: !result.found ? result.reason : null,
+        finalResult: result.result || (result.chosenTask ? "encontrada" : ((result.candidates?.length || 0) > 0 ? "múltiplas encontradas" : "nenhuma encontrada")),
         debug: result
       };
-
+      
       setTodoistDiagnostic(diagReport);
 
-      if (result.success && result.chosenTask) {
+      if (result.result === "found" && result.chosenTask) {
         const topTask = result.chosenTask;
         setTodoistLinkedTask(topTask);
         setTodoistTaskTitle(topTask.content);
@@ -895,7 +873,7 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
         addSystemLog('success', `Tarefa vinculada com sucesso: "${topTask.content}".`, 'gmail_sync');
         setTodoistLoading(false);
         return { success: true, count: 1, task: topTask };
-      } else if (result.candidates && result.candidates.length > 0) {
+      } else if (result.result === "ambiguous_match" && result.candidates && result.candidates.length > 0) {
         // Multiple matches
         const candidateTasks = result.candidates.map((c: any) => {
           return {
@@ -909,7 +887,6 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
             labels: c.labels || []
           };
         });
-
         setTodoistMultipleTasksFound(candidateTasks);
         setIsTodoistSelectionModalOpen(true);
         setTodoistLinkedTask(null);
@@ -918,15 +895,28 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
         setTodoistLoading(false);
         return { success: true, count: candidateTasks.length, tasks: candidateTasks };
       } else {
+        // not_found, not_found_active_scope, partial_search_scope
         setTodoistLinkedTask(null);
         setTodoistMultipleTasksFound([]);
         setIsTodoistSelectionModalOpen(false);
-        setTodoistNotFoundForCnj(true);
-        addSystemLog('warning', `Nenhuma tarefa Todoist correspondente de fato à publicação foi encontrada. Diagnóstico gerado.`, 'gmail_sync');
-        setTodoistLoading(false);
-        return { success: false, count: 0 };
-      }
+        
+        if (result.result === "not_found") {
+          setTodoistNotFoundForCnj(true);
+          addSystemLog('warning', `Nenhuma tarefa Todoist correspondente foi localizada após varredura completa. Diagnóstico gerado.`, 'gmail_sync');
+        } else if (result.result === "not_found_active_scope") {
+          setTodoistNotFoundForCnj(false); // don't show the definitive not found yet
+          addSystemLog('warning', `Nenhuma tarefa ativa Todoist correspondente encontrada. Escopo concluído ausente. Diagnóstico gerado.`, 'gmail_sync');
+        } else if (result.result === "partial_search_scope") {
+          setTodoistNotFoundForCnj(false);
+          addSystemLog('error', `Erro técnico: escopo parcial. ${result.reason}`, 'gmail_sync');
+        } else {
+          // fallback
+          setTodoistNotFoundForCnj(true);
+        }
 
+        setTodoistLoading(false);
+        return { success: false, count: 0, reason: result.reason };
+      }
     } catch (err: any) {
       console.error("Erro no investigador unificado:", err);
       addSystemLog('error', `Falha grave na investigação unificada com o Todoist.`, 'gmail_sync');

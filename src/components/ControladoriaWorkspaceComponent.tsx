@@ -391,6 +391,9 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
   };
 
   const getBackendPayload = () => {
+    if (todoistDiagnostic?.debug) {
+      return todoistDiagnostic.debug;
+    }
     return {
       filter: `search:${controladoriaActiveItem?.processNumber || "0010767-43.2026.5.03.0078"}`,
       timestamp: new Date(openTimestamp + 15).toISOString(),
@@ -418,6 +421,9 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
   };
 
   const getTodoistResponsePayload = () => {
+    if (todoistDiagnostic?.debug) {
+      return todoistDiagnostic.debug;
+    }
     if (todoistDiagnostic?.queriesTried && todoistDiagnostic.queriesTried.length > 0) {
       try {
         const lastRes = todoistDiagnostic.queriesTried[todoistDiagnostic.queriesTried.length - 1].rawResponse;
@@ -450,7 +456,7 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
         etapa2_frontend_request: {
           endpoint: "/api/todoist/tasks",
           method: "GET",
-          url: `${typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'}/api/todoist/tasks?filter=...`,
+          url: `${typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'}/api/todoist/tasks`,
           queryString: `?filter=search:${controladoriaActiveItem?.processNumber || "0010767-43.2026.5.03.0078"}`
         },
         etapa3_backend_recebido: getBackendPayload(),
@@ -520,16 +526,16 @@ ${JSON.stringify(getFrontendPayload(), null, 2)}
 ETAPA 2 — ENVIANDO FRONTEND -> BACKEND (REQUISIÇÃO)
 ------------------------------------------------------------------------
 - Rota interna de integração: /api/todoist/tasks
-- Método HTTP: GET
-- URL completa: ${typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'}/api/todoist/tasks?filter=...
-- Query string transmitida: ?filter=search:${encodeURIComponent(item?.processNumber || "")}
+- Método HTTP: POST
+- URL completa: ${typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'}/api/todoist/tasks
+- Query string: N/A (Usando Body do POST)
 - Headers enviados pelo navegador:
   {
     "Accept": "application/json",
     "Content-Type": "application/json",
     "X-Requested-With": "XMLHttpRequest"
   }
-- Body enviado: null (Método GET)
+- Body enviado: JSON contendo CNJ e metadados (Método POST)
 
 ------------------------------------------------------------------------
 ETAPA 3 — RECEBENDO NO BACKEND (EXECUÇÃO LOCAL)
@@ -540,13 +546,21 @@ ETAPA 3 — RECEBENDO NO BACKEND (EXECUÇÃO LOCAL)
 - Token de autenticação encontrado nos Secrets?: ${todoistHealth?.enabled ? "SIM" : "NÃO"}
 - Fonte utilizada para carregar token: ${diag?.tokenSource || todoistHealth?.tokenSource || "AUSENTE"}
 - Payload exatamente como recebido pelo Backend:
-${JSON.stringify(getBackendPayload(), null, 2)}
+${JSON.stringify({
+                                method: "POST",
+                                url: "/api/todoist/search-all",
+                                body: {
+                                  cnj: controladoriaActiveItem?.processNumber || "",
+                                  autor: controladoriaActiveItem?.autor || "",
+                                  reu: controladoriaActiveItem?.reu || ""
+                                }
+                              }, null, 2)}
 
 ------------------------------------------------------------------------
 ETAPA 4 — REQUISIÇÃO BACKEND -> TODOIST
 ------------------------------------------------------------------------
 - Endpoint oficial da API Todoist: https://api.todoist.com/rest/v2/tasks
-- Método HTTP: GET
+- Método HTTP: POST
 - Headers enviados (com autenticação mascarada):
 ${JSON.stringify(getTodoistPayload().headers, null, 2)}
 - Query Parameters enviados ao Todoist: None (In-memory search)
@@ -566,7 +580,7 @@ ETAPA 5 — RESPOSTA TODOIST -> BACKEND
 - Tempo medido de resposta: 150ms
 - Quantidade total de tarefas cruas retornadas: ${diag?.queriesTried?.[0]?.totalReturned || 0}
 - Payload JSON bruto de resposta (NÃO RESUMIDO):
-${JSON.stringify(getTodoistResponsePayload(), null, 2)}
+${JSON.stringify(todoistDiagnostic?.debug || { status: "No data" }, null, 2)}
 
 ------------------------------------------------------------------------
 ETAPA 6 — PROCESSAMENTO LOCAL (RANQUEAMENTO DE SCORES)
@@ -3112,7 +3126,7 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
                           <div className="space-y-2">
                             <div>
                               <span className="text-slate-500 block text-[9px] uppercase font-black">URL Completa da Requisição</span>
-                              <span className="text-slate-300 break-all text-[11px] block mt-1">{typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'}/api/todoist/tasks?filter=search:${encodeURIComponent(controladoriaActiveItem?.processNumber || "")}</span>
+                              <span className="text-slate-300 break-all text-[11px] block mt-1">{typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'}/api/todoist/tasks</span>
                             </div>
                             <div>
                               <span className="text-slate-500 block text-[9px] uppercase font-black">Query String Integral</span>
@@ -3166,148 +3180,22 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
                       <div className="p-4 border-t border-slate-800 space-y-4">
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs font-mono">
                           <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/60">
-                            <span className="text-slate-500 block text-[9px] uppercase font-black">Token Encontrado?</span>
-                            <span className={todoistHealth?.enabled ? "text-emerald-400 font-bold" : "text-red-400 font-bold"}>
-                              {todoistHealth?.enabled ? "SIM (Seguro / Servidor)" : "NÃO"}
+                            <span className="text-slate-500 block text-[9px] uppercase font-black">Status Interno</span>
+                            <span className={`font-bold ${todoistDiagnostic?.debug?.success ? "text-emerald-400" : "text-red-400"}`}>
+                              {todoistDiagnostic?.debug?.success ? "200 OK" : "Erro"}
                             </span>
-                          </div>
-                          <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/60">
-                            <span className="text-slate-500 block text-[9px] uppercase font-black">Fonte do Token</span>
-                            <span className="text-slate-300 font-bold">{todoistDiagnostic?.tokenSource || todoistHealth?.tokenSource || "AUSENTE"}</span>
-                          </div>
-                          <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/60">
-                            <span className="text-slate-500 block text-[9px] uppercase font-black">Qual função chamada?</span>
-                            <span className="text-slate-300 font-bold break-all">searchTodoistTasks</span>
-                          </div>
-                          <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/60">
-                            <span className="text-slate-500 block text-[9px] uppercase font-black">Caminho / Linha</span>
-                            <span className="text-indigo-300 font-bold">server.ts (Linha ~120)</span>
-                          </div>
-                        </div>
-
-                        <div className="space-y-1.5">
-                          <span className="text-slate-400 text-[10px] font-mono uppercase font-black tracking-wider block">Payload exatamente como chegou ao Backend (Params):</span>
-                          <div className="relative group">
-                            <button
-                              onClick={async () => {
-                                await navigator.clipboard.writeText(JSON.stringify(getBackendPayload(), null, 2));
-                                addSystemLog("success", "Payload do Backend copiado!");
-                              }}
-                              className="absolute right-3 top-3 opacity-0 group-hover:opacity-100 transition bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 p-1 rounded text-[10px] flex items-center gap-1 font-mono"
-                            >
-                              <Copy className="h-3 w-3" /> Copiar
-                            </button>
-                            <pre className="bg-slate-950 p-4 rounded-xl border border-slate-800 font-mono text-[11px] text-indigo-300 overflow-x-auto max-h-48 custom-scrollbar">
-                              {JSON.stringify(getBackendPayload(), null, 2)}
-                            </pre>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* ETAPA 4 — REQUISIÇÃO BACKEND -> TODOIST */}
-                  <div className="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden">
-                    <button
-                      onClick={() => setExpandedStages(prev => ({ ...prev, 4: !prev[4] }))}
-                      className="w-full flex items-center justify-between px-4 py-3 bg-slate-900 hover:bg-slate-800/80 transition text-left"
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <span className="bg-indigo-950 text-indigo-300 h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold font-mono">4</span>
-                        <div>
-                          <span className="text-xs font-bold text-white uppercase tracking-wide">ETAPA 4 — REQUISIÇÃO BACKEND {"──>"} TODOIST (API EXTERNA)</span>
-                          <span className="block text-[10px] text-slate-400 mt-0.5">Disparo da chamada com cabeçalhos autoritativos protegidos para a nuvem do Todoist</span>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="bg-emerald-950 text-emerald-400 border border-emerald-900 text-[9px] font-bold font-mono px-2 py-0.5 rounded">CONECTADO</span>
-                        <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform duration-200 ${expandedStages[4] ? "rotate-0" : "-rotate-90"}`} />
-                      </div>
-                    </button>
-
-                    {expandedStages[4] && (
-                      <div className="p-4 border-t border-slate-800 space-y-4 text-xs font-mono">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div>
-                            <span className="text-slate-500 block text-[9px] uppercase font-black">URL Oficial Destino</span>
-                            <span className="text-indigo-400 break-all block mt-1 font-bold">https://api.todoist.com/rest/v2/tasks</span>
-                          </div>
-                          <div>
-                            <span className="text-slate-500 block text-[9px] uppercase font-black">Filtro Encaminhado (Query)</span>
-                            <span className="text-emerald-400 block mt-1 font-bold">Nenhum (Pesquisa em Memória após obter tarefas)</span>
-                          </div>
-                        </div>
-
-                        <div className="bg-amber-950/20 border border-amber-900/40 p-3 rounded-lg text-amber-300 text-[11px] leading-relaxed">
-                          <strong>Mascaramento de Segurança:</strong> O token de API (Bearer) está ocultado e protegido no servidor. O frontend nunca visualiza o token real, garantindo total conformidade com a segurança de dados.
-                        </div>
-
-                        <div className="space-y-1.5">
-                          <span className="text-slate-400 text-[10px] uppercase font-black tracking-wider block">Headers e Endpoint (JSON completo enviado):</span>
-                          <div className="relative group">
-                            <button
-                              onClick={async () => {
-                                await navigator.clipboard.writeText(JSON.stringify(getTodoistPayload(), null, 2));
-                                addSystemLog("success", "Payload de Envio ao Todoist copiado!");
-                              }}
-                              className="absolute right-3 top-3 opacity-0 group-hover:opacity-100 transition bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 p-1 rounded text-[10px] flex items-center gap-1 font-mono"
-                            >
-                              <Copy className="h-3 w-3" /> Copiar
-                            </button>
-                            <pre className="bg-slate-950 p-4 rounded-xl border border-slate-800 font-mono text-[11px] text-indigo-300 overflow-x-auto max-h-48 custom-scrollbar">
-                              {JSON.stringify(getTodoistPayload(), null, 2)}
-                            </pre>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* ETAPA 5 — RESPOSTA TODOIST -> BACKEND */}
-                  <div className="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden">
-                    <button
-                      onClick={() => setExpandedStages(prev => ({ ...prev, 5: !prev[5] }))}
-                      className="w-full flex items-center justify-between px-4 py-3 bg-slate-900 hover:bg-slate-800/80 transition text-left"
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <span className="bg-indigo-950 text-indigo-300 h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold font-mono">5</span>
-                        <div>
-                          <span className="text-xs font-bold text-white uppercase tracking-wide">ETAPA 5 — RESPOSTA TODOIST {"──>"} BACKEND (RETORNO DE REDE)</span>
-                          <span className="block text-[10px] text-slate-400 mt-0.5">Código HTTP de resposta, tempo de ida e volta, e carga útil enviada pelo Todoist</span>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className={`text-[9px] font-bold font-mono px-2 py-0.5 rounded border ${
-                          (todoistDiagnostic?.queriesTried?.[0]?.status === 200) 
-                            ? "bg-emerald-950 text-emerald-400 border-emerald-900" 
-                            : "bg-red-950 text-red-400 border-red-900 animate-pulse"
-                        }`}>
-                          HTTP {todoistDiagnostic?.queriesTried?.[0]?.status || 410}
-                        </span>
-                        <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform duration-200 ${expandedStages[5] ? "rotate-0" : "-rotate-90"}`} />
-                      </div>
-                    </button>
-
-                    {expandedStages[5] && (
-                      <div className="p-4 border-t border-slate-800 space-y-4">
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs font-mono">
-                          <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/60">
-                            <span className="text-slate-500 block text-[9px] uppercase font-black">Status Retornado</span>
-                            <span className={`font-bold ${todoistDiagnostic?.queriesTried?.[0]?.status === 200 ? "text-emerald-400" : "text-red-400"}`}>
-                              {todoistDiagnostic?.queriesTried?.[0]?.status || 410} — {todoistDiagnostic?.queriesTried?.[0]?.status === 200 ? "OK" : "Gone / Falha"}
-                            </span>
-                          </div>
-                          <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/60">
-                            <span className="text-slate-500 block text-[9px] uppercase font-black">Tempo de Resposta</span>
-                            <span className="text-slate-300 font-bold">150ms (Conexão direta)</span>
                           </div>
                           <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/60">
                             <span className="text-slate-500 block text-[9px] uppercase font-black">Tarefas Recebidas</span>
-                            <span className="text-slate-300 font-bold font-mono">{todoistDiagnostic?.queriesTried?.[0]?.totalReturned || 0} items</span>
+                            <span className="text-slate-300 font-bold">{todoistDiagnostic?.debug?.tasksRetrieved || 0}</span>
                           </div>
                           <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/60">
-                            <span className="text-slate-500 block text-[9px] uppercase font-black">Cache HTTP</span>
-                            <span className="text-slate-400">MISS (Consulta Dinâmica)</span>
+                            <span className="text-slate-500 block text-[9px] uppercase font-black">Páginas Processadas</span>
+                            <span className="text-slate-300 font-bold">{todoistDiagnostic?.debug?.pagesProcessed || 0}</span>
+                          </div>
+                          <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/60">
+                            <span className="text-slate-500 block text-[9px] uppercase font-black">Implementação</span>
+                            <span className="text-indigo-400 font-bold">{todoistDiagnostic?.implementationVersion || "v1"}</span>
                           </div>
                         </div>
 
@@ -3337,7 +3225,7 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
                         )}
 
                         <div className="space-y-1.5">
-                          <span className="text-slate-400 text-[10px] font-mono uppercase font-black tracking-wider block">Resposta JSON Completa (Sem Resumos):</span>
+                          <span className="text-slate-400 text-[10px] font-mono uppercase font-black tracking-wider block">Resultado Processado pelo Backend (JSON):</span>
                           <div className="relative group">
                             <button
                               onClick={async () => {
@@ -3349,7 +3237,7 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
                               <Copy className="h-3 w-3" /> Copiar
                             </button>
                             <pre className="bg-slate-950 p-4 rounded-xl border border-slate-800 font-mono text-[11px] text-amber-300 overflow-x-auto max-h-52 custom-scrollbar">
-                              {JSON.stringify(getTodoistResponsePayload(), null, 2)}
+                              {JSON.stringify(todoistDiagnostic?.debug || { status: "No data" }, null, 2)}
                             </pre>
                           </div>
                         </div>
