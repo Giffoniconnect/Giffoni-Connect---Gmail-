@@ -2523,6 +2523,199 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
         {/* COLUMN 2 & 3 CONSOLIDATED: RIGHT PANEL (8 Cols) */}
         <div className="lg:col-span-8 space-y-6">
           
+          {/* QUICK ACTIONS */}
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4">
+            <div className="border-b border-slate-100 pb-3 flex items-center justify-between">
+              <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
+                <Sliders className="h-4 w-4 text-indigo-500" /> Ações Rápidas
+              </h3>
+              <button 
+                onClick={() => setIsKeyboardShortcutsOpen(true)}
+                className="text-slate-400 hover:text-indigo-600 transition"
+                title="Atalhos de teclado"
+              >
+                <Keyboard className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Principal Save buttons side by side for better horizontal usage in 8 cols */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <button
+                onClick={() => setShowSaveChoiceModal(true)}
+                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs py-3 px-4 rounded-xl shadow-md shadow-indigo-100 transition flex items-center justify-center gap-1.5"
+              >
+                <Save className="h-4 w-4" /> Salvar / Sincronizar Todoist
+              </button>
+
+              <button
+                onClick={handleQuickMarkConferred}
+                disabled={saveLoading}
+                className="w-full bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold text-xs py-3 px-4 rounded-xl transition flex items-center justify-center gap-1.5"
+              >
+                <Check className="h-4 w-4" /> Marcar como Conferido
+              </button>
+            </div>
+
+            {/* Automation tools */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-3 border-t border-slate-100">
+              {/* 1. Secretariado */}
+              <div className="space-y-1.5">
+                <button
+                  onClick={() => setIsSecretariadoOpen(prev => !prev)}
+                  className={`w-full text-left font-bold text-[10px] uppercase tracking-wider py-2 px-3 rounded-xl flex items-center justify-between transition ${
+                    isSecretariadoOpen ? "bg-indigo-50 text-indigo-700 border border-indigo-100/50" : "bg-slate-50 text-slate-500 hover:text-slate-700"
+                  }`}
+                >
+                  <span className="flex items-center gap-1.5">
+                    <User className="h-3.5 w-3.5 text-indigo-500" /> Secretariado
+                  </span>
+                  <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${isSecretariadoOpen ? "rotate-180" : ""}`} />
+                </button>
+
+                {isSecretariadoOpen && (
+                  <div className="pl-2 pr-1 py-1.5 space-y-2 border-l border-indigo-100/60 ml-2 animate-fade-in bg-slate-50/50 rounded-lg p-2">
+                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Subtarefa automática:</span>
+                    <div className="flex items-center justify-between bg-white border border-slate-100 rounded-lg p-2 gap-2 group">
+                      <span className="text-[11px] font-bold text-slate-800 leading-normal flex-1">
+                        Agendar reunião hoje
+                      </span>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => setIsAutomationConfigModalOpen(true)}
+                          className="bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs p-1 rounded-md border border-slate-200"
+                        >
+                          ⚙️
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleCreateSecretariadoSubtask}
+                          disabled={todoistLoadingLocal || !todoistLinkedTask}
+                          className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 text-white text-xs p-1 rounded-md transition"
+                        >
+                          {todoistLoadingLocal ? <RefreshCw className="h-3 w-3 animate-spin" /> : "⚡"}
+                        </button>
+                      </div>
+                    </div>
+                    {!todoistLinkedTask && (
+                      <div className="text-[9px] text-amber-600 font-semibold leading-normal">
+                        Vincule uma tarefa antes.
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* 2. Equipe Jurídica */}
+              <div className="space-y-1.5">
+                <button
+                  onClick={() => setIsEquipeJuridicaOpen(prev => !prev)}
+                  className={`w-full text-left font-bold text-[10px] uppercase tracking-wider py-2 px-3 rounded-xl flex items-center justify-between transition ${
+                    isEquipeJuridicaOpen ? "bg-indigo-50 text-indigo-700 border border-indigo-100/50" : "bg-slate-50 text-slate-500 hover:text-slate-700"
+                  }`}
+                >
+                  <span className="flex items-center gap-1.5">
+                    <CheckSquare className="h-3.5 w-3.5 text-indigo-500" /> Equipe Jurídica
+                  </span>
+                  <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${isEquipeJuridicaOpen ? "rotate-180" : ""}`} />
+                </button>
+
+                {isEquipeJuridicaOpen && (
+                  <div className="pl-2 pr-1 py-1.5 space-y-2 border-l border-indigo-100/60 ml-2 animate-fade-in bg-slate-50/50 rounded-lg p-2">
+                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Prazo Jurídico:</span>
+                    <div className="flex items-center justify-between bg-white border border-slate-100 rounded-lg p-2 gap-2 group">
+                      <span className="text-[11px] font-bold text-slate-800 leading-normal flex-1">
+                        Delegar ao Advogado
+                      </span>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => setIsDelegarConfigModalOpen(true)}
+                          className="bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs p-1 rounded-md border border-slate-200"
+                        >
+                          ⚙️
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleOpenDelegarPrazoForm}
+                          className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs p-1 rounded-md transition"
+                        >
+                          ⚡
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* 3. Ajustar Parâmetros */}
+              <div className="space-y-1.5">
+                <button
+                  onClick={() => setIsAjustarParametrosOpen(prev => !prev)}
+                  className={`w-full text-left font-bold text-[10px] uppercase tracking-wider py-2 px-3 rounded-xl flex items-center justify-between transition ${
+                    isAjustarParametrosOpen ? "bg-indigo-50 text-indigo-700 border border-indigo-100/50" : "bg-slate-50 text-slate-500 hover:text-slate-700"
+                  }`}
+                >
+                  <span className="flex items-center gap-1.5">
+                    <Settings className="h-3.5 w-3.5 text-indigo-500" /> Parâmetros
+                  </span>
+                  <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${isAjustarParametrosOpen ? "rotate-180" : ""}`} />
+                </button>
+
+                {isAjustarParametrosOpen && (
+                  <div className="pl-2 pr-1 py-1.5 space-y-2 border-l border-indigo-100/60 ml-2 animate-fade-in bg-slate-50/50 rounded-lg p-2">
+                    <button
+                      onClick={() => {
+                        setIsRevisaoOpen(prev => !prev);
+                        setIsHistoricoOpen(false);
+                      }}
+                      className={`w-full text-left font-semibold text-[11px] py-1.5 px-2 rounded-lg transition flex items-center justify-between ${
+                        isRevisaoOpen ? "bg-blue-50 text-blue-800 border border-blue-200/50" : "bg-white hover:bg-slate-100 text-slate-600"
+                      }`}
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <Clock className="h-3.5 w-3.5" /> Revisão
+                      </span>
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setIsHistoricoOpen(prev => !prev);
+                        setIsRevisaoOpen(false);
+                      }}
+                      className={`w-full text-left font-semibold text-[11px] py-1.5 px-2 rounded-lg transition flex items-center justify-between ${
+                        isHistoricoOpen ? "bg-purple-50 text-purple-800 border border-purple-200/50" : "bg-white hover:bg-slate-100 text-slate-600"
+                      }`}
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <Database className="h-3.5 w-3.5" /> Histórico
+                      </span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Navigation / Fila Controls */}
+            <div className="flex items-center justify-between pt-3 border-t border-slate-100 text-xs">
+              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Controles de Fila</span>
+              <div className="flex gap-2">
+                <button
+                  onClick={handlePrev}
+                  className="bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 font-bold text-[11px] py-1.5 px-3 rounded-lg transition flex items-center gap-1"
+                >
+                  <ArrowLeft className="h-3.5 w-3.5" /> Voltar
+                </button>
+                <button
+                  onClick={handleSkip}
+                  className="bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 font-bold text-[11px] py-1.5 px-3 rounded-lg transition flex items-center gap-1"
+                >
+                  Pular <ArrowRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+          </div>
+
           {/* BUSCADOR DE TAREFAS DO TODOIST */}
           <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
@@ -3507,225 +3700,6 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
           )}
 
           {/* ESPELHO DA TAREFA */}
-        </div> {/* closes Column 2 & 3 (lg:col-span-8) */}
-      </div> {/* closes Main Grid */}
-
-      {/* Side-by-side Ações Rápidas & ESPELHO DA TAREFA */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start mt-6">
-        {/* Left Side: Ações Rápidas */}
-        <div className="lg:col-span-4 space-y-4">
-          <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm space-y-3.5">
-            <div className="border-b border-slate-100 pb-2 flex items-center justify-between">
-              <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
-                <Sliders className="h-4 w-4 text-indigo-500" /> Ações Rápidas
-              </h3>
-              <button 
-                onClick={() => setIsKeyboardShortcutsOpen(true)}
-                className="text-slate-400 hover:text-indigo-600 transition"
-                title="Atalhos de teclado"
-              >
-                <Keyboard className="h-4 w-4" />
-              </button>
-            </div>
-
-            {/* Principal Save */}
-            <div className="space-y-2">
-              <button
-                onClick={() => setShowSaveChoiceModal(true)}
-                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs py-2.5 px-4 rounded-xl shadow-md shadow-indigo-100 transition flex items-center justify-center gap-1.5"
-              >
-                <Save className="h-4 w-4" /> Salvar / Atualizar
-              </button>
-
-              <button
-                onClick={handleQuickMarkConferred}
-                disabled={saveLoading}
-                className="w-full bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold text-xs py-2 px-4 rounded-xl transition flex items-center justify-center gap-1.5"
-              >
-                <Check className="h-4 w-4" /> Marcar como Conferido
-              </button>
-            </div>
-
-            {/* Setor Title */}
-            <div className="pt-2 border-t border-slate-100">
-              <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-500 mb-1">
-                Tarefas Automatizadas para o Todoist
-              </h4>
-            </div>
-
-            {/* 1. Tarefas para o Secretariado */}
-            <div className="space-y-1.5">
-              <button
-                onClick={() => setIsSecretariadoOpen(prev => !prev)}
-                className={`w-full text-left font-bold text-[10px] uppercase tracking-wider py-1.5 px-3 rounded-lg flex items-center justify-between transition ${
-                  isSecretariadoOpen ? "bg-slate-50 text-indigo-700" : "text-slate-400 hover:text-slate-600 hover:bg-slate-50/50"
-                }`}
-              >
-                <span className="flex items-center gap-1.5">
-                  <User className="h-3.5 w-3.5 text-indigo-500" /> Tarefas para o Secretariado
-                </span>
-                <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${isSecretariadoOpen ? "rotate-180" : ""}`} />
-              </button>
-
-              {isSecretariadoOpen && (
-                <div className="pl-3 pr-1 py-1.5 space-y-2 border-l border-indigo-100/60 ml-3 animate-fade-in">
-                  <div className="flex flex-col space-y-1">
-                    <span className="text-[10px] font-semibold text-slate-500">Criar subtarefa automática:</span>
-                    <div className="flex items-center justify-between bg-indigo-50/50 border border-indigo-100 rounded-xl p-2.5 gap-2 group hover:bg-indigo-50 transition">
-                      <span className="text-xs font-bold text-indigo-950 leading-normal flex-1">
-                        Agendar hoje reunião com Cliente
-                      </span>
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => setIsAutomationConfigModalOpen(true)}
-                          className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium p-2 rounded-lg shadow-sm border border-slate-200/60 transition flex items-center justify-center"
-                          title="Configurar automação Todoist"
-                        >
-                          <span className="text-sm">⚙️</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleCreateSecretariadoSubtask}
-                          disabled={todoistLoadingLocal || !todoistLinkedTask}
-                          className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white text-xs font-black tracking-tight p-2 rounded-lg shadow-sm shadow-indigo-100 transition flex items-center justify-center"
-                          title="Criar subtarefa automática no Todoist"
-                        >
-                          {todoistLoadingLocal ? (
-                            <RefreshCw className="h-3 w-3 animate-spin" />
-                          ) : (
-                            <span className="text-sm">⚡</span>
-                          )}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                  {!todoistLinkedTask && (
-                    <div className="text-[10px] text-amber-600 font-semibold bg-amber-50/60 border border-amber-100/60 rounded-lg p-2 leading-normal">
-                      Localize uma tarefa do Todoist antes de criar subtarefa.
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* 2. Tarefas da Equipe Jurídica */}
-            <div className="space-y-1.5 pt-1.5 border-t border-slate-100">
-              <button
-                onClick={() => setIsEquipeJuridicaOpen(prev => !prev)}
-                className={`w-full text-left font-bold text-[10px] uppercase tracking-wider py-1.5 px-3 rounded-lg flex items-center justify-between transition ${
-                  isEquipeJuridicaOpen ? "bg-slate-50 text-indigo-700" : "text-slate-400 hover:text-slate-600 hover:bg-slate-50/50"
-                }`}
-              >
-                <span className="flex items-center gap-1.5">
-                  <CheckSquare className="h-3.5 w-3.5 text-indigo-500" /> Tarefas da Equipe Jurídica
-                </span>
-                <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${isEquipeJuridicaOpen ? "rotate-180" : ""}`} />
-              </button>
-
-              {isEquipeJuridicaOpen && (
-                <div className="pl-3 pr-1 py-1.5 space-y-2 border-l border-indigo-100/60 ml-3 animate-fade-in">
-                  <span className="text-[10px] font-semibold text-slate-500">Automações Jurídicas do Todoist:</span>
-                  <div className="flex items-center justify-between bg-indigo-50/50 border border-indigo-100 rounded-xl p-2.5 gap-2 group hover:bg-indigo-50 transition">
-                    <span className="text-xs font-bold text-indigo-950 leading-normal flex-1">
-                      Delegar Prazo para a Equipe
-                    </span>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => setIsDelegarConfigModalOpen(true)}
-                        className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-white rounded-lg transition-all border border-transparent hover:border-slate-100 shadow-none hover:shadow-sm"
-                        title="Configurações da automação"
-                      >
-                        <span className="text-sm">⚙️</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleOpenDelegarPrazoForm}
-                        className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-white rounded-lg transition-all border border-transparent hover:border-slate-100 shadow-none hover:shadow-sm"
-                        title="Executar automação"
-                      >
-                        <span className="text-sm">⚡</span>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* 3. Ajustar Parâmetros */}
-            <div className="space-y-1.5 pt-1.5 border-t border-slate-100">
-              <button
-                onClick={() => setIsAjustarParametrosOpen(prev => !prev)}
-                className={`w-full text-left font-bold text-[10px] uppercase tracking-wider py-1.5 px-3 rounded-lg flex items-center justify-between transition ${
-                  isAjustarParametrosOpen ? "bg-slate-50 text-indigo-700" : "text-slate-400 hover:text-slate-600 hover:bg-slate-50/50"
-                }`}
-              >
-                <span className="flex items-center gap-1.5">
-                  <Settings className="h-3.5 w-3.5 text-indigo-500" /> Ajustar Parâmetros
-                </span>
-                <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${isAjustarParametrosOpen ? "rotate-180" : ""}`} />
-              </button>
-
-              {isAjustarParametrosOpen && (
-                <div className="pl-3 pr-1 py-1.5 space-y-2 border-l border-indigo-100/60 ml-3 animate-fade-in">
-                  <button
-                    onClick={() => {
-                      setIsRevisaoOpen(prev => !prev);
-                      setIsHistoricoOpen(false);
-                    }}
-                    className={`w-full text-left font-semibold text-xs py-2 px-3 rounded-xl transition flex items-center justify-between ${
-                      isRevisaoOpen ? "bg-blue-50 text-blue-800 border border-blue-200/50" : "text-slate-600 hover:bg-slate-50"
-                    }`}
-                  >
-                    <span className="flex items-center gap-2">
-                      <Clock className="h-4 w-4" /> Agendar Revisão
-                    </span>
-                    <ChevronDown className={`h-3.5 w-3.5 transition ${isRevisaoOpen ? "rotate-180" : ""}`} />
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      setIsHistoricoOpen(prev => !prev);
-                      setIsRevisaoOpen(false);
-                    }}
-                    className={`w-full text-left font-semibold text-xs py-2 px-3 rounded-xl transition flex items-center justify-between ${
-                      isHistoricoOpen ? "bg-purple-50 text-purple-800 border border-purple-200/50" : "text-slate-600 hover:bg-slate-50"
-                    }`}
-                  >
-                    <span className="flex items-center gap-2">
-                      <Database className="h-4 w-4" /> Histórico Processo
-                    </span>
-                    <ChevronDown className={`h-3.5 w-3.5 transition ${isHistoricoOpen ? "rotate-180" : ""}`} />
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {/* Fila / Queue actions */}
-            <div className="space-y-1 border-t border-slate-100 pt-3">
-              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Ações de Fila</div>
-              
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={handlePrev}
-                  className="bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 font-bold text-[11px] py-1.5 px-2 rounded-lg transition flex items-center justify-center gap-1"
-                >
-                  <ArrowLeft className="h-3 w-3" /> Voltar
-                </button>
-                <button
-                  onClick={handleSkip}
-                  className="bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 font-bold text-[11px] py-1.5 px-2 rounded-lg transition flex items-center justify-center gap-1"
-                >
-                  Pular <ArrowRight className="h-3 w-3" />
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Right Side: ESPELHO DA TAREFA */}
-        <div className="lg:col-span-8 space-y-4">
           
           <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col space-y-5 relative min-h-[500px]">
             

@@ -5,6 +5,7 @@ import { GoogleGenAI } from "@google/genai";
 import { createServer as createViteServer } from "vite";
 import { ComunicaApiService } from "./src/services/comunicaApiService.js";
 import { djenSearchHandler } from "./src/api/djen/search.js";
+import { todoistClient, todoistSmokeTest, callTodoistAPI } from "./src/services/todoistClient.js";
 
 // Load environment variables
 dotenv.config();
@@ -2282,13 +2283,28 @@ app.use("/api/todoist", (req: any, res, next) => {
   next();
 });
 
+let cachedProvider: "sdk" | "sync" | "rest" | null = null;
+let lastTestedToken: string | null = null;
+
+async function getWorkingProvider(token: string) {
+  if (cachedProvider && lastTestedToken === token) {
+    return cachedProvider;
+  }
+  const testResult = await todoistSmokeTest(token);
+  if (testResult.ok && testResult.provider !== "none") {
+    cachedProvider = testResult.provider;
+    lastTestedToken = token;
+    return cachedProvider;
+  }
+  lastTestedToken = token;
+  cachedProvider = "rest"; // Fallback seguro apontando para rest/v2
+  return "rest";
+}
+
 app.get("/api/todoist/projects", async (req: any, res) => {
   try {
-    const apiRes = await fetch("https://api.todoist.com/rest/v2/projects", {
-      headers: { Authorization: `Bearer ${req.todoistToken}` }
-    });
-    if (!apiRes.ok) throw new Error(`Todoist API error: ${apiRes.status}`);
-    const data = await apiRes.json();
+    const provider = await getWorkingProvider(req.todoistToken);
+    const data = await todoistClient.getProjects(req.todoistToken, provider);
     res.json(data);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -2297,14 +2313,8 @@ app.get("/api/todoist/projects", async (req: any, res) => {
 
 app.get("/api/todoist/projects/:id/collaborators", async (req: any, res) => {
   try {
-    const apiRes = await fetch(`https://api.todoist.com/rest/v2/projects/${req.params.id}/collaborators`, {
-      headers: { Authorization: `Bearer ${req.todoistToken}` }
-    });
-    if (!apiRes.ok) {
-      // If project has no collaborators or it fails, return empty array to prevent crashing
-      return res.json([]);
-    }
-    const data = await apiRes.json();
+    const provider = await getWorkingProvider(req.todoistToken);
+    const data = await todoistClient.getProjectCollaborators(req.todoistToken, req.params.id, provider);
     res.json(data.results || data);
   } catch (err: any) {
     console.error("Error fetching collaborators:", err);
@@ -2314,16 +2324,9 @@ app.get("/api/todoist/projects/:id/collaborators", async (req: any, res) => {
 
 app.get("/api/todoist/sections", async (req: any, res) => {
   const { project_id } = req.query;
-  let url = "https://api.todoist.com/rest/v2/sections";
-  if (project_id) {
-    url += `?project_id=${project_id}`;
-  }
   try {
-    const apiRes = await fetch(url, {
-      headers: { Authorization: `Bearer ${req.todoistToken}` }
-    });
-    if (!apiRes.ok) throw new Error(`Todoist API error: ${apiRes.status}`);
-    const data = await apiRes.json();
+    const provider = await getWorkingProvider(req.todoistToken);
+    const data = await todoistClient.getSections(req.todoistToken, project_id ? String(project_id) : undefined, provider);
     res.json(data);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -2332,11 +2335,8 @@ app.get("/api/todoist/sections", async (req: any, res) => {
 
 app.get("/api/todoist/labels", async (req: any, res) => {
   try {
-    const apiRes = await fetch("https://api.todoist.com/rest/v2/labels", {
-      headers: { Authorization: `Bearer ${req.todoistToken}` }
-    });
-    if (!apiRes.ok) throw new Error(`Todoist API error: ${apiRes.status}`);
-    const data = await apiRes.json();
+    const provider = await getWorkingProvider(req.todoistToken);
+    const data = await todoistClient.getLabels(req.todoistToken, provider);
     res.json(data);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -2387,38 +2387,34 @@ app.all("/api/todoist/search-all", async (req: any, res) => {
   }
 
   try {
-    // 1. Fetch ALL active tasks in a single resilient API call
-    const tasksUrl = "https://api.todoist.com/rest/v2/tasks";
-    const tasksRes = await fetch(tasksUrl, {
-      headers: { Authorization: `Bearer ${req.todoistToken}` }
-    });
+    const provider = await getWorkingProvider(req.todoistToken);
 
-    if (!tasksRes.ok) {
-      const errText = await tasksRes.text();
-      console.error(`[Todoist Search-All Error] Tasks fetch failed: ${tasksRes.status} | ${errText}`);
-      const status = tasksRes.status;
-      const message = status === 410 
-        ? "Endpoint Todoist descontinuado. Atualizar integração para REST v2." 
-        : `Falha ao consultar Todoist REST v2: ${errText || tasksRes.statusText || 'Erro de comunicação'}`;
-      
-      return res.status(status).json({
-        success: false,
-        errorType: "TODOIST_API_ERROR",
-        status: status,
-        message: message,
-        chosenTask: null,
-        tasks: []
-      });
+    // GET /api/v1/tasks/filter?query={CNJ}
+    let allTasks: any[] = [];
+    let filterSuccess = false;
+
+    if (matchCnjMasked) {
+      try {
+        const res = await callTodoistAPI(req.todoistToken, provider, "/tasks", {
+          query: { filter: matchCnjMasked }
+        });
+        if (Array.isArray(res)) {
+          allTasks = res;
+          filterSuccess = true;
+        }
+      } catch (err) {
+        console.warn("Filtro direto de tarefas falhou, usando fallback seguro.", err);
+      }
     }
 
-    const allTasks = await tasksRes.json();
-    if (!Array.isArray(allTasks)) {
-      return res.status(500).json({ error: "Resposta inválida da API Todoist (deve ser array de tarefas)." });
+    if (!filterSuccess || allTasks.length === 0) {
+      const res = await todoistClient.getTasks(req.todoistToken, { limit: 200 }, provider);
+      allTasks = Array.isArray(res) ? res : [];
     }
 
     const totalSubtasks = allTasks.filter((t: any) => t.parent_id).length;
 
-    // 2. Identify potential candidates to fetch comments for (optimizes API rate limits)
+    // Identify candidates for fetching comments
     const candidatesPool = allTasks.filter((task: any) => {
       const content = (task.content || "").toLowerCase();
       const description = (task.description || "").toLowerCase();
@@ -2432,30 +2428,22 @@ app.all("/api/todoist/search-all", async (req: any, res) => {
       return false;
     });
 
-    // Limit comments fetch to top 15 candidate tasks
     const candidatesToFetch = candidatesPool.slice(0, 15);
     const commentsMap = new Map<string, any[]>();
     let totalComments = 0;
 
     await Promise.all(candidatesToFetch.map(async (task: any) => {
       try {
-        const commentsUrl = `https://api.todoist.com/rest/v2/comments?task_id=${task.id}`;
-        const commentsRes = await fetch(commentsUrl, {
-          headers: { Authorization: `Bearer ${req.todoistToken}` }
-        });
-        if (commentsRes.ok) {
-          const comments = await commentsRes.json();
-          if (Array.isArray(comments)) {
-            commentsMap.set(task.id, comments);
-            totalComments += comments.length;
-          }
+        const comments = await todoistClient.getComments(req.todoistToken, { task_id: task.id }, provider);
+        if (Array.isArray(comments)) {
+          commentsMap.set(task.id, comments);
+          totalComments += comments.length;
         }
       } catch (err) {
-        console.error(`[Todoist Search-All] Error fetching comments for task ${task.id}:`, err);
+        console.error(`Error fetching comments for task ${task.id}:`, err);
       }
     }));
 
-    // Helper for normalizing text comparison
     const cleanCompare = (text: string): string => {
       if (!text) return "";
       return text
@@ -2470,7 +2458,6 @@ app.all("/api/todoist/search-all", async (req: any, res) => {
         .trim();
     };
 
-    // 3. Compute precise scores for all tasks
     const candidatesWithScores = allTasks.map((task: any) => {
       let score = 0;
       const details: string[] = [];
@@ -2485,94 +2472,74 @@ app.all("/api/todoist/search-all", async (req: any, res) => {
 
       const taskComments = commentsMap.get(task.id) || [];
 
-      // Manual Query Scoring
-      if (cnj) {
-        const mqClean = cleanCompare(cnj);
-        const mqDigits = cnj.replace(/[^0-9]/g, "");
-        if (title.includes(cnj) || description.includes(cnj)) {
-          score += 150;
-          matchType = "cnj_exact";
-          details.push("Correspondência exata do termo de busca manual (+150 pts)");
-        } else if (mqClean && (titleClean.includes(mqClean) || descriptionClean.includes(mqClean))) {
-          score += 120;
-          matchType = "cnj_exact";
-          details.push("Correspondência do termo de busca manual normalizado (+120 pts)");
-        } else if (mqDigits && mqDigits.length > 3 && (titleClean.replace(/[^0-9]/g, "").includes(mqDigits) || descriptionClean.replace(/[^0-9]/g, "").includes(mqDigits))) {
-          score += 100;
-          matchType = "cnj_digits";
-          details.push("Correspondência numérica do termo de busca manual (+100 pts)");
-        }
+      // +150 CNJ exato no título
+      if (matchCnjMasked && title.includes(matchCnjMasked)) {
+        score += 150;
+        matchType = "cnj_exact";
+        details.push("CNJ mascarado exato no título (+150 pts)");
+      }
+      // +130 CNJ sem máscara no título
+      else if (matchCnjDigits && titleClean.replace(/[^0-9]/g, "").includes(matchCnjDigits)) {
+        score += 130;
+        matchType = "cnj_digits";
+        details.push("CNJ sem máscara no título (+130 pts)");
       }
 
-      // CNJ-specific priority scoring (Rule 5)
-      if (extractedCnj) {
-        // +100 se CNJ mascarado bater exatamente no título
-        if (matchCnjMasked && title.includes(matchCnjMasked)) {
-          score += 100;
-          matchType = "cnj_exact";
-          details.push("CNJ mascarado encontrado no título (+100 pts)");
-        }
-        // +95 se CNJ somente dígitos bater no título normalizado
-        else if (matchCnjDigits && titleClean.replace(/[^0-9]/g, "").includes(matchCnjDigits)) {
-          score += 95;
-          matchType = "cnj_digits";
-          details.push("CNJ somente dígitos encontrado no título (+95 pts)");
-        }
-
-        // +90 se CNJ bater na descrição
-        if (description.includes(matchCnjMasked) || (matchCnjDigits && descriptionClean.replace(/[^0-9]/g, "").includes(matchCnjDigits))) {
-          score += 90;
-          if (matchType === "not_found") matchType = "cnj_exact";
-          details.push("CNJ encontrado na descrição (+90 pts)");
-        }
-
-        // +85 se CNJ bater em comentário
-        const hasCnjInComment = taskComments.some((c: any) => {
-          const cBody = (c.content || "").toLowerCase();
-          return cBody.includes(matchCnjMasked.toLowerCase()) || (matchCnjDigits && cBody.replace(/[^0-9]/g, "").includes(matchCnjDigits));
-        });
-        if (hasCnjInComment) {
-          score += 85;
-          if (matchType === "not_found") matchType = "comment_match";
-          details.push("CNJ encontrado em comentário (+85 pts)");
-        }
-
-        // +80 se CNJ bater em subtarefa
-        const isSubtaskMatch = isSubtask && (title.includes(matchCnjMasked) || title.includes(matchCnjDigits));
-        if (isSubtaskMatch) {
-          score += 80;
-          if (matchType === "not_found") matchType = "subtask_match";
-          details.push("Tarefa é subtarefa e contém o CNJ (+80 pts)");
-        }
+      // +120 CNJ exato na descrição
+      if (matchCnjMasked && description.includes(matchCnjMasked)) {
+        score += 120;
+        if (matchType === "not_found") matchType = "cnj_exact";
+        details.push("CNJ exato na descrição (+120 pts)");
+      } else if (matchCnjDigits && descriptionClean.replace(/[^0-9]/g, "").includes(matchCnjDigits)) {
+        score += 120;
+        if (matchType === "not_found") matchType = "cnj_digits";
+        details.push("CNJ sem máscara na descrição (+120 pts)");
       }
 
-      // Fallback Criteria (Rule 3 & 5)
-      // +60 se nome da parte bater no título (Autor ou Réu)
+      // +100 CNJ em comentário
+      const hasCnjInComment = taskComments.some((c: any) => {
+        const cBody = (c.content || "").toLowerCase();
+        return cBody.includes(matchCnjMasked.toLowerCase()) || (matchCnjDigits && cBody.replace(/[^0-9]/g, "").includes(matchCnjDigits));
+      });
+      if (hasCnjInComment) {
+        score += 100;
+        if (matchType === "not_found") matchType = "comment_match";
+        details.push("CNJ encontrado em comentário (+100 pts)");
+      }
+
+      // +90 CNJ em subtarefa
+      if (isSubtask && (title.includes(matchCnjMasked) || title.includes(matchCnjDigits))) {
+        score += 90;
+        if (matchType === "not_found") matchType = "subtask_match";
+        details.push("CNJ encontrado em subtarefa (+90 pts)");
+      }
+
+      // +60 autor/réu no título
       if (autor && autor.length > 2 && titleClean.includes(cleanCompare(autor))) {
         score += 60;
         if (matchType === "not_found") matchType = "fallback_name";
-        details.push(`Nome do Autor "${autor}" encontrado no título (+60 pts)`);
+        details.push(`Nome do Autor "${autor}" no título (+60 pts)`);
       }
       if (reu && reu.length > 2 && titleClean.includes(cleanCompare(reu))) {
         score += 60;
         if (matchType === "not_found") matchType = "fallback_name";
-        details.push(`Nome do Réu "${reu}" encontrado no título (+60 pts)`);
+        details.push(`Nome do Réu "${reu}" no título (+60 pts)`);
       }
 
-      // +40 se assunto/tribunal bater
-      if (assunto && titleClean.includes(cleanCompare(assunto))) {
+      // +40 autor/réu na descrição
+      if (autor && autor.length > 2 && descriptionClean.includes(cleanCompare(autor))) {
         score += 40;
-        details.push(`Assunto "${assunto}" encontrado no título (+40 pts)`);
+        details.push(`Nome do Autor "${autor}" na descrição (+40 pts)`);
       }
-      if (tribunal && titleClean.includes(cleanCompare(tribunal))) {
+      if (reu && reu.length > 2 && descriptionClean.includes(cleanCompare(reu))) {
         score += 40;
-        details.push(`Tribunal "${tribunal}" encontrado no título (+40 pts)`);
+        details.push(`Nome do Réu "${reu}" na descrição (+40 pts)`);
       }
 
-      // -100 se tarefa estiver concluída
+      // -200 tarefa concluída, salvo se modo incluir concluídas estiver ativo
       if (isCompleted) {
-        score -= 100;
-        details.push("Tarefa concluída (-100 pts)");
+        score -= 200;
+        details.push("Tarefa concluída (-200 pts)");
       }
 
       return {
@@ -2586,50 +2553,42 @@ app.all("/api/todoist/search-all", async (req: any, res) => {
       };
     });
 
-    // Filter and sort candidates
     const rankedCandidates = candidatesWithScores
       .filter((c: any) => c.score > 0)
       .sort((a: any, b: any) => b.score - a.score);
 
     let chosenTask: any = null;
-    let chosenReason = "";
-    let success = false;
+    let confidence: "high" | "medium" | "low" | "none" = "none";
+    let reason = "";
 
     if (rankedCandidates.length > 0) {
-      const topScore = rankedCandidates[0].score;
-      const topMatches = rankedCandidates.filter((c: any) => c.score === topScore);
+      const first = rankedCandidates[0];
+      const second = rankedCandidates[1];
 
-      if (topMatches.length === 1) {
-        chosenTask = rankedCandidates[0].task;
-        chosenReason = rankedCandidates[0].details.join(", ");
-        success = true;
+      const hasSingleOver100 = rankedCandidates.filter(c => c.score > 100).length === 1;
+      const has50PointLead = second ? (first.score - second.score >= 50) : true;
+
+      if (hasSingleOver100 || has50PointLead) {
+        chosenTask = first.task;
+        confidence = "high";
+        reason = `Tarefa escolhida automaticamente: "${first.task.content}" com ${first.score} pontos.`;
       } else {
         chosenTask = null;
-        chosenReason = `Múltiplos candidatos com pontuação idêntica de ${topScore} pts. Seleção manual necessária.`;
-        success = true;
+        confidence = "medium";
+        reason = `Múltiplos candidatos detectados com pontuações próximas (${first.score} vs ${second?.score}). Seleção manual recomendada.`;
       }
     } else {
-      chosenReason = `Não localizei tarefa no Todoist correspondente. Foram analisadas ${allTasks.length} tarefas, ${totalSubtasks} subtarefas e ${totalComments} comentários. Nenhum item continha o CNJ ${matchCnjMasked || "não identificado"} em título, descrição, comentários ou subtarefas.`;
+      confidence = "none";
+      reason = "Nenhuma tarefa correspondente localizada com pontuação positiva no Todoist.";
     }
 
-    // Standard properties required by Rule 6 & Rule 7
     return res.json({
-      success,
-      total_tasks_received: allTasks.length,
-      total_subtasks_received: totalSubtasks,
-      total_comments_received: totalComments,
-      cnj_detected: extractedCnj,
-      cnj_pesquisado: matchCnjMasked,
-      quantidade_de_candidatos: rankedCandidates.length,
-      tarefa_escolhida: chosenTask,
-      motivo_da_escolha: chosenReason,
-
-      // Frontend backwards compatibility props
-      count: rankedCandidates.length,
-      task: chosenTask,
-      matchType: chosenTask ? rankedCandidates[0].matchType : "not_found",
+      success: !!chosenTask,
       searchedCNJ: matchCnjMasked,
-      candidatesChecked: allTasks.length,
+      provider,
+      tasksChecked: allTasks.length,
+      commentsChecked: totalComments,
+      subtasksChecked: totalSubtasks,
       candidates: rankedCandidates.map((c: any) => ({
         id: c.task.id,
         content: c.task.content,
@@ -2637,54 +2596,36 @@ app.all("/api/todoist/search-all", async (req: any, res) => {
         matchType: c.matchType,
         reason: c.details.join(", ")
       })),
-      reason: chosenReason,
-      debug: {
-        totalTasks: allTasks.length,
-        totalSubtasks,
-        totalComments,
-        searchedCNJ: matchCnjMasked,
-        matchCnjDigits
-      }
+      chosenTask,
+      confidence,
+      mirrorReady: !!chosenTask,
+      reason
     });
 
   } catch (err: any) {
     console.error("Erro interno no search-all:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({
+      success: false,
+      errorType: "TODOIST_CONNECTION_ERROR",
+      provider: cachedProvider || "none",
+      testedMethods: ["rest_v2_projects", "sdk_get_projects", "sync_v9_api"],
+      message: err.message || "Erro desconhecido de conexão com Todoist",
+      mirrorReady: false
+    });
   }
 });
 
 app.get("/api/todoist/tasks", async (req: any, res) => {
   const { filter, project_id } = req.query;
-  let url = "https://api.todoist.com/rest/v2/tasks";
-  if (project_id) {
-    url += `?project_id=${project_id}`;
-  }
-
   try {
-    const apiRes = await fetch(url, {
-      headers: { Authorization: `Bearer ${req.todoistToken}` }
-    });
-
-    if (!apiRes.ok) {
-      const errText = await apiRes.text();
-      console.error(`[Todoist API Error] endpoint: ${url}, status: ${apiRes.status}, error: ${errText}`);
-      return res.status(apiRes.status).json({
-        error: "Todoist API error",
-        todoistStatus: apiRes.status,
-        todoistBody: errText,
-        endpointCalled: url,
-        querySent: filter || ""
-      });
-    }
-
-    const data = await apiRes.json();
-    const allTasksRaw = Array.isArray(data) ? data : (data.results || data.items || []);
+    const provider = await getWorkingProvider(req.todoistToken);
+    const data = await todoistClient.getTasks(req.todoistToken, { project_id }, provider);
+    const allTasksRaw = Array.isArray(data) ? data : [];
 
     if (filter) {
-      const query = normalizeTodoistSearchQuery(filter);
-      let searchTerm = query;
-      if (query.toLowerCase().startsWith("search:")) {
-        searchTerm = query.substring(7);
+      let searchTerm = filter as string;
+      if (searchTerm.toLowerCase().startsWith("search:")) {
+        searchTerm = searchTerm.substring(7);
       }
       const cleanSearchTerm = searchTerm.replace(/\s+/g, "").toLowerCase();
 
@@ -2707,12 +2648,9 @@ app.get("/api/todoist/tasks", async (req: any, res) => {
         return false;
       });
 
-      console.log(`[Todoist Logs] API REST v2 Tasks Filter | Search term: "${searchTerm}" | Fetched: ${allTasksRaw.length} | Matches: ${filteredTasks.length}`);
-      res.setHeader("X-Todoist-Endpoint-Called", "https://api.todoist.com/rest/v2/tasks");
       return res.json(filteredTasks);
     }
 
-    res.setHeader("X-Todoist-Endpoint-Called", "https://api.todoist.com/rest/v2/tasks");
     return res.json(allTasksRaw);
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
@@ -2720,27 +2658,9 @@ app.get("/api/todoist/tasks", async (req: any, res) => {
 });
 
 app.post("/api/todoist/tasks", async (req: any, res) => {
-  const endpointCalled = "https://api.todoist.com/rest/v2/tasks";
   try {
-    const apiRes = await fetch(endpointCalled, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${req.todoistToken}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(req.body)
-    });
-    if (!apiRes.ok) {
-      const errText = await apiRes.text();
-      return res.status(apiRes.status).json({
-        error: "Todoist API error",
-        todoistStatus: apiRes.status,
-        todoistBody: errText,
-        endpointCalled,
-        querySent: ""
-      });
-    }
-    const data = await apiRes.json();
+    const provider = await getWorkingProvider(req.todoistToken);
+    const data = await todoistClient.createTask(req.todoistToken, req.body, provider);
     res.json(data);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -2748,22 +2668,9 @@ app.post("/api/todoist/tasks", async (req: any, res) => {
 });
 
 app.get("/api/todoist/tasks/:id", async (req: any, res) => {
-  const endpointCalled = `https://api.todoist.com/rest/v2/tasks/${req.params.id}`;
   try {
-    const apiRes = await fetch(endpointCalled, {
-      headers: { Authorization: `Bearer ${req.todoistToken}` }
-    });
-    if (!apiRes.ok) {
-      const errText = await apiRes.text();
-      return res.status(apiRes.status).json({
-        error: "Todoist API error",
-        todoistStatus: apiRes.status,
-        todoistBody: errText,
-        endpointCalled,
-        querySent: ""
-      });
-    }
-    const data = await apiRes.json();
+    const provider = await getWorkingProvider(req.todoistToken);
+    const data = await todoistClient.getTask(req.todoistToken, req.params.id, provider);
     res.json(data);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -2771,27 +2678,9 @@ app.get("/api/todoist/tasks/:id", async (req: any, res) => {
 });
 
 app.post("/api/todoist/tasks/:id", async (req: any, res) => {
-  const endpointCalled = `https://api.todoist.com/rest/v2/tasks/${req.params.id}`;
   try {
-    const apiRes = await fetch(endpointCalled, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${req.todoistToken}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(req.body)
-    });
-    if (!apiRes.ok) {
-      const errText = await apiRes.text();
-      return res.status(apiRes.status).json({
-        error: "Todoist API error",
-        todoistStatus: apiRes.status,
-        todoistBody: errText,
-        endpointCalled,
-        querySent: ""
-      });
-    }
-    const data = await apiRes.json();
+    const provider = await getWorkingProvider(req.todoistToken);
+    const data = await todoistClient.updateTask(req.todoistToken, req.params.id, req.body, provider);
     res.json(data);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -2799,22 +2688,9 @@ app.post("/api/todoist/tasks/:id", async (req: any, res) => {
 });
 
 app.delete("/api/todoist/tasks/:id", async (req: any, res) => {
-  const endpointCalled = `https://api.todoist.com/rest/v2/tasks/${req.params.id}`;
   try {
-    const apiRes = await fetch(endpointCalled, {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${req.todoistToken}` }
-    });
-    if (!apiRes.ok) {
-      const errText = await apiRes.text();
-      return res.status(apiRes.status).json({
-        error: "Todoist API error",
-        todoistStatus: apiRes.status,
-        todoistBody: errText,
-        endpointCalled,
-        querySent: ""
-      });
-    }
+    const provider = await getWorkingProvider(req.todoistToken);
+    await todoistClient.deleteTask(req.todoistToken, req.params.id, provider);
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -2822,22 +2698,9 @@ app.delete("/api/todoist/tasks/:id", async (req: any, res) => {
 });
 
 app.post("/api/todoist/tasks/:id/close", async (req: any, res) => {
-  const endpointCalled = `https://api.todoist.com/rest/v2/tasks/${req.params.id}/close`;
   try {
-    const apiRes = await fetch(endpointCalled, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${req.todoistToken}` }
-    });
-    if (!apiRes.ok) {
-      const errText = await apiRes.text();
-      return res.status(apiRes.status).json({
-        error: "Todoist API error",
-        todoistStatus: apiRes.status,
-        todoistBody: errText,
-        endpointCalled,
-        querySent: ""
-      });
-    }
+    const provider = await getWorkingProvider(req.todoistToken);
+    await todoistClient.closeTask(req.todoistToken, req.params.id, provider);
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -2845,22 +2708,9 @@ app.post("/api/todoist/tasks/:id/close", async (req: any, res) => {
 });
 
 app.post("/api/todoist/tasks/:id/reopen", async (req: any, res) => {
-  const endpointCalled = `https://api.todoist.com/rest/v2/tasks/${req.params.id}/reopen`;
   try {
-    const apiRes = await fetch(endpointCalled, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${req.todoistToken}` }
-    });
-    if (!apiRes.ok) {
-      const errText = await apiRes.text();
-      return res.status(apiRes.status).json({
-        error: "Todoist API error",
-        todoistStatus: apiRes.status,
-        todoistBody: errText,
-        endpointCalled,
-        querySent: ""
-      });
-    }
+    const provider = await getWorkingProvider(req.todoistToken);
+    await todoistClient.reopenTask(req.todoistToken, req.params.id, provider);
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -2869,16 +2719,9 @@ app.post("/api/todoist/tasks/:id/reopen", async (req: any, res) => {
 
 app.get("/api/todoist/comments", async (req: any, res) => {
   const { task_id, project_id } = req.query;
-  let url = "https://api.todoist.com/rest/v2/comments";
-  if (task_id) url += `?task_id=${task_id}`;
-  else if (project_id) url += `?project_id=${project_id}`;
-
   try {
-    const apiRes = await fetch(url, {
-      headers: { Authorization: `Bearer ${req.todoistToken}` }
-    });
-    if (!apiRes.ok) throw new Error(`Todoist API error: ${apiRes.status}`);
-    const data = await apiRes.json();
+    const provider = await getWorkingProvider(req.todoistToken);
+    const data = await todoistClient.getComments(req.todoistToken, { task_id, project_id }, provider);
     res.json(data);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -2887,19 +2730,8 @@ app.get("/api/todoist/comments", async (req: any, res) => {
 
 app.post("/api/todoist/comments", async (req: any, res) => {
   try {
-    const apiRes = await fetch("https://api.todoist.com/rest/v2/comments", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${req.todoistToken}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(req.body)
-    });
-    if (!apiRes.ok) {
-      const errText = await apiRes.text();
-      throw new Error(`Todoist API error: ${apiRes.status} - ${errText}`);
-    }
-    const data = await apiRes.json();
+    const provider = await getWorkingProvider(req.todoistToken);
+    const data = await todoistClient.createComment(req.todoistToken, req.body, provider);
     res.json(data);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -2908,11 +2740,8 @@ app.post("/api/todoist/comments", async (req: any, res) => {
 
 app.delete("/api/todoist/comments/:id", async (req: any, res) => {
   try {
-    const apiRes = await fetch(`https://api.todoist.com/rest/v2/comments/${req.params.id}`, {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${req.todoistToken}` }
-    });
-    if (!apiRes.ok) throw new Error(`Todoist API error: ${apiRes.status}`);
+    const provider = await getWorkingProvider(req.todoistToken);
+    await todoistClient.deleteComment(req.todoistToken, req.params.id, provider);
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

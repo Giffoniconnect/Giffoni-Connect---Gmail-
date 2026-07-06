@@ -833,17 +833,17 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
 1. Token Todoist Carregado: ${detectedTokenLoaded ? "SIM" : "NÃO"} (Fonte: ${detectedTokenSource})
 2. Parâmetros de Entrada:
    - CNJ Principal: "${cnj}"
-   - CNJ Pesquisado: "${result.cnj_pesquisado || "N/A"}"
+   - CNJ Pesquisado: "${result.searchedCNJ || "N/A"}"
    - Autor: "${autor}" | Réu: "${reu}"
 3. Métricas de Busca:
-   - Total de Tarefas Ativas Recebidas: ${result.total_tasks_received}
-   - Total de Subtarefas: ${result.total_subtasks_received}
-   - Total de Comentários analisados: ${result.total_comments_received}
-   - Quantidade de Candidatos qualificados: ${result.quantidade_de_candidatos}
+   - Total de Tarefas Ativas Recebidas: ${result.tasksChecked}
+   - Total de Subtarefas: ${result.subtasksChecked}
+   - Total de Comentários analisados: ${result.commentsChecked}
+   - Quantidade de Candidatos qualificados: ${result.candidates?.length || 0}
 4. Conclusão da correspondência:
    - Sucesso: ${result.success ? "SIM" : "NÃO"}
-   - Tarefa Escolhida: ${result.tarefa_escolhida ? `"${result.tarefa_escolhida.content}"` : "Nenhuma (Seleção manual necessária ou não encontrada)"}
-   - Motivo da escolha: ${result.motivo_da_escolha}
+   - Tarefa Escolhida: ${result.chosenTask ? `"${result.chosenTask.content}"` : "Nenhuma (Seleção manual necessária ou não encontrada)"}
+   - Motivo da escolha: ${result.reason}
 ========================================================================
       `);
 
@@ -854,9 +854,9 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
         queriesTried: [
           {
             query: `search:${manualQuery || cnj}`,
-            endpoint: "https://api.todoist.com/rest/v2/tasks",
+            endpoint: result.provider ? `https://api.todoist.com/rest/v2/tasks (Provider: ${result.provider})` : "https://api.todoist.com/rest/v2/tasks",
             status: response.status,
-            totalReturned: result.total_tasks_received,
+            totalReturned: result.tasksChecked || 0,
             titles: result.candidates?.map((c: any) => c.content) || [],
             rawResponse: JSON.stringify(result).substring(0, 500)
           }
@@ -868,17 +868,17 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
           breakdown: {},
           decision: c.reason
         })) || [],
-        chosenTask: result.tarefa_escolhida?.content || null,
-        chosenTaskScore: result.tarefa_escolhida ? result.candidates?.find((c: any) => c.id === result.tarefa_escolhida.id)?.score : null,
-        failureReason: !result.success ? result.motivo_da_escolha : null,
-        finalResult: result.tarefa_escolhida ? "encontrada" : (result.quantidade_de_candidatos > 0 ? "múltiplas encontradas" : "nenhuma encontrada"),
-        debug: result.debug
+        chosenTask: result.chosenTask?.content || null,
+        chosenTaskScore: result.chosenTask ? result.candidates?.find((c: any) => c.id === result.chosenTask.id)?.score : null,
+        failureReason: !result.success ? result.reason : null,
+        finalResult: result.chosenTask ? "encontrada" : ((result.candidates?.length || 0) > 0 ? "múltiplas encontradas" : "nenhuma encontrada"),
+        debug: result
       };
 
       setTodoistDiagnostic(diagReport);
 
-      if (result.success && result.tarefa_escolhida) {
-        const topTask = result.tarefa_escolhida;
+      if (result.success && result.chosenTask) {
+        const topTask = result.chosenTask;
         setTodoistLinkedTask(topTask);
         setTodoistTaskTitle(topTask.content);
         setTodoistTaskDescription(topTask.description || '');
@@ -895,7 +895,7 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
         addSystemLog('success', `Tarefa vinculada com sucesso: "${topTask.content}".`, 'gmail_sync');
         setTodoistLoading(false);
         return { success: true, count: 1, task: topTask };
-      } else if (result.quantidade_de_candidatos > 0) {
+      } else if (result.candidates && result.candidates.length > 0) {
         // Multiple matches
         const candidateTasks = result.candidates.map((c: any) => {
           return {
