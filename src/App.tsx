@@ -681,124 +681,79 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
     let detectedTokenSource = "AUSENTE";
     let detectedTokenLoaded = false;
 
-    const cnj = (item.processNumber || '').trim();
+    const cnjRaw = (item.processNumber || '').trim();
+    const cnjCanonical = cnjRaw.replace(/[^\d]/g, "");
+
+    const manualSearchRaw = (manualQuery || "").trim();
+    const manualSearchCanonical = manualSearchRaw
+      .toLowerCase()
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .replace(/[-–—.\/@\(\)\n]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
     const autor = (item.autor || '').trim();
     const reu = (item.reu || '').trim();
     const vara = (item.vara || '').trim();
     const tribunal = (item.tribunal || '').trim();
     const assunto = (item.assunto || item.subject || '').trim();
 
-    const isCnjValid = cnj && cnj !== 'Não identificado' && cnj !== 'Nãoidentificado';
+    const isCnjValid = cnjRaw && cnjRaw !== 'Não identificado' && cnjRaw !== 'Nãoidentificado';
 
     const traceId = "trace_" + Date.now() + "_" + Math.random().toString(36).substring(2, 11);
     const startedAt = new Date().toISOString();
-    const cleanCnj = cnj ? cnj.replace(/[^\d]/g, "") : "";
 
     const initialEvents: { timestamp: string; sequence: number; type: "success" | "info" | "warning" | "error"; message: string; }[] = [
       {
         timestamp: startedAt,
         sequence: 1,
         type: "info",
-        message: "Usuário direito.rgr@gmail.com clicou em 'Pesquisar no Todoist'."
-      },
-      {
-        timestamp: new Date().toISOString(),
-        sequence: 2,
-        type: "info",
-        message: `Dados extraídos com sucesso: CNJ="${cnj}", Autor="${autor}", Réu="${reu}"`
-      },
-      {
-        timestamp: new Date().toISOString(),
-        sequence: 3,
-        type: "success",
-        message: "Payload do clique do usuário compilado e validado."
-      },
-      {
-        timestamp: new Date().toISOString(),
-        sequence: 4,
-        type: "info",
-        message: "Iniciando requisição POST para o backend proxy /api/todoist/search-all."
-      },
-      {
-        timestamp: new Date().toISOString(),
-        sequence: 5,
-        type: "success",
-        message: `Trace ID ${traceId} gerado e propagado nos cabeçalhos da requisição.`
+        message: `Busca iniciada. CNJ Raw: "${cnjRaw}". Texto Manual Raw: "${manualSearchRaw}".`
       }
     ];
 
-    const initialTrace = {
+    const initialTrace: any = {
       traceId,
       startedAt,
-      finishedAt: "",
-      durationMs: 0,
       route: window.location.pathname,
-      cnj,
-      normalizedCnj: cleanCnj,
-      status: "FRONTEND_SENDING",
       requestSucceeded: false,
       matchFound: false,
       mirrorReady: false,
-      failureStage: null,
-      failureReason: null,
+      status: "INIT",
+      cnjRaw,
+      cnjCanonical,
+      manualSearchRaw,
+      manualSearchCanonical,
       events: initialEvents,
-      stages: {
-        "1": {
-          name: "CLIQUE DO USUÁRIO (FRONTEND)",
-          timestamp: startedAt,
-          status: "SUCESSO" as const,
-          details: {
-            timestamp: startedAt,
-            buttonClicked: "Pesquisar no Todoist",
-            userEmail: "direito.rgr@gmail.com",
-            route: window.location.pathname,
-            cnj,
-            normalizedCnj: cleanCnj,
-            autor,
-            reu,
-            tribunal,
-            vara,
-            assunto
-          }
-        },
-        "2": {
-          name: "ENVIANDO FRONTEND -> BACKEND",
-          timestamp: new Date().toISOString(),
-          status: "SUCESSO" as const,
-          details: {
-            endpoint: "/api/todoist/search-all",
-            method: "POST",
-            url: window.location.origin + "/api/todoist/search-all",
-            queryString: "N/A",
-            headers: {
-              "Accept": "application/json",
-              "Content-Type": "application/json",
-              "X-Requested-With": "XMLHttpRequest",
-              "X-Todoist-Trace-Id": traceId
-            },
-            body: {
-              cnj: manualQuery || cnj,
-              route: window.location.pathname,
-              autor,
-              reu,
-              tribunal,
-              assunto
-            }
-          }
-        }
-      }
+      stages: {}
+    };
+
+    setTodoistDiagnostic(initialTrace);
+    console.log({ type: "processing", message: "Iniciando varredura no Todoist..." });
+
+    const requestBody = {
+      traceId,
+      route: window.location.pathname,
+      trace: initialTrace,
+      cnjRaw,
+      cnjCanonical,
+      manualSearchRaw,
+      manualSearchCanonical,
+      autor,
+      reu,
+      tribunal,
+      assunto,
+      emailSubject: item.subject || item.title || "",
+      emailBody: item.description || item.text || item.publicationText || "",
     };
 
     try {
-      // First check if there is a saved link for this CNJ
-      const cleanCnjForSaved = isCnjValid ? cnj.replace(/\s+/g, '') : '';
-      if (cleanCnjForSaved && !forceNoCache) {
+      if (cnjCanonical && !forceNoCache && !manualSearchRaw) {
         const savedLinksRaw = localStorage.getItem('boss_cnj_todoist_links');
         const savedLinks = savedLinksRaw ? JSON.parse(savedLinksRaw) : {};
-        const savedTaskId = savedLinks[cleanCnjForSaved];
+        const savedTaskId = savedLinks[cnjCanonical];
 
         if (savedTaskId) {
-          // Fetch specific task
           const taskRes = await fetch(`/api/todoist/tasks/${savedTaskId}`);
           const sourceHeader = taskRes.headers.get("X-Todoist-Token-Source");
           const loadedHeader = taskRes.headers.get("X-Todoist-Token-Loaded");
@@ -806,68 +761,36 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
           if (loadedHeader) detectedTokenLoaded = loadedHeader === "SIM";
 
           if (taskRes.ok) {
-            const task = await taskRes.json();
-            if (task && !task.error) {
-              setTodoistLinkedTask(task);
-              setTodoistTaskTitle(task.content);
-              setTodoistTaskDescription(task.description || '');
-              setTodoistTaskPriority(task.priority || 1);
-              if (task.due) {
-                setTodoistTaskDate(task.due.date || '');
-              } else {
-                setTodoistTaskDate('');
-              }
-              setTodoistTaskLabels(task.labels || []);
-              setTodoistMultipleTasksFound([]);
-              setIsTodoistSelectionModalOpen(false);
-              setTodoistNotFoundForCnj(false);
-
-              // Update Trace for History cache hit
-              const cacheTrace = {
-                ...initialTrace,
-                status: "SUCCESS_MIRROR_READY",
-                finishedAt: new Date().toISOString(),
-                durationMs: Date.now() - new Date(startedAt).getTime(),
-                requestSucceeded: true,
-                matchFound: true,
-                mirrorReady: true
-              };
-              cacheTrace.events.push({
-                timestamp: new Date().toISOString(),
-                sequence: cacheTrace.events.length + 1,
-                type: "success" as const,
-                message: "Vínculo localizado no histórico de cache do navegador."
-              });
-              setTodoistDiagnostic(cacheTrace);
-
-              setTodoistLoading(false);
-              return { success: true, count: 1, task };
-            }
+            const taskData = await taskRes.json();
+            setTodoistLinkedTask(taskData);
+            setTodoistDiagnostic({
+               ...initialTrace,
+               status: "SUCCESS_CACHED",
+               matchFound: true,
+               mirrorReady: true,
+               requestSucceeded: true,
+               chosenTask: taskData,
+               events: [...initialEvents, { timestamp: new Date().toISOString(), sequence: 2, type: "success", message: `Tarefa carregada via cache (ID: ${savedTaskId})` }]
+            });
+            console.log({ type: "success", message: `Tarefa recuperada instantaneamente via vínculo salvo (ID: ${savedTaskId})` });
+            setTodoistLoading(false);
+            return { success: true, count: 1, cached: true };
+          } else {
+            console.log({ type: "warning", message: "Vínculo salvo falhou (tarefa possivelmente excluída). Iniciando busca completa..." });
+            delete savedLinks[cnjCanonical];
+            localStorage.setItem('boss_cnj_todoist_links', JSON.stringify(savedLinks));
           }
         }
       }
 
-      // Single, highly controlled backend POST request
       const response = await fetch("/api/todoist/search-all", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "X-Todoist-Trace-Id": traceId
         },
-        body: JSON.stringify({
-          traceId,
-          route: window.location.pathname,
-          trace: initialTrace,
-          cnj: manualQuery || cnj,
-          autor,
-          reu,
-          tribunal,
-          assunto,
-          emailSubject: item.subject || item.title || "",
-          emailBody: item.description || item.text || item.publicationText || "",
-        })
+        body: JSON.stringify(requestBody)
       });
-
       const sourceHeader = response.headers.get("X-Todoist-Token-Source");
       const loadedHeader = response.headers.get("X-Todoist-Token-Loaded");
       if (sourceHeader) detectedTokenSource = sourceHeader;
@@ -882,188 +805,72 @@ ${item.snippet || item.subject || 'Sem resumo disponível.'}`;
         } catch (e) {
           // not json
         }
-
         const errorMsg = errJson.message || `Erro na API Todoist (HTTP ${response.status})`;
         
         let failedTrace = { ...initialTrace };
         failedTrace.finishedAt = new Date().toISOString();
         failedTrace.durationMs = Date.now() - new Date(startedAt).getTime();
         failedTrace.status = "BACKEND_REQUEST_FAILED";
-        failedTrace.failureStage = "ETAPA 2";
         failedTrace.failureReason = errorMsg;
         failedTrace.requestSucceeded = false;
         failedTrace.events.push({
           timestamp: new Date().toISOString(),
           sequence: failedTrace.events.length + 1,
           type: "error",
-          message: `Falha na transmissão do Frontend -> Backend: ${errorMsg}`
+          message: errorMsg
         });
-        setTodoistDiagnostic(failedTrace);
 
-        setTodoistLoading(false);
-        return { success: false, count: 0, error: errorMsg };
+        setTodoistDiagnostic(failedTrace);
+        throw new Error(errorMsg);
       }
 
       const result = await response.json();
-      
-      let finalTrace = result.trace || initialTrace;
-      if (!finalTrace.events) finalTrace.events = [];
-      if (!finalTrace.stages) finalTrace.stages = {};
+      setTodoistDiagnostic(result.trace || result);
 
-      const addFrontendEvent = (type: "success" | "info" | "warning" | "error", message: string) => {
-        finalTrace.events.push({
-          timestamp: new Date().toISOString(),
-          sequence: finalTrace.events.length + 1,
-          type,
-          message
-        });
-      };
+      if (result.success && result.found && result.chosenTask) {
+        setTodoistLinkedTask(result.chosenTask);
+        
+        // Save link if CNJ exists
+        if (cnjCanonical && requestBody.cnjCanonical) {
+          const savedLinksRaw = localStorage.getItem('boss_cnj_todoist_links');
+          const savedLinks = savedLinksRaw ? JSON.parse(savedLinksRaw) : {};
+          savedLinks[cnjCanonical] = result.chosenTask.id;
+          localStorage.setItem('boss_cnj_todoist_links', JSON.stringify(savedLinks));
+        }
 
-      addFrontendEvent("info", "Frontend recebeu a resposta do Backend com sucesso.");
-
-      if (result.success === false && result.errorType === "TODOIST_API_ERROR") {
-        addFrontendEvent("error", `Conexão Todoist indisponível: ${result.message}`);
-        finalTrace.status = "TODOIST_CONNECTION_FAILED";
-        finalTrace.failureStage = "ETAPA 3";
-        finalTrace.failureReason = result.message;
-        finalTrace.finishedAt = new Date().toISOString();
-        finalTrace.durationMs = Date.now() - new Date(startedAt).getTime();
-        setTodoistDiagnostic(finalTrace);
-
-        setTodoistLoading(false);
-        return { success: false, count: 0, error: result.message };
-      }
-
-      let matchFound = result.success && result.found;
-      let mirrorReady = result.success && result.mirrorReady;
-      let chosenTaskObj = result.chosenTask || null;
-      let finalResultStr = result.result || "not_found";
-
-      let nextLinkedTask = null;
-      let nextMultipleTasks = [];
-      let nextNotFoundForCnj = false;
-
-      if (!matchFound) {
-        nextLinkedTask = null;
-        mirrorReady = false;
-        nextNotFoundForCnj = (finalResultStr === "not_found" || finalResultStr === "not_found_active_scope");
-        addFrontendEvent("warning", "Nenhuma tarefa acoplável localizada. Espelho da Tarefa não iniciará carregamento.");
+        return { success: true, count: 1 };
+      } else if (result.success && result.candidates && result.candidates.length > 0) {
+        // Needs manual selection
+        setTodoistMultipleTasksFound(result.candidates);
+        setIsTodoistSelectionModalOpen(true);
+        return { success: true, count: result.candidates.length, needsSelection: true };
       } else {
-        if (finalResultStr === "found" && chosenTaskObj) {
-          nextLinkedTask = chosenTaskObj;
-          addFrontendEvent("success", `Tarefa única identificada com sucesso (ID: ${chosenTaskObj.id}). Carregamento do Espelho iniciado.`);
-        } else if (finalResultStr === "ambiguous_match" && result.candidates && result.candidates.length > 0) {
-          nextMultipleTasks = result.candidates.map((c: any) => ({
-            id: c.id,
-            content: c.content,
-            score: c.score,
-            description: c.description || "",
-            comments: c.comments || [],
-            priority: c.priority || 1,
-            due: c.due || null,
-            labels: c.labels || []
-          }));
-          addFrontendEvent("info", `Múltiplos candidatos (${nextMultipleTasks.length}) encontrados. Seleção manual requerida no painel.`);
-        }
+        setTodoistNotFoundForCnj(true);
+        return { success: true, count: 0 };
       }
 
-      finalTrace.stages["8"] = {
-        name: "INTERPRETAÇÃO NO FRONTEND (ESTADO REACT)",
-        timestamp: new Date().toISOString(),
-        status: "SUCESSO",
-        details: {
-          todoistDiagnostic: "ATUALIZADO",
-          todoistLinkedTask: nextLinkedTask ? nextLinkedTask.content : null,
-          todoistMultipleTasksFound: nextMultipleTasks.length,
-          todoistNotFoundForCnj: nextNotFoundForCnj,
-          mirrorReady,
-          timestamp: new Date().toISOString()
-        }
-      };
-
-      setTodoistLinkedTask(nextLinkedTask);
-      setTodoistMultipleTasksFound(nextMultipleTasks);
-      setTodoistNotFoundForCnj(nextNotFoundForCnj);
-
-      if (nextLinkedTask) {
-        setTodoistTaskTitle(nextLinkedTask.content);
-        setTodoistTaskDescription(nextLinkedTask.description || '');
-        setTodoistTaskPriority(nextLinkedTask.priority || 1);
-        if (nextLinkedTask.due) {
-          setTodoistTaskDate(nextLinkedTask.due.date || '');
-        } else {
-          setTodoistTaskDate('');
-        }
-        setTodoistTaskLabels(nextLinkedTask.labels || []);
-      }
-
-      let conclusionStatus = "NOT_FOUND_ACTIVE_SCOPE";
-      if (!result.success) {
-        conclusionStatus = "BACKEND_REQUEST_FAILED";
-      } else if (finalResultStr === "found" && nextLinkedTask) {
-        conclusionStatus = "SUCCESS_MIRROR_READY";
-      } else if (finalResultStr === "ambiguous_match") {
-        conclusionStatus = "MULTIPLE_CANDIDATES";
-      } else if (finalResultStr === "partial_search_scope") {
-        conclusionStatus = "PROCESSING_FAILED";
-      } else {
-        conclusionStatus = "NOT_FOUND_ACTIVE_SCOPE";
-      }
-
-      addFrontendEvent("success", `Fluxo concluído com status de rastreamento: ${conclusionStatus}.`);
-
-      finalTrace.stages["9"] = {
-        name: "CONCLUSÃO DO FLUXO (RESULTADO FINAL)",
-        timestamp: new Date().toISOString(),
-        status: "SUCESSO",
-        details: {
-          conclusion: conclusionStatus,
-          timestamp: new Date().toISOString()
-        }
-      };
-
-      finalTrace.finishedAt = new Date().toISOString();
-      finalTrace.durationMs = Date.now() - new Date(startedAt).getTime();
-      finalTrace.status = conclusionStatus;
-      finalTrace.matchFound = matchFound;
-      finalTrace.mirrorReady = mirrorReady;
-
-      setTodoistDiagnostic(finalTrace);
-      setTodoistLoading(false);
-
-      if (conclusionStatus === "SUCCESS_MIRROR_READY" && nextLinkedTask) {
-        return { success: true, count: 1, task: nextLinkedTask };
-      } else if (conclusionStatus === "MULTIPLE_CANDIDATES") {
-        return { success: true, count: nextMultipleTasks.length, tasks: nextMultipleTasks };
-      } else {
-        return { success: false, count: 0, reason: result.reason };
-      }
-
-    } catch (err: any) {
-      console.error("Erro no investigador unificado:", err);
+    } catch (error: any) {
+      console.error('Error fetching tasks:', error);
       
       let failedTrace = { ...initialTrace };
       failedTrace.finishedAt = new Date().toISOString();
       failedTrace.durationMs = Date.now() - new Date(startedAt).getTime();
-      failedTrace.status = "PROCESSING_FAILED";
-      failedTrace.failureStage = "ETAPA 8";
-      failedTrace.failureReason = err.message || err;
-      failedTrace.requestSucceeded = true;
+      failedTrace.status = "FRONTEND_REQUEST_FAILED";
+      failedTrace.failureReason = error.message || String(error);
+      failedTrace.requestSucceeded = false;
       failedTrace.events.push({
         timestamp: new Date().toISOString(),
         sequence: failedTrace.events.length + 1,
         type: "error",
-        message: `Falha grave na interpretação do Frontend: ${err.message || err}`
+        message: `Falha na requisição: ${error.message || String(error)}`
       });
-      setTodoistDiagnostic(failedTrace);
 
-      setTodoistLoading(false);
-      return { success: false, count: 0, error: err.message || err };
+      setTodoistDiagnostic(failedTrace);
+      throw error;
     } finally {
       setTodoistLoading(false);
     }
   };
-
   const fetchTodoistMetadata = async () => {
     const normalizeTodoistListLocal = (data: any, listName: string): any[] => {
       let result: any[] = [];

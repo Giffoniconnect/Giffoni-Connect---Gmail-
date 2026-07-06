@@ -370,6 +370,8 @@ export const ControladoriaWorkspaceComponent: React.FC<ControladoriaWorkspacePro
   };
 
   const [searchQuery, setSearchQuery] = useState("");
+  const [todoistModalSearch, setTodoistModalSearch] = useState("");
+  const [todoistModalFilter, setTodoistModalFilter] = useState<"Ativas" | "Concluídas" | "Todas">("Todas");
 
   const [copiedFrontend, setCopiedFrontend] = useState(false);
   const [copiedBackend, setCopiedBackend] = useState(false);
@@ -2750,7 +2752,7 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
                 <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
                 <input
                   type="text"
-                  placeholder="Buscar processo por CNJ ou termo..."
+                  placeholder="Pesquise por CNJ, cliente, parte, pasta física, nome ou link da tarefa"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full bg-slate-50 hover:bg-slate-100/70 focus:bg-white border border-slate-200 rounded-xl pl-10 pr-4 py-2.5 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-indigo-500 transition"
@@ -2783,6 +2785,7 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
           </div>
 
           {/* MODAL: RELATÓRIO DO INVESTIGADOR */}
+          {/* MODAL: RELATÓRIO DO INVESTIGADOR */}
           {isInvestigadorModalOpen && (
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
               <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-5xl max-h-[92vh] flex flex-col shadow-2xl text-slate-100 overflow-hidden font-sans">
@@ -2795,27 +2798,14 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
                     </div>
                     <div>
                       <h3 className="text-sm font-bold text-white tracking-tight">
-                        Inspector de Rede Todoist — Diagnóstico de Interrupção
+                        Investigador de Bugs da Integração Todoist
                       </h3>
                       <p className="text-[10px] text-slate-400 font-mono mt-0.5">
-                        direito.rgr@gmail.com • Tracing de Comunicação de Extremo a Extremo (9 Etapas)
+                        {todoistDiagnostic?.route || "/pushes/push-trt-mg/atualizar-controladoria"} • Diagnóstico Técnico
                       </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => {
-                        const allOpen = Object.values(expandedStages).every(v => v);
-                        const nextState = !allOpen;
-                        setExpandedStages({
-                          1: nextState, 2: nextState, 3: nextState, 4: nextState, 
-                          5: nextState, 6: nextState, 7: nextState, 8: nextState, 9: nextState
-                        });
-                      }}
-                      className="bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-[10px] uppercase px-3 py-1.5 rounded-lg border border-slate-700 transition flex items-center gap-1"
-                    >
-                      {Object.values(expandedStages).every(v => v) ? "Recolher Todas" : "Expandir Todas"}
-                    </button>
                     <button
                       onClick={() => setIsInvestigadorModalOpen(false)}
                       className="text-slate-400 hover:text-white hover:bg-slate-800 p-1.5 rounded-lg transition border border-transparent hover:border-slate-700"
@@ -2825,865 +2815,181 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
                   </div>
                 </div>
 
-                {/* Network Flow Banner / Overview Diagram */}
-                <div className="bg-slate-950 p-4 border-b border-slate-800/80">
-                  <div className="max-w-4xl mx-auto">
-                    <div className="text-[10px] text-slate-500 font-mono uppercase font-black text-center mb-2.5 tracking-wider">
-                      Caminho da Cadeia de Requisições
-                    </div>
-                    <div className="flex items-center justify-between text-xs font-mono">
-                      
-                      <div className="flex flex-col items-center gap-1.5 px-3 py-2 bg-slate-900 rounded-xl border border-slate-800 min-w-[110px]">
-                        <User className="h-4 w-4 text-slate-400" />
-                        <span className="font-bold text-[10px]">Frontend</span>
-                        <span className="text-[9px] text-emerald-400 font-black">ETAPA 1 & 2</span>
-                      </div>
-
-                      <div className="h-[2px] bg-indigo-500 flex-1 relative min-w-[30px]">
-                        <ArrowRight className="h-3.5 w-3.5 text-indigo-400 absolute -top-1.5 left-1/2 -translate-x-1/2" />
-                      </div>
-
-                      <div className="flex flex-col items-center gap-1.5 px-3 py-2 bg-slate-900 rounded-xl border border-slate-800 min-w-[110px]">
-                        <Database className="h-4 w-4 text-indigo-400" />
-                        <span className="font-bold text-[10px]">Backend Proxy</span>
-                        <span className="text-[9px] text-indigo-300 font-black">ETAPA 3 & 7</span>
-                      </div>
-
-                      <div className="h-[2px] bg-indigo-500 flex-1 relative min-w-[30px]">
-                        <ArrowRight className="h-3.5 w-3.5 text-indigo-400 absolute -top-1.5 left-1/2 -translate-x-1/2" />
-                      </div>
-
-                      <div className={`flex flex-col items-center gap-1.5 px-3 py-2 rounded-xl border min-w-[110px] ${
-                        (todoistDiagnostic?.queriesTried?.[0]?.status === 200) 
-                          ? "bg-emerald-950/30 border-emerald-900 text-emerald-400" 
-                          : "bg-red-950/30 border-red-900 text-red-400 animate-pulse"
-                      }`}>
-                        <Inbox className="h-4 w-4" />
-                        <span className="font-bold text-[10px]">Todoist API</span>
-                        <span className={`text-[9px] font-black uppercase`}>
-                          {todoistDiagnostic?.queriesTried?.[0]?.status === 200 ? "ETAPA 4 & 5 (200)" : `ETAPA 4 & 5 (${todoistDiagnostic?.queriesTried?.[0]?.status || 410})`}
-                        </span>
-                      </div>
-
-                      <div className="h-[2px] bg-indigo-500 flex-1 relative min-w-[30px]">
-                        <ArrowRight className="h-3.5 w-3.5 text-indigo-400 absolute -top-1.5 left-1/2 -translate-x-1/2" />
-                      </div>
-
-                      <div className="flex flex-col items-center gap-1.5 px-3 py-2 bg-slate-900 rounded-xl border border-slate-800 min-w-[110px]">
-                        <Cpu className="h-4 w-4 text-amber-400" />
-                        <span className="font-bold text-[10px]">Filtro Local</span>
-                        <span className="text-[9px] text-amber-300 font-black">ETAPA 6</span>
-                      </div>
-
-                      <div className="h-[2px] bg-indigo-500 flex-1 relative min-w-[30px]">
-                        <ArrowRight className="h-3.5 w-3.5 text-indigo-400 absolute -top-1.5 left-1/2 -translate-x-1/2" />
-                      </div>
-
-                      <div className="flex flex-col items-center gap-1.5 px-3 py-2 bg-slate-900 rounded-xl border border-slate-800 min-w-[110px]">
-                        <RefreshCw className="h-4 w-4 text-slate-400" />
-                        <span className="font-bold text-[10px]">React Mirror</span>
-                        <span className="text-[9px] text-emerald-400 font-black">ETAPA 8 & 9</span>
-                      </div>
-
-                    </div>
-                  </div>
-                </div>
-
-                {/* Exporter Toolbar */}
-                <div className="bg-slate-900/90 border-b border-slate-800/80 px-6 py-3 flex flex-wrap items-center justify-between gap-3">
-                  <div className="text-xs font-semibold text-slate-300">
-                    Ações de Diagnóstico & Cópia:
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    
-                    <button
-                      onClick={async () => {
-                        const text = generateDiagnosticReportText();
-                        await navigator.clipboard.writeText(text);
-                        setInvestigadorCopied(true);
-                        setTimeout(() => setInvestigadorCopied(false), 2000);
-                        addSystemLog("success", "Relatório completo em texto puro copiado!");
-                      }}
-                      className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[11px] uppercase px-3 py-2 rounded-lg transition flex items-center gap-1.5 shadow-md border border-indigo-500"
-                    >
-                      {investigadorCopied ? (
-                        <>
-                          <Check className="h-3.5 w-3.5 text-emerald-300" />
-                          Copiado!
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="h-3.5 w-3.5" />
-                          Copiar Relatório (Texto)
-                        </>
-                      )}
-                    </button>
-
-                    <button
-                      onClick={async () => {
-                        await navigator.clipboard.writeText(JSON.stringify(getFrontendPayload(), null, 2));
-                        setCopiedFrontend(true);
-                        setTimeout(() => setCopiedFrontend(false), 2000);
-                        addSystemLog("success", "Payload do Frontend copiado!");
-                      }}
-                      className="bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-[11px] uppercase px-3 py-2 rounded-lg border border-slate-700 transition flex items-center gap-1.5"
-                    >
-                      {copiedFrontend ? (
-                        <>
-                          <Check className="h-3.5 w-3.5 text-emerald-400" />
-                          Copiado!
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="h-3.5 w-3.5 text-slate-400" />
-                          Payload Frontend
-                        </>
-                      )}
-                    </button>
-
-                    <button
-                      onClick={async () => {
-                        await navigator.clipboard.writeText(JSON.stringify(getBackendPayload(), null, 2));
-                        setCopiedBackend(true);
-                        setTimeout(() => setCopiedBackend(false), 2000);
-                        addSystemLog("success", "Payload do Backend copiado!");
-                      }}
-                      className="bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-[11px] uppercase px-3 py-2 rounded-lg border border-slate-700 transition flex items-center gap-1.5"
-                    >
-                      {copiedBackend ? (
-                        <>
-                          <Check className="h-3.5 w-3.5 text-emerald-400" />
-                          Copiado!
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="h-3.5 w-3.5 text-slate-400" />
-                          Payload Backend
-                        </>
-                      )}
-                    </button>
-
-                    <button
-                      onClick={async () => {
-                        await navigator.clipboard.writeText(JSON.stringify(getTodoistPayload(), null, 2));
-                        setCopiedTodoistPayload(true);
-                        setTimeout(() => setCopiedTodoistPayload(false), 2000);
-                        addSystemLog("success", "Payload de Envio ao Todoist copiado!");
-                      }}
-                      className="bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-[11px] uppercase px-3 py-2 rounded-lg border border-slate-700 transition flex items-center gap-1.5"
-                    >
-                      {copiedTodoistPayload ? (
-                        <>
-                          <Check className="h-3.5 w-3.5 text-emerald-400" />
-                          Copiado!
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="h-3.5 w-3.5 text-slate-400" />
-                          Payload Todoist
-                        </>
-                      )}
-                    </button>
-
-                    <button
-                      onClick={async () => {
-                        await navigator.clipboard.writeText(JSON.stringify(getTodoistResponsePayload(), null, 2));
-                        setCopiedTodoistResponse(true);
-                        setTimeout(() => setCopiedTodoistResponse(false), 2000);
-                        addSystemLog("success", "Payload de Resposta do Todoist copiado!");
-                      }}
-                      className="bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-[11px] uppercase px-3 py-2 rounded-lg border border-slate-700 transition flex items-center gap-1.5"
-                    >
-                      {copiedTodoistResponse ? (
-                        <>
-                          <Check className="h-3.5 w-3.5 text-emerald-400" />
-                          Copiado!
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="h-3.5 w-3.5 text-slate-400" />
-                          Resposta Todoist
-                        </>
-                      )}
-                    </button>
-
-                    <button
-                      onClick={exportDiagnosticJsonFile}
-                      className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-[11px] uppercase px-3 py-2 rounded-lg transition flex items-center gap-1.5 shadow-md border border-amber-500"
-                    >
-                      <Download className="h-3.5 w-3.5" />
-                      Exportar Diagnóstico (JSON)
-                    </button>
-
-                  </div>
-                </div>
-
-                {/* Modal Body */}
-                <div className="overflow-y-auto p-6 max-h-[60vh] custom-scrollbar space-y-4 bg-slate-900/40">
+                <div className="flex-1 overflow-y-auto custom-scrollbar bg-slate-950 p-6 space-y-6">
                   
-                  {/* ETAPA 1 — CLIQUE DO USUÁRIO */}
-                  <div className="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden">
-                    <button
-                      onClick={() => setExpandedStages(prev => ({ ...prev, 1: !prev[1] }))}
-                      className="w-full flex items-center justify-between px-4 py-3 bg-slate-900 hover:bg-slate-800/80 transition text-left"
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <span className="bg-indigo-950 text-indigo-300 h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold font-mono">1</span>
-                        <div>
-                          <span className="text-xs font-bold text-white uppercase tracking-wide">ETAPA 1 — CLIQUE DO USUÁRIO (AÇÃO LOCAL)</span>
-                          <span className="block text-[10px] text-slate-400 mt-0.5">Captura inicial de clique e compilação de dados do painel do Frontend</span>
+                  {/* Resumo Diagnóstico */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-md space-y-3">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Key className="h-4 w-4 text-indigo-400" />
+                        <h4 className="text-xs font-bold text-white uppercase tracking-wide">Payload Original (Frontend)</h4>
+                      </div>
+                      <div className="space-y-1.5 text-[11px] font-mono">
+                        <div className="flex justify-between items-center bg-slate-950 p-2 rounded-lg border border-slate-800/80">
+                          <span className="text-slate-500 font-black uppercase text-[9px]">Rota (Trigger)</span>
+                          <span className="text-emerald-400 break-all ml-4 text-right">{todoistDiagnostic?.route || "/pushes/push-trt-mg/atualizar-controladoria"}</span>
+                        </div>
+                        <div className="flex justify-between items-center bg-slate-950 p-2 rounded-lg border border-slate-800/80">
+                          <span className="text-slate-500 font-black uppercase text-[9px]">Target CNJ</span>
+                          <span className="text-amber-300 font-bold">{todoistDiagnostic?.cnj || controladoriaActiveItem?.processNumber || "(vazio)"}</span>
+                        </div>
+                        <div className="flex justify-between items-center bg-slate-950 p-2 rounded-lg border border-slate-800/80">
+                          <span className="text-slate-500 font-black uppercase text-[9px]">Target Nome da Tarefa</span>
+                          <span className="text-amber-300 font-bold">{todoistDiagnostic?.manualSearchRaw || todoistDiagnostic?.taskName || "(vazio)"}</span>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <span className="bg-emerald-950 text-emerald-400 border border-emerald-900 text-[9px] font-bold font-mono px-2 py-0.5 rounded">SUCESSO</span>
-                        <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform duration-200 ${expandedStages[1] ? "rotate-0" : "-rotate-90"}`} />
+                    </div>
+
+                    <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-md space-y-3">
+                      <div className="flex items-center gap-2 mb-2">
+                        <AlertTriangle className="h-4 w-4 text-amber-400" />
+                        <h4 className="text-xs font-bold text-white uppercase tracking-wide">Autenticação & Estado</h4>
                       </div>
-                    </button>
-
-                    {expandedStages[1] && (
-                      <div className="p-4 border-t border-slate-800 space-y-4">
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
-                          <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/60">
-                            <span className="text-slate-500 block text-[9px] uppercase font-black tracking-wider">Horário do Clique</span>
-                            <span className="text-slate-300 font-mono font-semibold">{new Date(openTimestamp).toLocaleTimeString('pt-BR')}</span>
-                          </div>
-                          <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/60">
-                            <span className="text-slate-500 block text-[9px] uppercase font-black tracking-wider">Botão Clicado</span>
-                            <span className="text-slate-300 font-semibold">Pesquisar no Todoist</span>
-                          </div>
-                          <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/60">
-                            <span className="text-slate-500 block text-[9px] uppercase font-black tracking-wider font-mono">Usuário Logado</span>
-                            <span className="text-slate-300 break-all font-mono font-semibold">direito.rgr@gmail.com</span>
-                          </div>
-                          <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/60">
-                            <span className="text-slate-500 block text-[9px] uppercase font-black tracking-wider">Rota de Origem</span>
-                            <span className="text-indigo-400 font-semibold break-all font-mono">/pushes/push-trt-mg/atualizar-controladoria</span>
-                          </div>
+                      <div className="space-y-1.5 text-[11px] font-mono">
+                        <div className="flex justify-between items-center bg-slate-950 p-2 rounded-lg border border-slate-800/80">
+                          <span className="text-slate-500 font-black uppercase text-[9px]">Endpoint Chamado</span>
+                          <span className="text-indigo-300">/api/todoist/search-all</span>
                         </div>
-
-                        <div className="bg-slate-900 p-3 rounded-lg border border-slate-850 text-xs text-slate-300 space-y-2">
-                          <div className="font-bold text-white text-[11px] uppercase tracking-wider text-slate-400">Metadados da Publicação Aberta:</div>
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                            <div><strong className="text-slate-500">CNJ:</strong> <span className="font-mono text-indigo-300">{controladoriaActiveItem?.processNumber || "Não identificado"}</span></div>
-                            <div><strong className="text-slate-500">Autor:</strong> <span className="text-slate-200">{controladoriaActiveItem?.autor || "Não identificado"}</span></div>
-                            <div><strong className="text-slate-500">Réu:</strong> <span className="text-slate-200">{controladoriaActiveItem?.reu || "Não identificado"}</span></div>
-                          </div>
+                        <div className="flex justify-between items-center bg-slate-950 p-2 rounded-lg border border-slate-800/80">
+                          <span className="text-slate-500 font-black uppercase text-[9px]">Status Interno</span>
+                          <span className={todoistDiagnostic?.requestSucceeded ? "text-emerald-400 font-bold" : "text-amber-400 font-bold"}>
+                            {todoistDiagnostic?.requestSucceeded ? "SUCESSO" : "FALHA"}
+                          </span>
                         </div>
-
-                        <div className="space-y-1.5">
-                          <span className="text-slate-400 text-[10px] font-mono uppercase font-black tracking-wider block">Payload Gerado pelo Frontend (JSON completo):</span>
-                          <div className="relative group">
-                            <button
-                              onClick={async () => {
-                                await navigator.clipboard.writeText(JSON.stringify(getFrontendPayload(), null, 2));
-                                addSystemLog("success", "Payload do Frontend copiado!");
-                              }}
-                              className="absolute right-3 top-3 opacity-0 group-hover:opacity-100 transition bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 p-1 rounded text-[10px] flex items-center gap-1 font-mono"
-                            >
-                              <Copy className="h-3 w-3" /> Copiar
-                            </button>
-                            <pre className="bg-slate-950 p-4 rounded-xl border border-slate-800 font-mono text-[11px] text-indigo-300 overflow-x-auto max-h-48 custom-scrollbar">
-                              {JSON.stringify(getFrontendPayload(), null, 2)}
-                            </pre>
-                          </div>
+                        <div className="flex justify-between items-center bg-slate-950 p-2 rounded-lg border border-slate-800/80">
+                          <span className="text-slate-500 font-black uppercase text-[9px]">Estratégia Localizada</span>
+                          <span className="text-emerald-400 font-bold">{todoistDiagnostic?.stages?.["6"]?.details?.strategy || "N/A"}</span>
+                        </div>
+                        <div className="flex justify-between items-center bg-slate-950 p-2 rounded-lg border border-slate-800/80">
+                          <span className="text-slate-500 font-black uppercase text-[9px]">Tarefas Processadas</span>
+                          <span className="text-slate-300">{todoistDiagnostic?.stages?.["6"]?.details?.tasksProcessed || 0}</span>
                         </div>
                       </div>
+                    </div>
+                  </div>
+
+                  {/* Resumo Resultado */}
+                  <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 space-y-2 font-mono text-xs text-slate-300">
+                    <div><strong className="text-slate-500 mr-2">Status Final:</strong> <span className={todoistDiagnostic?.status?.includes('SUCCESS') ? 'text-emerald-400 font-bold' : 'text-amber-400 font-bold'}>{todoistDiagnostic?.status || "N/A"}</span></div>
+                    <div><strong className="text-slate-500 mr-2">Trace ID:</strong> <span>{todoistDiagnostic?.traceId || "N/A"}</span></div>
+                    {todoistDiagnostic?.failureReason && (
+                      <div><strong className="text-red-500 mr-2">Erro Real:</strong> <span className="text-red-400">{todoistDiagnostic.failureReason}</span></div>
                     )}
-                  </div>
-
-                  {/* ETAPA 2 — FRONTEND -> BACKEND */}
-                  <div className="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden">
-                    <button
-                      onClick={() => setExpandedStages(prev => ({ ...prev, 2: !prev[2] }))}
-                      className="w-full flex items-center justify-between px-4 py-3 bg-slate-900 hover:bg-slate-800/80 transition text-left"
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <span className="bg-indigo-950 text-indigo-300 h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold font-mono">2</span>
-                        <div>
-                          <span className="text-xs font-bold text-white uppercase tracking-wide">ETAPA 2 — FRONTEND {"──>"} BACKEND (REQUISIÇÃO)</span>
-                          <span className="block text-[10px] text-slate-400 mt-0.5">Transmissão da consulta pela rede interna para o servidor backend proxy</span>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="bg-emerald-950 text-emerald-400 border border-emerald-900 text-[9px] font-bold font-mono px-2 py-0.5 rounded">ENVIADO</span>
-                        <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform duration-200 ${expandedStages[2] ? "rotate-0" : "-rotate-90"}`} />
-                      </div>
-                    </button>
-
-                    {expandedStages[2] && (
-                      <div className="p-4 border-t border-slate-800 space-y-4 text-xs font-mono">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div className="space-y-2">
-                            <div>
-                              <span className="text-slate-500 block text-[9px] uppercase font-black">Endpoint Alvo</span>
-                              <span className="bg-slate-900 border border-slate-850 px-2 py-1 rounded text-indigo-300 font-bold inline-block mt-1">/api/todoist/tasks</span>
-                            </div>
-                            <div>
-                              <span className="text-slate-500 block text-[9px] uppercase font-black">Método</span>
-                              <span className="bg-slate-900 border border-slate-850 px-2.5 py-0.5 rounded text-white font-bold inline-block mt-1 text-[10px]">GET</span>
-                            </div>
-                          </div>
-                          <div className="space-y-2">
-                            <div>
-                              <span className="text-slate-500 block text-[9px] uppercase font-black">URL Completa da Requisição</span>
-                              <span className="text-slate-300 break-all text-[11px] block mt-1">{typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'}/api/todoist/tasks</span>
-                            </div>
-                            <div>
-                              <span className="text-slate-500 block text-[9px] uppercase font-black">Query String Integral</span>
-                              <span className="text-emerald-400 break-all font-semibold block mt-1">?filter=search:${controladoriaActiveItem?.processNumber || "0010767-43.2026.5.03.0078"}</span>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div className="space-y-1.5">
-                            <span className="text-slate-400 text-[10px] uppercase font-black tracking-wider block">Headers de Requisição Enviados:</span>
-                            <pre className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 text-[10.5px] text-indigo-300 leading-relaxed">
-{`{
-  "Accept": "application/json",
-  "Content-Type": "application/json",
-  "X-Requested-With": "XMLHttpRequest"
-}`}
-                            </pre>
-                          </div>
-                          <div className="space-y-1.5">
-                            <span className="text-slate-400 text-[10px] uppercase font-black tracking-wider block">Request Body:</span>
-                            <pre className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 text-[10.5px] text-slate-500 leading-relaxed font-bold">
-                              null
-                            </pre>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* ETAPA 3 — RECEBENDO NO BACKEND */}
-                  <div className="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden">
-                    <button
-                      onClick={() => setExpandedStages(prev => ({ ...prev, 3: !prev[3] }))}
-                      className="w-full flex items-center justify-between px-4 py-3 bg-slate-900 hover:bg-slate-800/80 transition text-left"
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <span className="bg-indigo-950 text-indigo-300 h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold font-mono">3</span>
-                        <div>
-                          <span className="text-xs font-bold text-white uppercase tracking-wide">ETAPA 3 — BACKEND (RECEBIMENTO E CHAVE DE API)</span>
-                          <span className="block text-[10px] text-slate-400 mt-0.5">Processamento local do proxy do servidor, validação e carregamento da chave do Todoist</span>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="bg-emerald-950 text-emerald-400 border border-emerald-900 text-[9px] font-bold font-mono px-2 py-0.5 rounded">SUCESSO</span>
-                        <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform duration-200 ${expandedStages[3] ? "rotate-0" : "-rotate-90"}`} />
-                      </div>
-                    </button>
-
-                    {expandedStages[3] && (
-                      <div className="p-4 border-t border-slate-800 space-y-4">
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs font-mono">
-                          <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/60">
-                            <span className="text-slate-500 block text-[9px] uppercase font-black">Status Interno</span>
-                            <span className={`font-bold ${todoistDiagnostic?.debug?.success ? "text-emerald-400" : "text-red-400"}`}>
-                              {todoistDiagnostic?.debug?.success ? "200 OK" : "Erro"}
-                            </span>
-                          </div>
-                          <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/60">
-                            <span className="text-slate-500 block text-[9px] uppercase font-black">Tarefas Recebidas</span>
-                            <span className="text-slate-300 font-bold">{todoistDiagnostic?.debug?.tasksRetrieved || 0}</span>
-                          </div>
-                          <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/60">
-                            <span className="text-slate-500 block text-[9px] uppercase font-black">Páginas Processadas</span>
-                            <span className="text-slate-300 font-bold">{todoistDiagnostic?.debug?.pagesProcessed || 0}</span>
-                          </div>
-                          <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/60">
-                            <span className="text-slate-500 block text-[9px] uppercase font-black">Implementação</span>
-                            <span className="text-indigo-400 font-bold">{todoistDiagnostic?.implementationVersion || "v1"}</span>
-                          </div>
-                        </div>
-
-                        {todoistDiagnostic?.queriesTried?.[0]?.status === 410 && (
-                          <div className="bg-red-950/20 border border-red-900/40 p-4 rounded-xl text-xs space-y-2 text-red-300">
-                            <div className="font-bold text-red-400 text-sm flex items-center gap-1.5 font-sans">
-                              <AlertCircle className="h-4 w-4 animate-pulse text-red-400" /> Erro Crítico: HTTP 410 (Gone)
-                            </div>
-                            <div className="font-sans text-slate-300">
-                              O endpoint ou método chamado na v2 foi descontinuado ou modificado pela plataforma Todoist. O token de API está correto, mas o cliente está enviando dados para uma rota que não é mais operada pelo Todoist.
-                            </div>
-                            <div className="grid grid-cols-3 gap-2 text-[11px] font-mono pt-1 text-slate-400">
-                              <div className="bg-slate-950 p-2 rounded border border-slate-900">
-                                <span className="block text-[9px] text-slate-500 uppercase">Causa Provável</span>
-                                <span className="text-red-400 font-bold">Incompatibilidade API v2</span>
-                              </div>
-                              <div className="bg-slate-950 p-2 rounded border border-slate-900">
-                                <span className="block text-[9px] text-slate-500 uppercase">Solução</span>
-                                <span className="text-slate-300 font-bold">Revisar rotas no server</span>
-                              </div>
-                              <div className="bg-slate-950 p-2 rounded border border-slate-900">
-                                <span className="block text-[9px] text-slate-500 uppercase">Chance de Erro</span>
-                                <span className="text-emerald-400 font-black">95%</span>
-                              </div>
-                            </div>
-                          </div>
-                        )}
-
-                        <div className="space-y-1.5">
-                          <span className="text-slate-400 text-[10px] font-mono uppercase font-black tracking-wider block">Resultado Processado pelo Backend (JSON):</span>
-                          <div className="relative group">
-                            <button
-                              onClick={async () => {
-                                await navigator.clipboard.writeText(JSON.stringify(getTodoistResponsePayload(), null, 2));
-                                addSystemLog("success", "Payload de Resposta do Todoist copiado!");
-                              }}
-                              className="absolute right-3 top-3 opacity-0 group-hover:opacity-100 transition bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 p-1 rounded text-[10px] flex items-center gap-1 font-mono"
-                            >
-                              <Copy className="h-3 w-3" /> Copiar
-                            </button>
-                            <pre className="bg-slate-950 p-4 rounded-xl border border-slate-800 font-mono text-[11px] text-amber-300 overflow-x-auto max-h-52 custom-scrollbar">
-                              {JSON.stringify(todoistDiagnostic?.debug || { status: "No data" }, null, 2)}
-                            </pre>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* ETAPA 4 — ENVIANDO BACKEND -> TODOIST */}
-                  <div className="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden">
-                    <button
-                      onClick={() => setExpandedStages(prev => ({ ...prev, 4: !prev[4] }))}
-                      className="w-full flex items-center justify-between px-4 py-3 bg-slate-900 hover:bg-slate-800/80 transition text-left"
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <span className="bg-indigo-950 text-indigo-300 h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold font-mono">4</span>
-                        <div>
-                          <span className="text-xs font-bold text-white uppercase tracking-wide">ETAPA 4 — BACKEND {"──>"} TODOIST (TRANSMISSÃO)</span>
-                          <span className="block text-[10px] text-slate-400 mt-0.5">Proxy de rede retransmitindo a chamada de consulta para os servidores oficiais do Todoist</span>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="bg-emerald-950 text-emerald-400 border border-emerald-900 text-[9px] font-bold font-mono px-2 py-0.5 rounded">TRANSMITIDO</span>
-                        <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform duration-200 ${expandedStages[4] ? "rotate-0" : "-rotate-90"}`} />
-                      </div>
-                    </button>
-
-                    {expandedStages[4] && (
-                      <div className="p-4 border-t border-slate-800 space-y-4 text-xs font-mono">
-                        <div className="bg-slate-900 p-3 rounded-lg border border-slate-850 space-y-2">
-                          <div className="font-bold text-white text-[11px] uppercase tracking-wider text-slate-400">Dados da Conexão Efetuada:</div>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-slate-300">
-                            <div><strong className="text-slate-500">API Alvo:</strong> <span>REST API v2</span></div>
-                            <div><strong className="text-slate-500">Endpoint:</strong> <span className="text-indigo-300">https://api.todoist.com/rest/v2/tasks</span></div>
-                            <div><strong className="text-slate-500">Mecanismo:</strong> <span className="text-indigo-300">Todoist Client SDK / REST Fetch</span></div>
-                            <div><strong className="text-slate-500">Chave Usada:</strong> <span className="text-amber-400 font-bold">d8f4************************************</span></div>
-                          </div>
-                        </div>
-
-                        <div className="space-y-1.5">
-                          <span className="text-slate-400 text-[10px] uppercase font-black tracking-wider block">Headers de Conexão com Todoist:</span>
-                          <pre className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 text-[10.5px] text-indigo-300 leading-relaxed">
-{`{
-  "Authorization": "Bearer d8f4************************************",
-  "Content-Type": "application/json",
-  "User-Agent": "Todoist-Sync-Service/1.0"
-}`}
-                          </pre>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* ETAPA 5 — TODOIST -> BACKEND */}
-                  <div className="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden">
-                    <button
-                      onClick={() => setExpandedStages(prev => ({ ...prev, 5: !prev[5] }))}
-                      className="w-full flex items-center justify-between px-4 py-3 bg-slate-900 hover:bg-slate-800/80 transition text-left"
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <span className="bg-indigo-950 text-indigo-300 h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold font-mono">5</span>
-                        <div>
-                          <span className="text-xs font-bold text-white uppercase tracking-wide">ETAPA 5 — TODOIST {"──>"} BACKEND (RETORNO DA API)</span>
-                          <span className="block text-[10px] text-slate-400 mt-0.5">Servidor do Todoist respondendo com as listas e payloads brutos de tarefas e comentários</span>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="bg-emerald-950 text-emerald-400 border border-emerald-900 text-[9px] font-bold font-mono px-2 py-0.5 rounded">PROCESSADO</span>
-                        <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform duration-200 ${expandedStages[5] ? "rotate-0" : "-rotate-90"}`} />
-                      </div>
-                    </button>
-
-                    {expandedStages[5] && (
-                      <div className="p-4 border-t border-slate-800 space-y-4">
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs font-mono">
-                          <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/60">
-                            <span className="text-slate-500 block text-[9px] uppercase font-black">Status HTTP Todoist</span>
-                            <span className="text-emerald-400 font-bold">200 OK</span>
-                          </div>
-                          <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/60">
-                            <span className="text-slate-500 block text-[9px] uppercase font-black">Provedor Usado</span>
-                            <span className="text-indigo-400 font-bold">SDK Oficial (Vite/Node)</span>
-                          </div>
-                          <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/60">
-                            <span className="text-slate-500 block text-[9px] uppercase font-black">Instancia Ativa</span>
-                            <span className="text-slate-300 font-semibold font-mono">RestV2Client</span>
-                          </div>
-                          <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/60">
-                            <span className="text-slate-500 block text-[9px] uppercase font-black">Escopo Recebido</span>
-                            <span className="text-indigo-400 font-semibold font-mono">Tarefas, Comments, Subtasks</span>
-                          </div>
-                        </div>
-
-                        <div className="space-y-1.5">
-                          <span className="text-slate-400 text-[10px] font-mono uppercase font-black tracking-wider block">Resposta Bruta do Servidor Todoist:</span>
-                          <div className="relative group">
-                            <pre className="bg-slate-950 p-4 rounded-xl border border-slate-800 font-mono text-[11px] text-amber-300 overflow-x-auto max-h-52 custom-scrollbar">
-                              {JSON.stringify(todoistDiagnostic?.debug || { status: "success", info: "Conexão estabelecida com sucesso" }, null, 2)}
-                            </pre>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* ETAPA 6 — PROCESSAMENTO LOCAL */}
-                  <div className="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden">
-                    <button
-                      onClick={() => setExpandedStages(prev => ({ ...prev, 6: !prev[6] }))}
-                      className="w-full flex items-center justify-between px-4 py-3 bg-slate-900 hover:bg-slate-800/80 transition text-left"
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <span className="bg-indigo-950 text-indigo-300 h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold font-mono">6</span>
-                        <div>
-                          <span className="text-xs font-bold text-white uppercase tracking-wide">ETAPA 6 — PROCESSAMENTO LOCAL (RANQUEAMENTO)</span>
-                          <span className="block text-[10px] text-slate-400 mt-0.5">Execução do algoritmo de matching com cálculo de pontuação individual de scores</span>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="bg-amber-950 text-amber-400 border border-amber-900 text-[9px] font-bold font-mono px-2 py-0.5 rounded">PONTUADO</span>
-                        <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform duration-200 ${expandedStages[6] ? "rotate-0" : "-rotate-90"}`} />
-                      </div>
-                    </button>
-
-                    {expandedStages[6] && (
-                      <div className="p-4 border-t border-slate-800 space-y-4">
-                        <div className="bg-slate-900 p-3 rounded-xl border border-slate-850 text-xs text-slate-300 space-y-1.5 leading-relaxed">
-                          <div className="font-bold text-white text-[11px] uppercase tracking-wider text-slate-400 mb-1">Critérios de ranqueamento aplicados:</div>
-                          <ul className="list-disc pl-5 space-y-1 text-slate-400">
-                            <li><strong className="text-slate-300">CNJ exato (com ou sem pontuação):</strong> <span className="text-emerald-400 font-bold">+100 pontos</span></li>
-                            <li><strong className="text-slate-300">Nome do Autor exato:</strong> <span className="text-emerald-400 font-bold">+80 pontos</span> (palavras parciais dão <span className="text-indigo-400 font-bold">+20 pontos</span> cada, máx 60)</li>
-                            <li><strong className="text-slate-300">Nome do Réu exato:</strong> <span className="text-emerald-400 font-bold">+80 pontos</span> (palavras parciais dão <span className="text-indigo-400 font-bold">+20 pontos</span> cada, máx 60)</li>
-                            <li><strong className="text-slate-300">Palavras-chave "Controladoria" ou "trabalhista":</strong> <span className="text-indigo-400 font-bold">+50 pontos</span></li>
-                            <li><strong className="text-slate-300">Menção a Pasta Física ou "1.434":</strong> <span className="text-indigo-400 font-bold">+30 pontos</span></li>
-                          </ul>
-                        </div>
-
-                        <div className="space-y-2">
-                          <span className="text-slate-400 text-[10px] font-mono uppercase font-black tracking-wider block">Resultados Finais das Tarefas Correspondentes:</span>
-                          
-                          {todoistDiagnostic?.localFilterResults && todoistDiagnostic.localFilterResults.length > 0 ? (
-                            <div className="grid grid-cols-1 gap-3">
-                              {todoistDiagnostic.localFilterResults.map((t: any, index: number) => (
-                                <div key={index} className="bg-slate-900 border border-slate-800 rounded-xl p-3 flex items-start justify-between gap-4">
-                                  <div className="space-y-1">
-                                    <div className="text-xs font-bold text-slate-200">{t.taskTitle}</div>
-                                    <div className="text-[10px] text-slate-400 flex flex-wrap gap-x-3 gap-y-1 font-mono pt-1">
-                                      <span className="bg-slate-950 px-2 py-0.5 rounded border border-slate-850/60">Pasta: Inbox (Fila)</span>
-                                      <span className="bg-indigo-950/60 text-indigo-300 px-2 py-0.5 rounded border border-indigo-900/60">Score: {t.score} pts</span>
-                                    </div>
-                                    <p className="text-[10px] text-indigo-200 bg-indigo-950/20 px-2 py-1.5 rounded-lg border border-indigo-950 mt-2">
-                                      {t.decision}
-                                    </p>
-                                  </div>
-                                  <div className="flex flex-col items-end gap-1.5">
-                                    <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${
-                                      t.score >= 80 
-                                        ? "bg-emerald-950 text-emerald-400 border border-emerald-900" 
-                                        : "bg-slate-950 text-slate-500 border border-slate-850"
-                                    }`}>
-                                      {t.score >= 80 ? "ACEITO" : "REJEITADO"}
-                                    </span>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <div className="bg-slate-900 border border-slate-850/60 p-6 rounded-xl text-center text-slate-400 text-xs">
-                              Nenhuma tarefa ativa no Todoist correspondente de fato à publicação foi encontrada.
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* ETAPA 7 — BACKEND -> FRONTEND */}
-                  <div className="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden">
-                    <button
-                      onClick={() => setExpandedStages(prev => ({ ...prev, 7: !prev[7] }))}
-                      className="w-full flex items-center justify-between px-4 py-3 bg-slate-900 hover:bg-slate-800/80 transition text-left"
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <span className="bg-indigo-950 text-indigo-300 h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold font-mono">7</span>
-                        <div>
-                          <span className="text-xs font-bold text-white uppercase tracking-wide">ETAPA 7 — BACKEND {"──>"} FRONTEND (ENVIO DE RESPOSTA)</span>
-                          <span className="block text-[10px] text-slate-400 mt-0.5">Retorno do payload limpo compilado para o navegador</span>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="bg-emerald-950 text-emerald-400 border border-emerald-900 text-[9px] font-bold font-mono px-2 py-0.5 rounded">RETORNADO</span>
-                        <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform duration-200 ${expandedStages[7] ? "rotate-0" : "-rotate-90"}`} />
-                      </div>
-                    </button>
-
-                    {expandedStages[7] && (
-                      <div className="p-4 border-t border-slate-800 space-y-3">
-                        <span className="text-slate-400 text-[10px] font-mono uppercase font-black tracking-wider block">Payload JSON retornado ao Navegador (Sem Resumos):</span>
-                        <div className="relative group text-xs font-mono">
-                          <pre className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-[11px] text-indigo-300 overflow-x-auto max-h-52 custom-scrollbar">
-{JSON.stringify({
-  success: todoistDiagnostic?.finalResult !== "erro de autenticação",
-  result: todoistDiagnostic?.finalResult || "nenhuma encontrada",
-  chosenTask: todoistDiagnostic?.chosenTask || null,
-  chosenTaskScore: todoistDiagnostic?.chosenTaskScore || null,
-  failureReason: todoistDiagnostic?.failureReason || null,
-  tasks: todoistDiagnostic?.localFilterResults || []
-}, null, 2)}
-                          </pre>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* ETAPA 8 — FRONTEND */}
-                  <div className="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden">
-                    <button
-                      onClick={() => setExpandedStages(prev => ({ ...prev, 8: !prev[8] }))}
-                      className="w-full flex items-center justify-between px-4 py-3 bg-slate-900 hover:bg-slate-800/80 transition text-left"
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <span className="bg-indigo-950 text-indigo-300 h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold font-mono">8</span>
-                        <div>
-                          <span className="text-xs font-bold text-white uppercase tracking-wide">ETAPA 8 — FRONTEND (RECEBIMENTO E ATUALIZAÇÃO DO ESTADO)</span>
-                          <span className="block text-[10px] text-slate-400 mt-0.5">Interpretação da resposta e vinculação activa no Mirror / Estado React da UI</span>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="bg-emerald-950 text-emerald-400 border border-emerald-900 text-[9px] font-bold font-mono px-2 py-0.5 rounded">SINCRONIZADO</span>
-                        <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform duration-200 ${expandedStages[8] ? "rotate-0" : "-rotate-90"}`} />
-                      </div>
-                    </button>
-
-                    {expandedStages[8] && (
-                      <div className="p-4 border-t border-slate-800 space-y-4">
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs font-mono">
-                          <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/60">
-                            <span className="text-slate-500 block text-[9px] uppercase font-black">Estado: Diagnostic</span>
-                            <span className="text-slate-300 font-bold">Atualizado</span>
-                          </div>
-                          <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/60">
-                            <span className="text-slate-500 block text-[9px] uppercase font-black">Linked Task (Mirror)</span>
-                            <span className="text-indigo-400 font-bold break-all">{todoistLinkedTask?.content ? `"${todoistLinkedTask.content}"` : "null"}</span>
-                          </div>
-                          <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/60">
-                            <span className="text-slate-500 block text-[9px] uppercase font-black">Multiplas Encontradas?</span>
-                            <span className="text-slate-300 font-bold">{todoistMultipleTasksFound?.length || 0} items</span>
-                          </div>
-                          <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/60">
-                            <span className="text-slate-500 block text-[9px] uppercase font-black">CNJ Não Encontrado</span>
-                            <span className="text-slate-400">{todoistNotFoundForCnj ? "SIM" : "NÃO"}</span>
-                          </div>
-                        </div>
-
-                        <div className="bg-slate-900 p-3 rounded-xl border border-slate-850 text-xs text-slate-300 space-y-2">
-                          <div>
-                            <strong className="text-slate-400">Tarefa ativamente vinculada na UI (Mirror):</strong>{" "}
-                            {todoistLinkedTask ? (
-                              <span className="text-emerald-400 font-bold font-mono">"{todoistLinkedTask.content}" (ID: {todoistLinkedTask.id})</span>
-                            ) : (
-                              <span className="text-amber-500 font-bold font-mono">Nenhuma tarefa associada no momento.</span>
-                            )}
-                          </div>
-                          <div>
-                            <strong className="text-slate-400">Sincronização Ativa em Tempo Real (Mirror):</strong>{" "}
-                            <span className={todoistLinkedTask ? "text-emerald-400 font-bold" : "text-amber-500 font-bold"}>
-                              {todoistLinkedTask ? "SIM (Alterações no painel salvam instantaneamente na API)" : "NÃO (Vinculação pendente)"}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* ETAPA 9 — RESULTADO */}
-                  <div className="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden">
-                    <button
-                      onClick={() => setExpandedStages(prev => ({ ...prev, 9: !prev[9] }))}
-                      className="w-full flex items-center justify-between px-4 py-3 bg-slate-900 hover:bg-slate-800/80 transition text-left"
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <span className="bg-indigo-950 text-indigo-300 h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold font-mono">9</span>
-                        <div>
-                          <span className="text-xs font-bold text-white uppercase tracking-wide">ETAPA 9 — CONCLUSÃO DO FLUXO (RESULTADO FINAL)</span>
-                          <span className="block text-[10px] text-slate-400 mt-0.5">Diagnóstico geral conclusivo sobre o status da integração nesta consulta</span>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="bg-indigo-950 text-indigo-300 border border-indigo-900 text-[9px] font-bold font-mono px-2 py-0.5 rounded">CONCLUSÃO</span>
-                        <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform duration-200 ${expandedStages[9] ? "rotate-0" : "-rotate-90"}`} />
-                      </div>
-                    </button>
-
-                    {expandedStages[9] && (
-                      <div className="p-4 border-t border-slate-800 space-y-3">
-                        <div className="bg-indigo-950/20 border border-indigo-900/40 p-4 rounded-xl text-xs space-y-3 leading-relaxed text-indigo-200">
-                          <div>
-                            <strong className="text-white block text-sm mb-1">Resultado Final Traced:</strong>
-                            <span className="font-mono bg-indigo-950 px-2 py-1 rounded font-bold text-indigo-300 border border-indigo-900/60 uppercase">
-                              {todoistDiagnostic?.finalResult || "NENHUMA BUSCA EXECUTADA"}
-                            </span>
-                          </div>
-
-                          <div className="space-y-1.5 border-t border-indigo-950/80 pt-3">
-                            <strong className="text-white block text-[11px] uppercase tracking-wider text-slate-400">Diagnóstico Técnico Conclusivo:</strong>
-                            {todoistDiagnostic?.queriesTried?.[0]?.status === 410 ? (
-                              <p className="text-slate-300">
-                                <span className="text-red-400 font-bold">Fluxo interrompido entre: BACKEND ↓ TODOIST.</span><br />
-                                <strong className="text-white">Motivo:</strong> HTTP 410 (Gone). O endpoint de busca na API v2 foi descontinuado pelo Todoist ou foi desativado temporariamente. O token está validado no servidor, mas é necessário rever o código do proxy de busca.
-                              </p>
-                            ) : todoistDiagnostic?.queriesTried?.[0]?.status === 401 ? (
-                              <p className="text-slate-300">
-                                <span className="text-red-400 font-bold">Fluxo interrompido entre: BACKEND ↓ TODOIST.</span><br />
-                                <strong className="text-white">Motivo:</strong> HTTP 401 (Unauthorized). A chave TODOIST_API_KEY fornecida nos Secrets é inválida ou expirou. Por favor, revise as chaves.
-                              </p>
-                            ) : todoistDiagnostic?.localFilterResults?.length === 0 ? (
-                              <p className="text-slate-300">
-                                <span className="text-amber-400 font-bold">Fluxo interrompido entre: TODOIST ↓ PROCESSAMENTO LOCAL.</span><br />
-                                <strong className="text-white">Motivo:</strong> Nenhuma tarefa retornada atendeu aos critérios mínimos de pontuação (pontuação zero). Nenhuma tarefa no Todoist continha referências ao CNJ, Autor ou Réu desta publicação.
-                              </p>
-                            ) : (
-                              <p className="text-slate-300">
-                                <span className="text-emerald-400 font-bold">Fluxo concluído com sucesso!</span><br />
-                                Todas as etapas de rede, autenticação e processamento local foram executadas. A tarefa espelho foi devidamente localizada, pontuada e acoplada.
-                              </p>
-                            )}
-                          </div>
-
-                          <div className="grid grid-cols-2 gap-4 text-[11px] pt-2 font-mono text-indigo-300">
-                            <div><strong>Tempo Total Decorrido:</strong> 220ms</div>
-                            <div><strong>Interrupções de Rede:</strong> {todoistDiagnostic?.queriesTried?.[0]?.status === 200 ? "Nenhuma" : "Detectada"}</div>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                </div>
-
-                {/* Modal Footer */}
-                <div className="bg-slate-950 border-t border-slate-800 px-6 py-4 flex justify-between items-center">
-                  <div className="text-[10px] text-slate-500 font-mono">
-                    Construído com conformidade total de tracing de pacotes de rede
-                  </div>
-                  <button
-                    onClick={() => setIsInvestigadorModalOpen(false)}
-                    className="bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs px-5 py-2.5 rounded-xl transition border border-slate-700 hover:text-white"
-                  >
-                    Fechar Inspector
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* MODAL: LOGS TÉCNICOS TODOIST */}
-          {isLogsModalOpen && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm">
-              <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl text-slate-100 overflow-hidden font-sans">
-                {/* Modal Header */}
-                <div className="flex items-center justify-between border-b border-slate-800 p-4">
-                  <div className="flex items-center gap-2">
-                    <Terminal className="h-5 w-5 text-indigo-400" />
-                    <h3 className="text-sm font-bold text-white tracking-tight">
-                      Logs Técnicos Todoist
-                    </h3>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={async () => {
-                        const text = generateTechnicalLogsText();
-                        await navigator.clipboard.writeText(text);
-                        setLogsModalCopied(true);
-                        setTimeout(() => setLogsModalCopied(false), 2000);
-                        addSystemLog("success", "Logs Técnicos Todoist copiados com sucesso!");
-                      }}
-                      className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[11px] uppercase px-3 py-1.5 rounded-xl transition flex items-center gap-1 shadow-md"
-                    >
-                      {logsModalCopied ? (
-                        <>
-                          <Check className="h-3.5 w-3.5 text-emerald-300" />
-                          Copiado!
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="h-3.5 w-3.5" />
-                          Copiar logs
-                        </>
-                      )}
-                    </button>
-                    <button
-                      onClick={() => setIsLogsModalOpen(false)}
-                      className="text-slate-400 hover:text-white hover:bg-slate-800 p-1.5 rounded-lg transition"
-                    >
-                      <X className="h-5 w-5" />
-                    </button>
-                  </div>
-                </div>
-
-                {/* Modal Body */}
-                <div className="overflow-y-auto p-6 max-h-[65vh] custom-scrollbar space-y-4 font-sans">
-                  <p className="text-xs text-slate-400 leading-relaxed">
-                    Histórico detalhado das requisições brutas trafegadas entre o backend do Portal BOSS e os servidores do Todoist.
-                  </p>
-
-                  <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 font-mono text-[10.5px] leading-relaxed text-indigo-200 overflow-x-auto max-h-96 custom-scrollbar space-y-1 select-all">
-                    <div><span className="text-slate-500">Data/hora:</span> {new Date().toLocaleString('pt-BR')}</div>
-                    <div><span className="text-slate-500">Rota atual:</span> /pushes/push-trt-mg/atualizar-controladoria</div>
-                    <div><span className="text-slate-500">Todoist Enabled:</span> {todoistHealth?.enabled ? "SIM" : "NÃO"}</div>
-                    <div><span className="text-slate-500">Fonte do token:</span> {todoistDiagnostic?.tokenSource || todoistHealth?.tokenSource || "AUSENTE"}</div>
-                    <div><span className="text-slate-500">Token carregado:</span> {todoistDiagnostic?.tokenLoaded || todoistHealth?.tokenLoaded ? "SIM" : "NÃO"}</div>
-                    <div><span className="text-slate-500">Token mascarado:</span> {todoistHealth?.enabled ? 'SECRET (Oculto)' : 'AUSENTE'}</div>
-                    
-                    {todoistDiagnostic?.queriesTried && todoistDiagnostic.queriesTried.length > 0 ? (
+                    {todoistDiagnostic?.matchFound && (
                       <>
-                        <div className="border-t border-slate-800/80 my-2 pt-2 text-white font-semibold">Último Passo Executado:</div>
-                        <div><span className="text-slate-500">Endpoint chamado:</span> {todoistDiagnostic.queriesTried[todoistDiagnostic.queriesTried.length - 1].endpoint}</div>
-                        <div><span className="text-slate-500">Query enviada:</span> {todoistDiagnostic.queriesTried[todoistDiagnostic.queriesTried.length - 1].query}</div>
-                        <div><span className="text-slate-500">Status HTTP:</span> <span className={todoistDiagnostic.queriesTried[todoistDiagnostic.queriesTried.length - 1].status === 200 ? "text-emerald-400" : "text-red-400 font-bold"}>{todoistDiagnostic.queriesTried[todoistDiagnostic.queriesTried.length - 1].status}</span></div>
-                        
-                        {todoistDiagnostic.queriesTried[todoistDiagnostic.queriesTried.length - 1].status !== 200 && (
+                        <div><strong className="text-emerald-500 mr-2">ID Tarefa Localizada:</strong> <span className="text-emerald-400">{todoistDiagnostic.stages?.["7"]?.details?.chosenTaskId}</span></div>
+                        <div><strong className="text-emerald-500 mr-2">Estado Espelho:</strong> <span className="text-emerald-400">{todoistDiagnostic.mirrorReady ? "Renderizado com a tarefa Todoist" : "Aguardando"}</span></div>
+                      </>
+                    )}
+                  </div>
+
+                  {/* Real Trace Events */}
+                  <div className="space-y-3">
+                    <h4 className="text-sm font-bold text-slate-300 flex items-center gap-2">
+                      <Terminal className="h-4 w-4 text-indigo-400" />
+                      Eventos de Rastreamento (Trace)
+                    </h4>
+                    {todoistDiagnostic?.events?.length > 0 ? (
+                      <div className="space-y-2">
+                        {todoistDiagnostic.events.map((evt: any, i: number) => {
+                          let badgeColor = "bg-slate-800 text-slate-300 border-slate-700";
+                          if (evt.type === "success") badgeColor = "bg-emerald-950/50 text-emerald-400 border-emerald-900/50";
+                          if (evt.type === "error") badgeColor = "bg-red-950/50 text-red-400 border-red-900/50";
+                          if (evt.type === "warning") badgeColor = "bg-amber-950/50 text-amber-400 border-amber-900/50";
+                          if (evt.type === "info") badgeColor = "bg-indigo-950/50 text-indigo-400 border-indigo-900/50";
+
+                          return (
+                            <div key={i} className={`text-xs p-3 rounded-xl border font-mono ${badgeColor}`}>
+                              <span className="opacity-50 mr-3">[{new Date(evt.timestamp).toLocaleTimeString()}]</span>
+                              <span className="font-bold mr-2 uppercase text-[10px]">
+                                {evt.type}
+                              </span>
+                              <span>{evt.message}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="text-slate-500 text-xs italic">Nenhum evento de rastreamento disponível.</div>
+                    )}
+                  </div>
+
+                  {/* Logs da Automação Todoist */}
+                  <div className="space-y-3 pt-4 border-t border-slate-800">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-sm font-bold text-slate-300 flex items-center gap-2">
+                        <Terminal className="h-4 w-4 text-emerald-400" />
+                        Logs da Automação Todoist
+                      </h4>
+                      <div className="flex items-center gap-2">
+                        {automationLogs.length > 0 && (
                           <>
-                            <div><span className="text-slate-500">Corpo do erro retornado pelo backend:</span> {todoistDiagnostic.queriesTried[todoistDiagnostic.queriesTried.length - 1].rawResponse}</div>
+                            <button
+                              onClick={copyAutomationLogs}
+                              className="text-[10px] font-semibold text-slate-400 hover:text-indigo-400 bg-slate-900 hover:bg-slate-800 border border-slate-700 px-2.5 py-1 rounded-lg transition"
+                            >
+                              Copiar logs
+                            </button>
+                            <button
+                              onClick={clearAutomationLogs}
+                              className="text-[10px] font-semibold text-slate-400 hover:text-red-400 bg-slate-900 hover:bg-slate-800 border border-slate-700 px-2.5 py-1 rounded-lg transition"
+                            >
+                              Limpar logs
+                            </button>
                           </>
                         )}
-                        <div><span className="text-slate-500">Resultado bruto parcial:</span> <span className="text-slate-400">{todoistDiagnostic.queriesTried[todoistDiagnostic.queriesTried.length - 1].rawResponse?.substring(0, 500) || "Vazio"}...</span></div>
-                      </>
-                    ) : (
-                      <div className="text-slate-500 italic py-2">Nenhuma busca executada ainda para gerar logs detalhados.</div>
-                    )}
-                    <div className="border-t border-slate-800/80 my-2 pt-2"><span className="text-slate-500">Motivo final da falha:</span> <span className="text-amber-400">{todoistDiagnostic?.failureReason || "Nenhuma falha."}</span></div>
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 min-h-[120px]">
+                      {automationLogs.length === 0 ? (
+                        <div className="text-[11px] text-slate-500 italic py-1 text-center font-mono">
+                          Nenhum log de automação registrado ainda.
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 gap-y-2 max-h-64 overflow-y-auto pr-1 custom-scrollbar">
+                          {automationLogs.map((log) => {
+                            let emoji = "ℹ️";
+                            let bgClass = "text-slate-400";
+                            if (log.type === "success") {
+                              emoji = "✅";
+                              bgClass = "text-emerald-400 font-medium";
+                            } else if (log.type === "alert") {
+                              emoji = "⚠️";
+                              bgClass = "text-amber-400 font-medium";
+                            } else if (log.type === "error") {
+                              emoji = "❌";
+                              bgClass = "text-red-400 font-bold";
+                            } else if (log.type === "processing") {
+                              emoji = "🔄";
+                              bgClass = "text-indigo-400 animate-pulse";
+                            }
+
+                            return (
+                              <div key={log.id} className="flex items-start gap-2 text-[11px] font-mono">
+                                <span className="shrink-0 pt-0.5">{emoji}</span>
+                                <span className={`leading-relaxed break-all ${bgClass}`}>{log.text}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
                   </div>
+                  
                 </div>
 
-                {/* Modal Footer */}
                 <div className="bg-slate-950 border-t border-slate-800 px-6 py-4 flex justify-end">
                   <button
-                    onClick={() => setIsLogsModalOpen(false)}
+                    onClick={() => setIsInvestigadorModalOpen(false)}
                     className="bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs px-5 py-2 rounded-xl transition"
                   >
-                    Fechar Logs
+                    Fechar
                   </button>
                 </div>
               </div>
             </div>
           )}
-
           {/* ESPELHO DA TAREFA */}
           
           <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col space-y-5 relative min-h-[500px]">
@@ -4377,68 +3683,6 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
 
         </div>
 
-        {/* Logs da Automação Todoist Panel */}
-        <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 shadow-xs">
-          <div className="flex items-center justify-between border-b border-slate-200/60 pb-2 mb-3">
-            <span className="text-[11px] font-black uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
-              <Terminal className="h-3.5 w-3.5 text-indigo-500" />
-              Logs da Automação Todoist
-            </span>
-            <div className="flex items-center gap-2">
-              {automationLogs.length > 0 && (
-                <>
-                  <button
-                    onClick={copyAutomationLogs}
-                    className="text-[10px] font-semibold text-slate-500 hover:text-indigo-600 bg-white hover:bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-lg transition"
-                    title="Copiar Logs"
-                  >
-                    Copiar logs
-                  </button>
-                  <button
-                    onClick={clearAutomationLogs}
-                    className="text-[10px] font-semibold text-slate-500 hover:text-red-600 bg-white hover:bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-lg transition"
-                    title="Limpar Logs"
-                  >
-                    Limpar logs
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-
-          {automationLogs.length === 0 ? (
-            <div className="text-[11px] text-slate-400 italic py-1 text-center">
-              Nenhum evento registrado ainda. Execute a automação para ver os logs em tempo real.
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-1.5 max-h-32 overflow-y-auto pr-1 custom-scrollbar">
-              {automationLogs.map((log) => {
-                let emoji = "ℹ️";
-                let bgClass = "text-slate-700";
-                if (log.type === "success") {
-                  emoji = "✅";
-                  bgClass = "text-emerald-700 font-medium";
-                } else if (log.type === "alert") {
-                  emoji = "⚠️";
-                  bgClass = "text-amber-700 font-medium";
-                } else if (log.type === "error") {
-                  emoji = "❌";
-                  bgClass = "text-red-700 font-bold";
-                } else if (log.type === "processing") {
-                  emoji = "🔄";
-                  bgClass = "text-indigo-600 animate-pulse";
-                }
-
-                return (
-                  <div key={log.id} className="flex items-start gap-1.5 text-[10.5px]">
-                    <span className="shrink-0">{emoji}</span>
-                    <span className={`leading-relaxed break-all ${bgClass}`}>{log.text}</span>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
 
       </div>
 
@@ -4800,32 +4044,86 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
 
       {isTodoistSelectionModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-2xl w-full max-h-[85vh] overflow-hidden flex flex-col animate-fade-in">
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-hidden flex flex-col animate-fade-in font-sans">
             {/* Modal Header */}
             <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-gradient-to-r from-indigo-50/50 to-white">
               <div className="space-y-1">
-                <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
-                  <Sliders className="h-4 w-4 text-indigo-600 animate-spin" />
-                  Múltiplas tarefas encontradas
+                <h3 className="text-base font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                  <Search className="h-4 w-4 text-indigo-600" />
+                  Seleção Manual de Tarefa
                 </h3>
-                <p className="text-[11px] text-slate-500 font-medium">
-                  Encontramos mais de uma tarefa para este CNJ. Selecione a tarefa correta.
+                <p className="text-xs text-slate-500 font-medium">
+                  {todoistMultipleTasksFound.length} candidato(s) encontrado(s).
                 </p>
               </div>
               <button
                 onClick={() => setIsTodoistSelectionModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600 p-1.5 hover:bg-slate-100 rounded-full transition"
+                className="text-slate-400 hover:text-slate-600 p-2 hover:bg-slate-100 rounded-full transition"
               >
-                <X className="h-4 w-4" />
+                <X className="h-5 w-5" />
               </button>
             </div>
 
+            {/* Filtros e Pesquisa */}
+            <div className="p-4 bg-slate-50 border-b border-slate-200 space-y-3">
+              <div className="flex gap-2">
+                {(["Todas", "Ativas", "Concluídas"] as const).map(f => (
+                  <button
+                    key={f}
+                    onClick={() => setTodoistModalFilter(f)}
+                    className={`px-4 py-1.5 rounded-full text-[11px] font-bold tracking-wide transition ${
+                      todoistModalFilter === f 
+                        ? "bg-indigo-600 text-white shadow-sm" 
+                        : "bg-white text-slate-500 border border-slate-200 hover:bg-slate-100"
+                    }`}
+                  >
+                    {f}
+                  </button>
+                ))}
+              </div>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Filtrar candidatos por título, CNJ, projeto, etiqueta..."
+                  value={todoistModalSearch}
+                  onChange={e => setTodoistModalSearch(e.target.value)}
+                  className="w-full bg-white border border-slate-200 focus:border-indigo-500 rounded-xl pl-9 pr-4 py-2.5 text-xs font-medium outline-none transition"
+                />
+              </div>
+              
+              {/* Indicadores do Trace */}
+              {todoistDiagnostic && (
+                <div className="flex gap-4 text-[10px] font-mono text-slate-500 bg-white border border-slate-200 p-2 rounded-lg">
+                  <span><strong className="text-slate-700">Páginas Lidas:</strong> {todoistDiagnostic.events?.filter((e: any) => e.message?.includes('Página') && e.message?.includes('lida')).length || 'N/A'}</span>
+                  <span><strong className="text-slate-700">Tarefas Varridas:</strong> {
+                    todoistDiagnostic.events?.find((e: any) => e.message?.includes('Varredura concluída'))?.message?.match(/(\d+) tarefas totais/)?.[1] || 'N/A'
+                  }</span>
+                </div>
+              )}
+            </div>
+
             {/* Modal Options List */}
-            <div className="p-6 overflow-y-auto space-y-4 flex-1 bg-slate-50/50">
-              {todoistMultipleTasksFound.map((task) => {
+            <div className="p-6 overflow-y-auto space-y-4 flex-1 bg-slate-50/50 custom-scrollbar">
+              {todoistMultipleTasksFound
+                .filter(task => {
+                   if (todoistModalFilter === "Ativas") return !task.is_completed;
+                   if (todoistModalFilter === "Concluídas") return task.is_completed;
+                   return true;
+                })
+                .filter(task => {
+                   if (!todoistModalSearch.trim()) return true;
+                   const terms = todoistModalSearch.toLowerCase();
+                   const t = String(task.content || "").toLowerCase();
+                   const d = String(task.description || "").toLowerCase();
+                   const p = String(todoistProjects.find(pr => pr.id === task.project_id)?.name || "").toLowerCase();
+                   return t.includes(terms) || d.includes(terms) || p.includes(terms);
+                })
+                .map((task) => {
                 const proj = todoistProjects.find((p) => p.id === task.project_id);
                 const projName = proj ? proj.name : "Entrada (Inbox)";
                 const dateStr = task.due ? new Date(task.due.date).toLocaleDateString('pt-BR') : "Sem data";
+                const isCompleted = task.is_completed;
                 
                 return (
                   <div
@@ -4834,7 +4132,7 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
                   >
                     <div className="flex justify-between items-start gap-4">
                       <div className="space-y-1.5 flex-1">
-                        <h4 className="text-xs font-bold text-slate-900 leading-snug">
+                        <h4 className={`text-sm font-bold leading-snug ${isCompleted ? 'text-slate-400 line-through' : 'text-slate-900'}`}>
                           {task.content}
                         </h4>
                         
@@ -4853,61 +4151,68 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
                           }`}>
                             <Flag className="h-3 w-3" /> P{5 - (task.priority || 4)}
                           </span>
-                          {task.is_completed && (
-                            <span className="bg-emerald-50 text-emerald-700 border border-emerald-100 font-bold px-1.5 py-0.5 rounded">
-                              Concluída
-                            </span>
-                          )}
-                          {task.score !== undefined && task.score > 0 && (
-                            <span className="bg-amber-50 text-amber-700 border border-amber-100 font-bold px-1.5 py-0.5 rounded">
-                              Score: {task.score} pts
-                            </span>
-                          )}
+                          <span className={`px-1.5 py-0.5 rounded font-bold border ${isCompleted ? 'bg-slate-100 text-slate-500 border-slate-200' : 'bg-emerald-50 text-emerald-700 border-emerald-100'}`}>
+                            {isCompleted ? "Concluída" : "Ativa"}
+                          </span>
                         </div>
                       </div>
-
+                      
                       {/* Usar esta tarefa Button */}
                       <button
-                        onClick={() => handleSelectTask(task)}
-                        className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] uppercase tracking-wider py-2 px-3 rounded-xl transition shadow-sm hover:shadow flex items-center gap-1.5"
+                        onClick={async () => {
+                          // The instruction says: "1. Buscar a tarefa completa pelo ID. 2. Atualizar todoistLinkedTask."
+                          setIsTodoistSelectionModalOpen(false);
+                          
+                          // Set loading immediately to show progress in Mirror
+                          setTodoistLoadingLocal(true);
+                          try {
+                            const res = await fetch(`/api/todoist/tasks/${task.id}`);
+                            if (res.ok) {
+                               const fullTask = await res.json();
+                               handleSelectTask(fullTask);
+                            } else {
+                               handleSelectTask(task); // fallback
+                            }
+                          } catch (e) {
+                             handleSelectTask(task); // fallback
+                          } finally {
+                            setTodoistLoadingLocal(false);
+                          }
+                        }}
+                        className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] uppercase tracking-wider py-2.5 px-4 rounded-xl transition shadow-sm hover:shadow flex items-center gap-1.5 whitespace-nowrap shrink-0"
                       >
                         <Check className="h-3.5 w-3.5 stroke-[3]" />
-                        Usar esta tarefa
+                        Selecionar esta tarefa
                       </button>
                     </div>
-
+                    
+                    {/* Trecho relevante (description) se houver */}
+                    {task.description && (
+                       <div className="text-[10px] text-slate-500 bg-slate-50 p-2 rounded-lg border border-slate-100 line-clamp-2">
+                         <strong className="text-slate-600 mr-1">Descrição:</strong>
+                         {task.description}
+                       </div>
+                    )}
+                    
                     {/* Labels */}
                     {task.labels && task.labels.length > 0 && (
-                      <div className="flex flex-wrap gap-1 border-t border-slate-100 pt-2 text-[9px]">
+                      <div className="flex flex-wrap gap-1 text-[9px]">
                         {task.labels.map((lbl: string) => (
-                          <span key={lbl} className="bg-slate-100 hover:bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded transition">
+                          <span key={lbl} className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full border border-slate-200">
                             #{lbl}
                           </span>
                         ))}
                       </div>
                     )}
-
-                    {/* Comments block */}
-                    {task.comments && task.comments.length > 0 && (
-                      <div className="bg-slate-50 rounded-xl p-3 border border-slate-150 space-y-2 mt-1">
-                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">
-                          Últimos comentários:
-                        </span>
-                        <div className="space-y-2 divide-y divide-slate-200/50">
-                          {task.comments.slice(-2).map((comm: any, idx: number) => (
-                            <div key={comm.id} className={`text-[10px] leading-relaxed text-slate-600 ${idx > 0 ? "pt-2" : ""}`}>
-                              <p className="font-normal">{comm.content}</p>
-                              <span className="text-[8px] text-slate-400 block mt-0.5">
-                                {comm.posted_at ? new Date(comm.posted_at).toLocaleString('pt-BR') : ""}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
                   </div>
                 );
               })}
+              
+              {todoistMultipleTasksFound.length === 0 && (
+                 <div className="text-center text-slate-500 text-xs py-8">
+                   Nenhum candidato localizado.
+                 </div>
+              )}
             </div>
           </div>
         </div>
