@@ -2090,6 +2090,114 @@ function extractJudicialInfo(subject: string, bodyText: string, snippet: string)
   };
 }
 
+// Endpoint to list and detail inbox emails matching a generic query for any explorer item
+app.post("/api/gmail/explorer/inbox-list", async (req: any, res) => {
+  const { accessToken, itemId, query: clientQuery, pageToken, maxResults = 20 } = req.body;
+
+  if (!accessToken) {
+    return res.status(400).json({ error: "Access token do Gmail não fornecido." });
+  }
+
+  if (!clientQuery) {
+    return res.status(400).json({ error: "Query original do item não fornecida." });
+  }
+
+  try {
+    // Force in:inbox filter to avoid showing archived/deleted/other emails
+    let finalQuery = clientQuery.trim();
+    if (!finalQuery.toLowerCase().includes("in:inbox")) {
+      finalQuery = `(${finalQuery}) in:inbox`;
+    } else {
+      // Just double enforce by wrapping and ensuring in:inbox is clean
+      finalQuery = `(${finalQuery}) in:inbox`;
+    }
+
+    const listUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(finalQuery)}&maxResults=${maxResults}${pageToken ? `&pageToken=${pageToken}` : ''}`;
+    const listRes = await fetch(listUrl, {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    });
+
+    if (!listRes.ok) {
+      if (listRes.status === 401) {
+        return res.status(401).json({ error: "UNAUTHENTICATED", message: "Sessão do Google expirada ou inválida. Por favor, conecte com o Google novamente." });
+      }
+      const errText = await listRes.text();
+      throw new Error(`Erro na listagem da API do Gmail: ${errText}`);
+    }
+
+    const listData = await listRes.json() as { messages?: Array<{ id: string, threadId: string }>, nextPageToken?: string };
+    const messages = listData.messages || [];
+    const nextPageToken = listData.nextPageToken || null;
+
+    if (messages.length === 0) {
+      return res.json({ success: true, messages: [], nextPageToken: null });
+    }
+
+    // Fetch details for the returned messages in parallel
+    const detailsPromises = messages.map(async (msg) => {
+      try {
+        const detailUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=metadata&metadataHeaders=subject&metadataHeaders=from&metadataHeaders=date&metadataHeaders=to`;
+        const detailRes = await fetch(detailUrl, {
+          headers: { Authorization: `Bearer ${accessToken}` }
+        });
+
+        if (!detailRes.ok) {
+          if (detailRes.status === 401) {
+            const authErr = new Error("UNAUTHENTICATED");
+            (authErr as any).status = 401;
+            throw authErr;
+          }
+          return { id: msg.id, success: false, error: `HTTP ${detailRes.status}` };
+        }
+
+        const detailData = await detailRes.json() as any;
+        const headers = detailData.payload?.headers || [];
+        
+        const subject = headers.find((h: any) => h.name.toLowerCase() === "subject")?.value || "Sem Assunto";
+        const from = headers.find((h: any) => h.name.toLowerCase() === "from")?.value || "Desconhecido";
+        const to = headers.find((h: any) => h.name.toLowerCase() === "to")?.value || "Desconhecido";
+        const dateHeader = headers.find((h: any) => h.name.toLowerCase() === "date")?.value || "";
+        const emailDate = dateHeader ? new Date(dateHeader).toISOString() : new Date().toISOString();
+        const snippet = detailData.snippet || "";
+        const labels = detailData.labelIds || [];
+        const isUnread = labels.includes("UNREAD");
+
+        // Direct url to Gmail web message
+        const gmailUrl = `https://mail.google.com/mail/u/0/#inbox/${msg.threadId || msg.id}`;
+
+        return {
+          id: msg.id,
+          success: true,
+          subject,
+          from,
+          date: emailDate,
+          snippet,
+          labels,
+          isUnread,
+          gmailUrl
+        };
+      } catch (err: any) {
+        return { id: msg.id, success: false, error: err.message };
+      }
+    });
+
+    const results = await Promise.all(detailsPromises);
+    const successMessages = results.filter((m: any) => m.success);
+
+    return res.json({
+      success: true,
+      messages: successMessages,
+      nextPageToken
+    });
+  } catch (error: any) {
+    if (error.status === 401 || error.message?.includes("UNAUTHENTICATED") || error.message?.includes("Invalid Credentials")) {
+      return res.status(401).json({ error: "UNAUTHENTICATED", message: "Sessão do Google expirada ou inválida. Por favor, conecte com o Google novamente." });
+    }
+    console.error("Erro no endpoint /api/gmail/explorer/inbox-list:", error);
+    return res.status(500).json({ error: "Falha ao obter os e-mails da Inbox: " + error.message });
+  }
+});
+
 // Endpoint to list all messages IDs from Gmail for a sender or a custom query
 app.post("/api/gmail-messages-list", async (req, res) => {
   const { accessToken, sender, query: clientQuery, filter } = req.body;
@@ -2393,10 +2501,20 @@ app.all("/api/todoist/search-all", async (req: any, res) => {
     let allTasks: any[] = [];
     let filterSuccess = false;
 
-    if (matchCnjMasked) {
+    // Build standard Todoist search filter to find the CNJ as a literal string safely
+    let filterExpr = "";
+    if (matchCnjDigits && matchCnjDigits.length === 20 && matchCnjMasked) {
+      filterExpr = `search:"${matchCnjMasked}" | search:"${matchCnjDigits}"`;
+    } else if (matchCnjMasked) {
+      filterExpr = `search:"${matchCnjMasked}"`;
+    } else if (matchCnjDigits) {
+      filterExpr = `search:"${matchCnjDigits}"`;
+    }
+
+    if (filterExpr) {
       try {
         const res = await callTodoistAPI(req.todoistToken, provider, "/tasks", {
-          query: { filter: matchCnjMasked }
+          query: { filter: filterExpr }
         });
         if (Array.isArray(res)) {
           allTasks = res;
@@ -2408,7 +2526,8 @@ app.all("/api/todoist/search-all", async (req: any, res) => {
     }
 
     if (!filterSuccess || allTasks.length === 0) {
-      const res = await todoistClient.getTasks(req.todoistToken, { limit: 200 }, provider);
+      // Safely fetch all active tasks without 'limit' parameter which causes 400/500 Bad Request
+      const res = await todoistClient.getTasks(req.todoistToken, {}, provider);
       allTasks = Array.isArray(res) ? res : [];
     }
 

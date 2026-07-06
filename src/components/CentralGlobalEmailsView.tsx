@@ -3,7 +3,7 @@ import {
   Folder, Mail, AlertTriangle, ShieldAlert, Check, Play, Trash2, 
   Archive, Eye, Search, AlertCircle, RefreshCw, Layers, CheckSquare, 
   Square, Calendar, ChevronRight, PlusCircle, HelpCircle, User, Info, FileText, Inbox,
-  ChevronDown, TrendingUp, TrendingDown, Minus
+  ChevronDown, TrendingUp, TrendingDown, Minus, ExternalLink, Lock
 } from 'lucide-react';
 import { EmailRule } from '../types';
 import { collection, addDoc, updateDoc, doc, deleteDoc } from 'firebase/firestore';
@@ -172,6 +172,7 @@ interface EmailMessage {
   hasAttachments: boolean;
   attachments?: any[];
   bodyText?: string;
+  gmailUrl?: string;
 }
 
 export function CentralGlobalEmailsView({
@@ -225,6 +226,66 @@ export function CentralGlobalEmailsView({
 
   // Individual rule scanning loading state
   const [scanningRuleId, setScanningRuleId] = useState<string | null>(null);
+
+  // Inbox Only mode states
+  const [inboxModeItem, setInboxModeItem] = useState<{ name: string; query: string } | null>(null);
+  const [inboxError, setInboxError] = useState<string | null>(null);
+  const [inboxSessionExpired, setInboxSessionExpired] = useState(false);
+
+  const handleLoadInboxOnly = async (itemName: string, itemQuery: string) => {
+    if (!cachedToken) {
+      onAddSystemLog('warning', "Por favor, conecte sua conta Google antes de carregar a Inbox.");
+      return;
+    }
+    setInboxModeItem({ name: itemName, query: itemQuery });
+    setPreviewLoading(true);
+    setPreviewMessages([]);
+    setSelectedMessageIds({});
+    setInboxError(null);
+    setInboxSessionExpired(false);
+    setSelectedRuleId(null);
+    setSelectedSubcategory(undefined);
+
+    try {
+      const res = await fetch("/api/gmail/explorer/inbox-list", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accessToken: cachedToken,
+          itemId: itemName,
+          query: itemQuery,
+          maxResults: 50
+        })
+      });
+
+      if (!res.ok) {
+        if (res.status === 401) {
+          setInboxSessionExpired(true);
+          onAddSystemLog('error', "Sessão Google expirada. Por favor, faça login novamente.");
+          return;
+        }
+        const errData = await res.json();
+        throw new Error(errData.error || `Erro HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+      if (data.success) {
+        const msgs = (data.messages || []).map((m: any) => ({
+          ...m,
+          hasAttachments: m.labels?.includes("HAS_ATTACHMENT") || false
+        }));
+        setPreviewMessages(msgs);
+        setScannedMessageIds(msgs.map((m: any) => m.id));
+        onAddSystemLog('success', `Inbox de "${itemName}" carregada: ${msgs.length} e-mails encontrados.`);
+      }
+    } catch (err: any) {
+      console.error(err);
+      setInboxError(err.message);
+      onAddSystemLog('error', `Falha ao carregar Inbox de ${itemName}: ${err.message}`);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
 
   // Helper to filter rules by category
   const activeRules = emailRules.filter(r => r.category === selectedCategory);
@@ -801,6 +862,11 @@ export function CentralGlobalEmailsView({
     setPreviewMessages([]);
     setSelectedMessageIds({});
     setSelectedRuleId(null); // Deselect rule to show manual search results
+    
+    // Reset Inbox Mode states
+    setInboxModeItem(null);
+    setInboxError(null);
+    setInboxSessionExpired(false);
 
     try {
       const listRes = await fetch("/api/gmail-messages-list", {
@@ -963,6 +1029,11 @@ export function CentralGlobalEmailsView({
                       // Toggle expansion
                       setExpandedCategories(prev => ({ ...prev, [category.name]: !prev[category.name] }));
                       
+                      // Reset Inbox Mode states
+                      setInboxModeItem(null);
+                      setInboxError(null);
+                      setInboxSessionExpired(false);
+                      
                       // Load combined query preview
                       const catRules = emailRules.filter(r => r.category === category.name);
                       if (catRules.length > 0) {
@@ -998,6 +1069,28 @@ export function CentralGlobalEmailsView({
 
                     {/* Badges, Sync Status, Trends, and Custom Hover Tooltip */}
                     <div className="flex items-center gap-2 shrink-0 relative">
+                      {/* Global Inbox button for this category */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const catRules = emailRules.filter(r => r.category === category.name);
+                          const combinedQuery = catRules.length > 0
+                            ? catRules.map(r => `(${r.query})`).join(" OR ")
+                            : category.subcategories.map(s => `(${s.query})`).join(" OR ");
+                          handleLoadInboxOnly(category.name, combinedQuery);
+                        }}
+                        className={`px-1.5 py-0.5 rounded text-[9px] font-bold border transition shrink-0 ${
+                          inboxModeItem && inboxModeItem.name === category.name
+                            ? 'bg-indigo-600 border-indigo-700 text-white'
+                            : isSelected
+                              ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-200'
+                              : 'bg-indigo-50 hover:bg-indigo-100 border-indigo-150 text-indigo-700'
+                        }`}
+                        title={`Listar e-mails da Inbox de ${category.name}`}
+                      >
+                        Inbox
+                      </button>
                       {/* Operational trend indicator */}
                       <span className={`text-[9px] font-bold flex items-center gap-0.5 ${trend.color}`}>
                         {trend.trend === 'up' && <TrendingUp className="h-2.5 w-2.5" />}
@@ -1086,6 +1179,11 @@ export function CentralGlobalEmailsView({
                               setSelectedCategory(category.name);
                               setSelectedSubcategory(sub.name);
                               
+                              // Reset Inbox Mode states
+                              setInboxModeItem(null);
+                              setInboxError(null);
+                              setInboxSessionExpired(false);
+
                               if (subRules.length > 0) {
                                 setSelectedRuleId(subRules[0].id);
                               } else {
@@ -1102,6 +1200,24 @@ export function CentralGlobalEmailsView({
                             </div>
 
                             <div className="flex items-center gap-1.5 shrink-0 relative">
+                              {/* Inbox button for this specific subcategory */}
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleLoadInboxOnly(sub.name, sub.query);
+                                }}
+                                className={`px-1.5 py-0.5 rounded text-[8px] font-bold border transition shrink-0 ${
+                                  inboxModeItem && inboxModeItem.name === sub.name
+                                    ? 'bg-indigo-600 border-indigo-700 text-white'
+                                    : isSubSelected
+                                      ? 'bg-indigo-600 hover:bg-indigo-700 text-white border-transparent'
+                                      : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700'
+                                }`}
+                                title={`Listar e-mails da Inbox de ${sub.name}`}
+                              >
+                                Inbox
+                              </button>
                               {/* Operational trend indicator */}
                               <span className={`text-[8px] font-bold flex items-center ${subTrend.color}`}>
                                 {subTrend.trend === 'up' && <TrendingUp className="h-2 w-2 mr-0.5" />}
@@ -1194,6 +1310,12 @@ export function CentralGlobalEmailsView({
                     onClick={() => {
                       setSelectedRuleId(rule.id);
                       setSelectedSubcategory(undefined); // selection of specific rule bypasses subcategory filter
+                      
+                      // Reset Inbox Mode states
+                      setInboxModeItem(null);
+                      setInboxError(null);
+                      setInboxSessionExpired(false);
+
                       handleLoadPreview(rule);
                     }}
                     className={`p-2.5 border transition cursor-pointer flex flex-col gap-1 ${
@@ -1293,7 +1415,23 @@ export function CentralGlobalEmailsView({
           
           {/* Header Panel */}
           <div className="bg-slate-50 p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            {selectedRule ? (
+            {inboxModeItem ? (
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <h3 className="font-extrabold text-sm text-indigo-950 flex items-center gap-1.5">
+                    <Inbox className="h-4 w-4 text-indigo-600 animate-pulse" />
+                    Emails na Inbox: {inboxModeItem.name}
+                  </h3>
+                  <span className="text-[8px] font-black uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-200">
+                    in:inbox ativo
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500">
+                  Exibindo e-mails vivos e pendentes da Caixa de Entrada que correspondem à query do item.
+                </p>
+                <p className="text-[10px] text-indigo-700">Query filtrada: <strong className="font-mono text-[10px] bg-indigo-50 border border-indigo-100 text-indigo-700 px-1 py-0.5 rounded">({inboxModeItem.query}) in:inbox</strong></p>
+              </div>
+            ) : selectedRule ? (
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
                   <h3 className="font-extrabold text-sm text-slate-900">{selectedRule.name}</h3>
@@ -1347,7 +1485,18 @@ export function CentralGlobalEmailsView({
               </div>
             )}
 
-            {selectedRule && (
+            {inboxModeItem ? (
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handleLoadInboxOnly(inboxModeItem.name, inboxModeItem.query)}
+                  disabled={previewLoading}
+                  className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-[11px] px-3 py-1.5 rounded-lg transition flex items-center gap-1.5"
+                >
+                  <RefreshCw className={`h-3 w-3 ${previewLoading ? 'animate-spin text-indigo-600' : ''}`} />
+                  Atualizar Inbox
+                </button>
+              </div>
+            ) : selectedRule && (
               <div className="flex gap-2">
                 <button
                   onClick={() => handleScanRule(selectedRule)}
@@ -1431,14 +1580,30 @@ export function CentralGlobalEmailsView({
                 <RefreshCw className="h-8 w-8 text-slate-300 animate-spin" />
                 <p className="text-xs text-slate-400 font-medium">Buscando e-mails vivos no Gmail...</p>
               </div>
+            ) : inboxSessionExpired ? (
+              <div className="flex flex-col items-center justify-center py-20 text-amber-600 gap-3">
+                <Lock className="h-8 w-8 text-amber-500 animate-bounce" />
+                <p className="text-xs font-semibold text-slate-700">Sessão Google Expirada</p>
+                <p className="text-[10px] text-slate-500 max-w-sm text-center">Por favor, conecte com o Google novamente para restabelecer o acesso.</p>
+              </div>
+            ) : inboxError ? (
+              <div className="flex flex-col items-center justify-center py-20 text-red-500 gap-3">
+                <ShieldAlert className="h-8 w-8 text-red-450 animate-pulse" />
+                <p className="text-xs font-semibold text-slate-700">Erro ao carregar e-mails</p>
+                <p className="text-[10px] text-slate-500 max-w-sm text-center">{inboxError}</p>
+              </div>
             ) : previewMessages.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20 text-slate-400 gap-2">
                 <Mail className="h-8 w-8 text-slate-300" />
-                <p className="text-xs font-semibold text-slate-600">Nenhum e-mail carregado para exibição.</p>
+                <p className="text-xs font-semibold text-slate-600">
+                  {inboxModeItem ? "Nenhum e-mail deste item está na Inbox." : "Nenhum e-mail carregado para exibição."}
+                </p>
                 <p className="text-[10px] text-slate-400 max-w-sm text-center">
-                  {selectedRule 
-                    ? "Esta regra está limpa, ou clique em 'Escanear' para sincronizar os contadores com o Gmail."
-                    : "Realize uma busca no topo ou selecione um item para listar e-mails ativos."
+                  {inboxModeItem 
+                    ? "Todos os e-mails correspondentes a este item foram arquivados ou resolvidos."
+                    : selectedRule 
+                      ? "Esta regra está limpa, ou clique em 'Escanear' para sincronizar os contadores com o Gmail."
+                      : "Realize uma busca no topo ou selecione um item para listar e-mails ativos."
                   }
                 </p>
               </div>
@@ -1459,6 +1624,7 @@ export function CentralGlobalEmailsView({
                     <th scope="col" className="px-4 py-3">Assunto / Prévia</th>
                     <th scope="col" className="px-4 py-3 w-28">Data</th>
                     <th scope="col" className="px-4 py-3 w-16">Anexos</th>
+                    <th scope="col" className="px-4 py-3 w-24 text-right">Ação</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
@@ -1495,6 +1661,18 @@ export function CentralGlobalEmailsView({
                           ) : (
                             <span className="text-slate-300">-</span>
                           )}
+                        </td>
+                        <td className="px-4 py-3 text-right whitespace-nowrap">
+                          <a
+                            href={msg.gmailUrl || `https://mail.google.com/mail/u/0/#inbox/${msg.id}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-[10px] text-indigo-600 hover:text-indigo-850 font-bold hover:underline"
+                            title="Abrir mensagem original no Gmail web"
+                          >
+                            <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                            Abrir no Gmail
+                          </a>
                         </td>
                       </tr>
                     );
