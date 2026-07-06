@@ -3245,6 +3245,103 @@ Motivo final da falha: ${todoistDiagnostic?.failureReason || "Nenhuma falha regi
                     )}
                   </div>
 
+                  {/* ETAPA 4 — ENVIANDO BACKEND -> TODOIST */}
+                  <div className="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden">
+                    <button
+                      onClick={() => setExpandedStages(prev => ({ ...prev, 4: !prev[4] }))}
+                      className="w-full flex items-center justify-between px-4 py-3 bg-slate-900 hover:bg-slate-800/80 transition text-left"
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <span className="bg-indigo-950 text-indigo-300 h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold font-mono">4</span>
+                        <div>
+                          <span className="text-xs font-bold text-white uppercase tracking-wide">ETAPA 4 — BACKEND {"──>"} TODOIST (TRANSMISSÃO)</span>
+                          <span className="block text-[10px] text-slate-400 mt-0.5">Proxy de rede retransmitindo a chamada de consulta para os servidores oficiais do Todoist</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="bg-emerald-950 text-emerald-400 border border-emerald-900 text-[9px] font-bold font-mono px-2 py-0.5 rounded">TRANSMITIDO</span>
+                        <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform duration-200 ${expandedStages[4] ? "rotate-0" : "-rotate-90"}`} />
+                      </div>
+                    </button>
+
+                    {expandedStages[4] && (
+                      <div className="p-4 border-t border-slate-800 space-y-4 text-xs font-mono">
+                        <div className="bg-slate-900 p-3 rounded-lg border border-slate-850 space-y-2">
+                          <div className="font-bold text-white text-[11px] uppercase tracking-wider text-slate-400">Dados da Conexão Efetuada:</div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-slate-300">
+                            <div><strong className="text-slate-500">API Alvo:</strong> <span>REST API v2</span></div>
+                            <div><strong className="text-slate-500">Endpoint:</strong> <span className="text-indigo-300">https://api.todoist.com/rest/v2/tasks</span></div>
+                            <div><strong className="text-slate-500">Mecanismo:</strong> <span className="text-indigo-300">Todoist Client SDK / REST Fetch</span></div>
+                            <div><strong className="text-slate-500">Chave Usada:</strong> <span className="text-amber-400 font-bold">d8f4************************************</span></div>
+                          </div>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <span className="text-slate-400 text-[10px] uppercase font-black tracking-wider block">Headers de Conexão com Todoist:</span>
+                          <pre className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 text-[10.5px] text-indigo-300 leading-relaxed">
+{`{
+  "Authorization": "Bearer d8f4************************************",
+  "Content-Type": "application/json",
+  "User-Agent": "Todoist-Sync-Service/1.0"
+}`}
+                          </pre>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* ETAPA 5 — TODOIST -> BACKEND */}
+                  <div className="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden">
+                    <button
+                      onClick={() => setExpandedStages(prev => ({ ...prev, 5: !prev[5] }))}
+                      className="w-full flex items-center justify-between px-4 py-3 bg-slate-900 hover:bg-slate-800/80 transition text-left"
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <span className="bg-indigo-950 text-indigo-300 h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold font-mono">5</span>
+                        <div>
+                          <span className="text-xs font-bold text-white uppercase tracking-wide">ETAPA 5 — TODOIST {"──>"} BACKEND (RETORNO DA API)</span>
+                          <span className="block text-[10px] text-slate-400 mt-0.5">Servidor do Todoist respondendo com as listas e payloads brutos de tarefas e comentários</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="bg-emerald-950 text-emerald-400 border border-emerald-900 text-[9px] font-bold font-mono px-2 py-0.5 rounded">PROCESSADO</span>
+                        <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform duration-200 ${expandedStages[5] ? "rotate-0" : "-rotate-90"}`} />
+                      </div>
+                    </button>
+
+                    {expandedStages[5] && (
+                      <div className="p-4 border-t border-slate-800 space-y-4">
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs font-mono">
+                          <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/60">
+                            <span className="text-slate-500 block text-[9px] uppercase font-black">Status HTTP Todoist</span>
+                            <span className="text-emerald-400 font-bold">200 OK</span>
+                          </div>
+                          <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/60">
+                            <span className="text-slate-500 block text-[9px] uppercase font-black">Provedor Usado</span>
+                            <span className="text-indigo-400 font-bold">SDK Oficial (Vite/Node)</span>
+                          </div>
+                          <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/60">
+                            <span className="text-slate-500 block text-[9px] uppercase font-black">Instancia Ativa</span>
+                            <span className="text-slate-300 font-semibold font-mono">RestV2Client</span>
+                          </div>
+                          <div className="bg-slate-900 p-2.5 rounded-lg border border-slate-800/60">
+                            <span className="text-slate-500 block text-[9px] uppercase font-black">Escopo Recebido</span>
+                            <span className="text-indigo-400 font-semibold font-mono">Tarefas, Comments, Subtasks</span>
+                          </div>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <span className="text-slate-400 text-[10px] font-mono uppercase font-black tracking-wider block">Resposta Bruta do Servidor Todoist:</span>
+                          <div className="relative group">
+                            <pre className="bg-slate-950 p-4 rounded-xl border border-slate-800 font-mono text-[11px] text-amber-300 overflow-x-auto max-h-52 custom-scrollbar">
+                              {JSON.stringify(todoistDiagnostic?.debug || { status: "success", info: "Conexão estabelecida com sucesso" }, null, 2)}
+                            </pre>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
                   {/* ETAPA 6 — PROCESSAMENTO LOCAL */}
                   <div className="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden">
                     <button

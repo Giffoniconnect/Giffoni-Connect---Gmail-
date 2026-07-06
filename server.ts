@@ -2461,7 +2461,9 @@ app.all("/api/todoist/search-all", async (req: any, res) => {
   const cnj = req.body?.cnj || req.query?.cnj || "";
   const autor = req.body?.autor || req.query?.autor || "";
   const reu = req.body?.reu || req.query?.reu || "";
-  
+  const clientTraceId = req.body?.traceId || req.headers?.["x-todoist-trace-id"] || "";
+  const route = req.body?.route || "/pushes/push-trt-mg/atualizar-controladoria";
+
   function normalizeCNJ(val: string): string {
     if (!val) return "";
     return val.replace(/[^\d]/g, "");
@@ -2482,23 +2484,87 @@ app.all("/api/todoist/search-all", async (req: any, res) => {
   const normalizedAutor = normalizeText(autor);
   const normalizedReu = normalizeText(reu);
 
+  // Initialize or decode the Trace Object
+  const traceId = clientTraceId || "trace_backend_" + Date.now() + "_" + Math.random().toString(36).substring(2, 11);
+  const startedAt = req.body?.trace?.startedAt || new Date().toISOString();
+  
+  let trace = req.body?.trace || {
+    traceId,
+    startedAt,
+    finishedAt: "",
+    durationMs: 0,
+    route,
+    cnj,
+    normalizedCnj: normalizedCNJ,
+    status: "PROCESSING_LOCAL",
+    requestSucceeded: true,
+    matchFound: false,
+    mirrorReady: false,
+    failureStage: null,
+    failureReason: null,
+    events: [],
+    stages: {}
+  };
+
+  if (!trace.events) trace.events = [];
+  if (!trace.stages) trace.stages = {};
+
+  function addBackendEvent(type: "success" | "info" | "warning" | "error", message: string) {
+    trace.events.push({
+      timestamp: new Date().toISOString(),
+      sequence: trace.events.length + 1,
+      type,
+      message
+    });
+  }
+
   if (!normalizedCNJ) {
-    return res.status(400).json({ success: false, error: "CNJ is required" });
+    addBackendEvent("error", "CNJ is missing in the search request.");
+    trace.status = "BAD_REQUEST";
+    trace.failureStage = "ETAPA 3";
+    trace.failureReason = "CNJ is required but was not provided or is invalid.";
+    trace.requestSucceeded = false;
+    return res.status(400).json({ success: false, error: "CNJ is required", trace });
   }
 
   try {
     const selectedProvider = await getWorkingProvider(req.todoistToken);
     const tokenLoaded = !!req.todoistToken;
     const tokenSource = req.todoistToken === process.env.TODOIST_API_KEY ? "SECRET" : "REQUEST";
-    const error = "";
-    
+
+    addBackendEvent("info", `Backend recebeu a requisição no handler POST /api/todoist/search-all`);
+    addBackendEvent("success", `Token Todoist carregado com sucesso (Fonte: ${tokenSource}).`);
+    addBackendEvent("info", `Provider '${selectedProvider}' selecionado para operação.`);
+
+    trace.stages["3"] = {
+      name: "RECEBENDO NO BACKEND (EXECUÇÃO LOCAL)",
+      timestamp: new Date().toISOString(),
+      status: tokenLoaded && selectedProvider ? "SUCESSO" : "FALHA",
+      details: {
+        route: "/api/todoist/search-all",
+        method: "POST",
+        handler: "app.all('/api/todoist/search-all')",
+        tokenLoaded,
+        tokenSource,
+        provider: selectedProvider,
+        traceId,
+        timestamp: new Date().toISOString()
+      }
+    };
+
     if (!tokenLoaded || !selectedProvider) {
-      return res.status(400).json({
+      trace.status = "TODOIST_CONNECTION_FAILED";
+      trace.failureStage = "ETAPA 3";
+      trace.failureReason = "Token de API do Todoist ausente ou inválido nos segredos do servidor.";
+      addBackendEvent("error", `Falha na Etapa 3: Token de API do Todoist ausente ou inválido nos segredos.`);
+      trace.requestSucceeded = false;
+      return res.status(200).json({
         success: false,
         found: false,
         result: "connection_error",
         errorType: "TODOIST_API_ERROR",
-        message: error || "Todoist token not configured."
+        message: "Todoist token not configured.",
+        trace
       });
     }
 
@@ -2522,7 +2588,6 @@ app.all("/api/todoist/search-all", async (req: any, res) => {
     function evaluateText(text: string): number {
       if (!text) return 0;
       let score = 0;
-      const normText = normalizeText(text);
       if (normalizeCNJ(text).includes(normalizedCNJ) || text.replace(/[\D]/g, '').includes(normalizedCNJ)) {
         score += 200; // base score for finding CNJ
       }
@@ -2581,30 +2646,87 @@ app.all("/api/todoist/search-all", async (req: any, res) => {
       return score;
     }
 
+    // Stage 4: BACKEND -> TODOIST
+    addBackendEvent("info", "Iniciando consulta externa ao Todoist (Buscando tarefas ativas)...");
+    
+    trace.stages["4"] = {
+      name: "REQUISIÇÃO BACKEND -> TODOIST",
+      timestamp: new Date().toISOString(),
+      status: "SUCESSO",
+      details: {
+        url: "https://api.todoist.com/rest/v2/tasks",
+        method: "GET",
+        endpoint: "/tasks",
+        headers: {
+          "Authorization": "Bearer " + (req.todoistToken ? req.todoistToken.substring(0, 8) + "************************************" : "AUSENTE"),
+          "Content-Type": "application/json"
+        },
+        provider: selectedProvider,
+        timestamp: new Date().toISOString()
+      }
+    };
+
     // A. Buscar tarefas ativas
-    // TODOIST REST V2 API /tasks doesn't support pagination, it returns all active tasks at once.
     let activeTasks: any[] = [];
+    const fetchStartTime = Date.now();
     try {
       activeTasks = await todoistClient.getTasks(req.todoistToken, {}, selectedProvider);
+      const duration = Date.now() - fetchStartTime;
       pagesProcessed = 1;
       tasksRetrieved = activeTasks.length;
       searchScope.activeTasksCompleted = true;
+
+      addBackendEvent("success", `Todoist respondeu com sucesso: ${tasksRetrieved} tarefas ativas recuperadas em ${duration}ms.`);
+
+      trace.stages["5"] = {
+        name: "RESPOSTA TODOIST -> BACKEND",
+        timestamp: new Date().toISOString(),
+        status: "SUCESSO",
+        details: {
+          status: 200,
+          statusText: "OK",
+          durationMs: duration,
+          tasksRetrieved,
+          timestamp: new Date().toISOString()
+        }
+      };
     } catch (e: any) {
+      const duration = Date.now() - fetchStartTime;
       console.error("Erro buscando active tasks", e);
+      addBackendEvent("error", `Todoist retornou falha na consulta de tarefas ativas em ${duration}ms: ${e.message || String(e)}`);
+
+      trace.stages["5"] = {
+        name: "RESPOSTA TODOIST -> BACKEND",
+        timestamp: new Date().toISOString(),
+        status: "FALHA",
+        details: {
+          status: e.status || 500,
+          statusText: e.message || String(e),
+          durationMs: duration,
+          tasksRetrieved: 0,
+          timestamp: new Date().toISOString()
+        }
+      };
+
+      trace.status = "TODOIST_CONNECTION_FAILED";
+      trace.failureStage = "ETAPA 5";
+      trace.failureReason = `Erro ao conectar com Todoist: ${e.message || String(e)}`;
+      trace.requestSucceeded = true; // Request to backend succeeded but Todoist call failed
+
       return res.status(200).json({
         success: false,
         found: false,
-        result: "partial_search_scope",
-        reason: "A busca ativa não pôde ser concluída em todas as páginas.",
-        tasksRetrieved,
-        tasksProcessed,
-        pagesProcessed,
-        searchScope
+        result: "connection_error",
+        errorType: "TODOIST_API_ERROR",
+        message: e.message || "Failed to fetch tasks from Todoist.",
+        trace
       });
     }
 
     let allTasksMap = new Map();
     activeTasks.forEach(t => allTasksMap.set(t.id, t));
+
+    addBackendEvent("info", `Iniciando filtragem e ranqueamento de ${activeTasks.length} tarefas ativas.`);
 
     // Processar ativas
     for (const task of activeTasks) {
@@ -2616,8 +2738,8 @@ app.all("/api/todoist/search-all", async (req: any, res) => {
     }
 
     // B. Comentários
+    addBackendEvent("info", `Consultando comentários das tarefas ativas.`);
     searchScope.commentsCompleted = true;
-        // Usar concorrência limitada de no máximo 4 requisições simultâneas para comentários
     const maxConcurrency = 4;
     let activeTasksQueue = [...activeTasks];
     
@@ -2651,7 +2773,10 @@ app.all("/api/todoist/search-all", async (req: any, res) => {
     }
     await Promise.all(workers);
 
+    addBackendEvent("success", `Comentários verificados. Tentados: ${commentsAttempted}, Sucessos: ${commentsChecked}, Falhas: ${commentsFailed}.`);
+
     // C. Subtarefas
+    addBackendEvent("info", `Verificando subtarefas.`);
     searchScope.subtasksCompleted = true;
     for (const task of activeTasks) {
       if (task.parent_id) {
@@ -2667,11 +2792,11 @@ app.all("/api/todoist/search-all", async (req: any, res) => {
     }
 
     // D. Tarefas Concluídas
-    // If not found in active tasks, we search completed tasks via sdk's getAllCompletedTasks if possible
     if (candidatesFound.length === 0) {
+      addBackendEvent("info", `Nenhum candidato nas ativas. Buscando tarefas concluídas...`);
       try {
         if (selectedProvider === 'sdk') {
-                    const syncUrl = "https://api.todoist.com/api/v1/tasks/completed?limit=100&offset=0";
+          const syncUrl = "https://api.todoist.com/api/v1/tasks/completed?limit=100&offset=0";
           const res = await fetch(syncUrl, {
             headers: { "Authorization": `Bearer ${req.todoistToken}` }
           });
@@ -2684,7 +2809,6 @@ app.all("/api/todoist/search-all", async (req: any, res) => {
              tasksRetrieved += completedRes.items.length;
              for (const task of completedRes.items) {
                tasksProcessed++;
-               // Map task object shape since it might slightly differ
                const mappedTask = {
                  ...task,
                  id: String(task.id),
@@ -2693,19 +2817,21 @@ app.all("/api/todoist/search-all", async (req: any, res) => {
                  is_completed: true
                };
                const cScore = calculateScore(mappedTask, false, false, true);
-               if (cScore >= 100) { // completed score is -100, so base 200 becomes 100
+               if (cScore >= 100) { 
                  candidatesFound.push({ task: mappedTask, score: cScore, reason: "Matches CNJ in completed task" });
                }
              }
           }
           searchScope.completedTasksCompleted = true;
+          addBackendEvent("success", `Consulta de concluídas finalizada. Novas tarefas encontradas: ${completedRes?.items?.length || 0}`);
         }
-      } catch (e) {
+      } catch (e: any) {
         console.error("Failed to check completed tasks", e);
         req._completedTasksError = e.message || String(e);
+        addBackendEvent("warning", `Consulta de concluídas falhou: ${e.message || String(e)}`);
       }
     } else {
-      searchScope.completedTasksCompleted = true; // We skipped it intentionally because we found active
+      searchScope.completedTasksCompleted = true; 
     }
 
     // Dedup candidates by task id
@@ -2718,6 +2844,8 @@ app.all("/api/todoist/search-all", async (req: any, res) => {
     
     let finalCandidates = Array.from(uniqueCandidates.values());
     finalCandidates.sort((a, b) => b.score - a.score);
+
+    addBackendEvent("info", `Candidatos identificados com pontuação mínima: ${finalCandidates.length}`);
 
     let result = "not_found";
     let found = false;
@@ -2733,25 +2861,82 @@ app.all("/api/todoist/search-all", async (req: any, res) => {
       chosenTaskScore = finalCandidates[0].score;
       confidence = "high";
       mirrorReady = true;
+      addBackendEvent("success", `Candidato único encontrado: "${chosenTask.content}" com score ${chosenTaskScore}. Confiança: Alta.`);
     } else if (finalCandidates.length > 1) {
-      found = true; // actually it's ambiguous, but we found something
+      found = true; 
       if (finalCandidates[0].score - finalCandidates[1].score >= 50) {
         result = "found";
         chosenTask = finalCandidates[0].task;
         chosenTaskScore = finalCandidates[0].score;
         confidence = "medium";
         mirrorReady = true;
+        addBackendEvent("success", `Melhor candidato destacado: "${chosenTask.content}" com score ${chosenTaskScore}. Confiança: Média.`);
       } else {
         result = "ambiguous_match";
         confidence = "medium";
+        addBackendEvent("warning", `Múltiplos candidatos encontrados sem margem segura de distinção. Seleção manual requerida.`);
       }
     } else {
        if (!searchScope.activeTasksCompleted || !searchScope.commentsCompleted) {
          result = "partial_search_scope";
+         addBackendEvent("error", `Busca interrompida devido a escopo de busca parcial.`);
        } else {
-         result = "not_found_active_scope"; // Because we might not have completed tasks
+         result = "not_found_active_scope"; 
+         addBackendEvent("warning", `Nenhuma tarefa correspondente localizada nas varreduras do Todoist.`);
        }
     }
+
+    // Stage 6: PROCESSAMENTO LOCAL (RANQUEAMENTO DE SCORES)
+    trace.stages["6"] = {
+      name: "PROCESSAMENTO LOCAL (RANQUEAMENTO DE SCORES)",
+      timestamp: new Date().toISOString(),
+      status: found ? "SUCESSO" : "FALHA",
+      details: {
+        tasksRetrieved,
+        tasksProcessed,
+        commentsAttempted,
+        commentsChecked,
+        commentsFailed,
+        subtasksChecked,
+        candidatesFound: finalCandidates.length,
+        chosenTask: chosenTask ? { id: chosenTask.id, content: chosenTask.content } : null,
+        chosenTaskScore,
+        confidence,
+        localFilterResults: finalCandidates.map((c: any) => ({
+          taskTitle: c.task.content,
+          score: c.score,
+          decision: c.reason
+        })),
+        timestamp: new Date().toISOString()
+      }
+    };
+
+    // Stage 7: BACKEND -> FRONTEND (ENVIO DE RESPOSTA)
+    trace.stages["7"] = {
+      name: "BACKEND -> FRONTEND (ENVIO DE RESPOSTA)",
+      timestamp: new Date().toISOString(),
+      status: "SUCESSO",
+      details: {
+        status: 200,
+        requestSucceeded: true,
+        matchFound: found,
+        mirrorReady: mirrorReady,
+        statusFinal: result,
+        failureStage: null,
+        failureReason: null,
+        timestamp: new Date().toISOString()
+      }
+    };
+
+    trace.finishedAt = new Date().toISOString();
+    const totalDurationMs = Date.now() - new Date(startedAt).getTime();
+    trace.durationMs = totalDurationMs;
+    trace.requestSucceeded = true;
+    trace.matchFound = found;
+    trace.mirrorReady = mirrorReady;
+    trace.status = result.toUpperCase();
+
+    addBackendEvent("success", `Backend compilou e respondeu com sucesso para o frontend (Duração: ${totalDurationMs}ms).`);
 
     return res.status(200).json({
       success: true,
@@ -2775,11 +2960,23 @@ app.all("/api/todoist/search-all", async (req: any, res) => {
       mirrorReady,
       reason: result === "not_found" || result === "not_found_active_scope" ? "Nenhuma tarefa ativa correspondente foi localizada após processar todas as tarefas recebidas." : (result === "ambiguous_match" ? "Múltiplas tarefas com mesma pontuação encontradas." : "Tarefa encontrada com sucesso."),
       implementationVersion: TODOIST_MIRROR_IMPLEMENTATION_VERSION,
-      debug: { completedTasksError: req._completedTasksError }
+      debug: { completedTasksError: req._completedTasksError },
+      trace
     });
 
   } catch (err: any) {
     console.error("Erro interno no search-all:", err);
+    
+    addBackendEvent("error", `Erro grave no processamento do Backend: ${err.message || String(err)}`);
+    
+    trace.status = "PROCESSING_FAILED";
+    trace.failureStage = "ETAPA 6";
+    trace.failureReason = err.message || "Erro desconhecido durante o processamento do backend.";
+    trace.finishedAt = new Date().toISOString();
+    const totalDurationMs = Date.now() - new Date(startedAt).getTime();
+    trace.durationMs = totalDurationMs;
+    trace.requestSucceeded = true; // request completed but encountered error
+    
     return res.status(200).json({
       success: false,
       found: false,
@@ -2788,7 +2985,8 @@ app.all("/api/todoist/search-all", async (req: any, res) => {
       provider: "sdk",
       endpoint: "/tasks",
       message: err.message || "Erro desconhecido",
-      debug: { error: err.message }
+      debug: { error: err.message },
+      trace
     });
   }
 });
